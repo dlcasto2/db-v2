@@ -1,0 +1,3698 @@
+<!DOCTYPE html>
+
+
+
+<!--
+
+This file is from 08/31/2025, there is no official eagler download link anymore, check the websites and discords of your favorite eagler servers for new versions
+
+Be aware that some server owners are lazy and do not update their client regularly
+
+Compile it yourself here: https://gitlab.com/lax1dude/eaglercraftx-1.8/
+
+-->
+
+
+
+
+
+
+
+
+
+
+
+
+
+<html style="width:100%;height:100%;background-color:black;">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0" />
+<meta name="description" content="EaglercraftX 1.8 Offline" />
+<meta name="keywords" content="eaglercraft, eaglercraftx, minecraft, 1.8, 1.8.8" />
+<title>EFI v2.7.97 on 1.8</title>
+<meta property="og:locale" content="en-US" />
+<meta property="og:type" content="website" />
+<meta property="og:title" content="EaglercraftX 1.8 Offline" />
+<meta property="og:description" content="this file is not a website, whoever uploaded it to this URL is a dumbass" />
+<script type="text/javascript">"use strict";
+var relayId = Math.floor(Math.random() * 3);
+// %%%%%%%%% launch options %%%%%%%%%%%%
+window.eaglercraftXOpts = {
+    container: "game_frame",
+    worldsDB: "worlds",
+    finishOnSwap: false, // perf: skip the gl.finish() stall every frame
+    relays: [
+        { addr: "wss://relay.deev.is/", comment: "lax1dude relay #1", primary: relayId == 0 },
+        { addr: "wss://relay.lax1dude.net/", comment: "lax1dude relay #2", primary: relayId == 1 },
+        { addr: "wss://relay.shhnowisnottheti.me/", comment: "ayunami relay #1", primary: relayId == 2 }
+    ]
+};
+</script>
+<script type="text/x-devon-classes"></script>
+<script type="text/x-devon-deferred">"use strict";
+(function () {
+    window.eaglercraftXOpts.assetsURI = window.__devonAssetsURL;
+    var launchInterval = undefined;
+    var launchCounter = 1;
+    var launchCountdownNumberElement = null;
+    var launchCountdownProgressElement = null;
+    var launchSkipCountdown = false;
+    var launchTick = function () {
+        launchCountdownNumberElement.innerText = "" + Math.floor(6.0 - launchCounter * 0.06);
+        launchCountdownProgressElement.style.width = "" + launchCounter + "%";
+        if (++launchCounter > 100 || launchSkipCountdown) {
+            clearInterval(launchInterval);
+            setTimeout(function () { document.body.removeChild(document.getElementById("launch_countdown_screen")); document.body.style.backgroundColor = "black"; main(); ModAPI.hooks._postInit(); }, 50);
+        }
+    };
+    (function (f) { document.readyState === "complete" ? f() : window.addEventListener("load", f); })(function () {
+        launchCountdownNumberElement = document.getElementById("launchCountdownNumber");
+        launchCountdownProgressElement = document.getElementById("launchCountdownProgress");
+        launchInterval = setInterval(launchTick, 50);
+        document.getElementById("skipCountdown").addEventListener("click", function () {
+            launchSkipCountdown = true;
+        });
+        document.getElementById("bootMenu").addEventListener("click", function () {
+            launchSkipCountdown = true;
+            window.eaglercraftXOpts.showBootMenuOnLaunch = true;
+        });
+    });
+})();
+</script>
+<link type="image/png" rel="shortcut icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAAFiUAABYlAUlSJPAAAAR/SURBVEhLtZXZK3ZRFMYPcqXc+gv413DHxVuGIpIhkciQWaRccCNjSCkligwXSOZ5nmfv9zvn2e8+58V753sudmuvvdZ61l5r7XOc8H+GS/D19aUNkPz5+aktQH5/f//4+LBKZKuRkpUtQjCUYG5gD2T38vLy/PwsDfL9/f3Dw8PT05M0b29vnKLhCKCBT4L4gvBLBIei4//4+Hh1dUVEQutUuLu7E83FxQUGnKLBWKfQaA3S+AREVxaEOD8/Pzk50XpzcyMDcH19zdZG3N3d3dzc3Nvb01aX5pQUpQGGQJxcQpfNysoKhUIdHR1o1tbWbInYAgxIPDMzMy8vLzc3FxqOdMoRqwJK8G8ALUYIhHMiSEhIwI6CyIb0qQzC4eGhsXCc1tZWnZIEKzdQJQSXgKxfX18RCM3Z5eWlcfVAxKOjo+Pj49PTU88lTOk2NjbMsePc3t6SAfcgFdszOyMuAdeBg0CQi2lhYUHOeOLDCisN8FzcPFZXV3t7ezHY3t5GQ+6it+2xMASsKhEEWKsmRLRBBUpPvpJ/TpFKFBwKYAiITmicsbYhdHfJAltqhUCVsCQhwslmeXmZxiBQT9c0Ar9E2O3v72sYSE0N1yQArkKy0kBMXLqlZqIZHR3t6empqqqSDcBdhXEJSJ/bUc3q6uq+vj629GB9fR1WsLW1NTs7u7S0RN2locMjIyOEm5ubQ7+4uJienk4/+vv77Y1hwhLBEKhwWHitdVFfX9/Y2Gg2HuLi4owUAysrK8yCG97rh0+ApP5Q2ZycHFlPTExUVFRIBvn5+WhKSkp2dnaMKhptbW2426GgQ/rwuAQCZ1hwFayLiork9hMFBQV1dXVmE0BLS4vqw3QFB8kn4IAxoGPkYpxi4FeDmpqas7Mz4pClAgqGwD48rjY2NmacYqC0tJQ1KSlJWyE5OZkpUKkBAxZVIntAoZh04+Q48fHxPNGBgYHExMT29naj9cBodnZ2mo3jlJWVMeW2OGQck4B1amqqoaGhqamJjx2lGxwcpL0mUgR8fJhsWqJtSkoKU2SbHHUDpkhPBujd8xuQG6PJRM/Pz09PT7O1NNnZ2Tw3fgZkXVhYKCUlUhBATP+hCVyKZGky17RV0g04laayslJ6hlVeFHB4eFhKaogGd0LxtmTgE+hbhKDnPjMzgw8E3qGL2tpaBWpubjYqj2BoaEj6rq4uNATRZ0ZwCbiL6gXEzINk5vCBQJ9rMD4+rkA8QNK036uDg4Py8vLu7m680KjIBNR3zBDoWQM1g98snyB+VSoRW8C/UwR81/SvhgNj9JOTkwwVERUdRBEI0BAdLRVERkhLS8vIyEDQlrsTPTU1lVFhKxARvZgUlFLbegCf4BvIsbi4mIg4E5EogIHhiKCMtU0WUFiVy06j5fAJIDdSBDQw+PegDfBRcbOPwH4F9LuFWIIQdQNKwWqzIE0aoFUaBsw+SQuFw0uNtC9A+F4i3QNrbg3IDn+SAsHh+wYiEpeyBEMLv/cAO6KzAijxxB+Y4wisBhssJUhjEbPJf4Nw+B+JXqLW3bw+wQAAAABJRU5ErkJggg==" />
+</head>
+<body style="margin:0px;width:100%;height:100%;overflow:hidden;background-color:white;" id="game_frame">
+    <script type="text/x-devon-deferred" id="modapi_patchesreg_events">globalThis.modapi_specialevents = [`render`];
+;
+</script>
+    <script type="text/x-devon-deferred" id="modapi_postinit">(() => {
+    //EaglerForge post initialization code.
+    //This script cannot contain backticks, escape characters, or backslashes in order to inject into the dedicated server code.
+    var startedModLoader = false;
+    var BACKSLASH = String.fromCharCode(92);
+    var LF = String.fromCharCode(10);
+    var STRIP_COMMENTS = new RegExp(atob("KChcL1wvLiokKXwoXC9cKltcc1xTXSo/XCpcLykp"), "gm");
+    var ARGUMENT_NAMES = new RegExp(atob("KFteXHMsXSsp"), "g");
+    function startModLoader() {
+        if (!startedModLoader) {
+            startedModLoader = true;
+            modLoader([]);
+        }
+    }
+    ModAPI.hooks._classMap = {};
+    ModAPI.is_1_12 = !!ModAPI.hooks.methods.nleit_MainClass_main;
+    globalThis.PluginAPI ||= ModAPI;
+    ModAPI.mcinstance ||= {};
+    ModAPI.javaClient ||= {};
+    ModAPI.meta = {};
+    ModAPI.meta._titleMap = {};
+    ModAPI.meta._descriptionMap = {};
+    ModAPI.meta._configMap = {};
+    ModAPI.meta._developerMap = {};
+    ModAPI.meta._iconMap = {};
+    ModAPI.meta._versionMap = {};
+    ModAPI.isServer = false;
+    const credits = {};
+    ModAPI.addCredit = function (category, name, contents) {
+        if (!credits[category]) {
+            credits[category] = [];
+        }
+        credits[category].push(LF + LF + " " + name + ": " + LF + LF + contents);
+    };
+    function getCreditsString() {
+        return Object.entries(credits).map((entry) => {
+            return " " + entry[0] + LF + " " + (new Array(entry[0].length)).fill("~").join("") + entry[1].join("") + LF + LF + LF;
+        }).join("");
+    }
+    ModAPI.array = {};
+    ModAPI.version = "v2.7.97";
+    ModAPI.flavour = "injector";
+    ModAPI.GNU = "terry pratchett";
+    ModAPI.addCredit("EaglerForge Devs", "ZXMushroom63", "  - Built the original PluginAPI for EaglerReborn" + LF +
+        "  - Built EaglerForgeInjector as a procedural replacement for EaglerForge clients" + LF +
+        "  - Made the mod loader and gui loader" + LF +
+        "  - Added singleplayer support" + LF +
+        "  - Made the AsyncSink corelib");
+    ModAPI.addCredit("EaglerForge Devs", "radmanplays", "  - Ported and maintained EaglerReborn's PluginAPI to modern version of eaglercrafts (u22+)" + LF +
+        "  - Rebranded PluginAPI to ModAPI" + LF +
+        "  - Added various new features to ModAPI" + LF +
+        "  - Made the worldedit mod + a few other mods");
+    ModAPI.addCredit("EaglerForge Devs", "LeahOnBrainrot / OtterCodes101 / OtterDev", "  - Created EaglerReborn" + LF +
+        "  - EaglerForge developer" + LF +
+        "  - Helped update the client to newer versions" + LF +
+        "  - Made signed clients work in the legacy version" + LF +
+        "  - Maintainer nowadays" + LF +
+        "  - Various bug fixes for EaglerForgeInjector");
+    ModAPI.addCredit("EaglerForge Devs", "Murturtle", "  - Added the render event to EaglerForgeInjector" + LF +
+        "  - Added pi optimiser to the injector (now removed)");
+    ModAPI.addCredit("EaglerForge Devs", "TheIdiotPlays", "  - Made the mod manager GUI");
+    ModAPI.addCredit("EaglerForge Devs", "OeildeLynx31", "  - Work on the worldedit mod");
+    ModAPI.addCredit("EaglerForge Devs", "Stpv22", "  - Made the mod gui open before the client starts");
+    function limitSize(x, n) {
+        if (!x) {
+            return "";
+        }
+        if (x.length > n) {
+            return x.substring(0, n) + "…";
+        }
+        else {
+            return x;
+        }
+    }
+    function arraysAreSame(arr1, arr2) {
+        if (!arr1 || !arr2)
+            return false;
+        if (arr1 === arr2)
+            return true;
+        if (arr1.length !== arr2.length)
+            return false;
+        for (var i = 0, l = arr1.length; i < l; i++) {
+            if (arr1[i] instanceof Array && arr2[i] instanceof Array) {
+                if (!arr1[i].equals(arr2[i]))
+                    return false;
+            }
+            else if (arr1[i] !== arr2[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+    function getParamNames(func) {
+        var fnStr = func.toString().replace(STRIP_COMMENTS, '');
+        var result = fnStr.slice(fnStr.indexOf('(') + 1, fnStr.indexOf(')')).match(ARGUMENT_NAMES);
+        if (result === null)
+            result = [];
+        return result;
+    }
+    function getEaglerConfigFlag(key) {
+        var searchParams = new URLSearchParams(location.search);
+        return (globalThis.eaglercraftXOpts?.[key] || searchParams.get(key)) ? true : false;
+    }
+    function easyStaticMethod(classId, methodName, autoUnpack) {
+        var method = ModAPI.reflect.getClassById(classId).staticMethods[methodName].method;
+        return function easyImpl(...args) {
+            return method(...(autoUnpack ? args.map(x => {
+                if ((typeof x === "object") && (x.isModProxy === true)) {
+                    return x.getRef();
+                }
+                return x;
+            }) : args));
+        };
+    }
+    function easyAlias(obj, realProperty, alias) {
+        Object.defineProperty(obj, alias, {
+            get: function () {
+                return obj[realProperty];
+            },
+            set: function (x) {
+                obj[realProperty] = x;
+            }
+        });
+    }
+    function easyStaticPropAlias(clsId, real, alias) {
+        easyAlias(ModAPI.reflect.getClassById(clsId).staticVariables, real, alias);
+    }
+    ModAPI.meta.title = function (title) {
+        if (!document.currentScript || document.currentScript.getAttribute("data-isMod") !== "true") {
+            return console.log("[ModAPIMeta] Cannot set meta for non-mod script.");
+        }
+        if (!document.currentScript.hasAttribute("data-hash")) {
+            return console.log("[ModAPIMeta] Script does not have a hashcode.");
+        }
+        ModAPI.meta._titleMap[document.currentScript.getAttribute("data-hash")] = limitSize(title, 36);
+    };
+    ModAPI.meta.icon = function (iconSrc) {
+        if (!document.currentScript || document.currentScript.getAttribute("data-isMod") !== "true") {
+            return console.log("[ModAPIMeta] Cannot set meta for non-mod script.");
+        }
+        if (!document.currentScript.hasAttribute("data-hash")) {
+            return console.log("[ModAPIMeta] Script does not have a hashcode.");
+        }
+        ModAPI.meta._iconMap[document.currentScript.getAttribute("data-hash")] = iconSrc;
+    };
+    ModAPI.meta.credits = function (cd) {
+        if (!document.currentScript || document.currentScript.getAttribute("data-isMod") !== "true") {
+            return console.log("[ModAPIMeta] Cannot set meta for non-mod script.");
+        }
+        if (!document.currentScript.hasAttribute("data-hash")) {
+            return console.log("[ModAPIMeta] Script does not have a hashcode.");
+        }
+        ModAPI.meta._developerMap[document.currentScript.getAttribute("data-hash")] = limitSize(cd, 128);
+    };
+    ModAPI.meta.description = function (desc) {
+        if (!document.currentScript || document.currentScript.getAttribute("data-isMod") !== "true") {
+            return console.log("[ModAPIMeta] Cannot set meta for non-mod script.");
+        }
+        if (!document.currentScript.hasAttribute("data-hash")) {
+            return console.log("[ModAPIMeta] Script does not have a hashcode.");
+        }
+        ModAPI.meta._descriptionMap[document.currentScript.getAttribute("data-hash")] = limitSize(desc, 160);
+    };
+    ModAPI.meta.config = function (conf) {
+        if (typeof conf !== "function") {
+            return console.log("[ModAPIMeta] Config value was not a function");
+        }
+        if (!document.currentScript || document.currentScript.getAttribute("data-isMod") !== "true") {
+            return console.log("[ModAPIMeta] Cannot set meta for non-mod script.");
+        }
+        if (!document.currentScript.hasAttribute("data-hash")) {
+            return console.log("[ModAPIMeta] Script does not have a hashcode.");
+        }
+        ModAPI.meta._configMap[document.currentScript.getAttribute("data-hash")] = conf;
+    };
+    ModAPI.meta.version = function (ver) {
+        if (!document.currentScript || document.currentScript.getAttribute("data-isMod") !== "true") {
+            return console.log("[ModAPIMeta] Cannot set meta for non-mod script.");
+        }
+        if (!document.currentScript.hasAttribute("data-hash")) {
+            return console.log("[ModAPIMeta] Script does not have a hashcode.");
+        }
+        ModAPI.meta._versionMap[document.currentScript.getAttribute("data-hash")] = limitSize(ver, 7);
+    };
+    ModAPI.reflect ||= {};
+    ModAPI.server = ModAPI.serverInstance = null;
+    ModAPI.dedicatedServer ||= {};
+    ModAPI.dedicatedServer._data ||= [];
+    ModAPI.dedicatedServer._wasUsed = false;
+    ModAPI.dedicatedServer.appendCode = function (code) {
+        if (ModAPI.dedicatedServer._wasUsed) {
+            return console.warn("The dedicated server has already launched, ModAPI.dedicatedServer.appendCode() is useless.");
+        }
+        if (typeof code === "function") {
+            ModAPI.dedicatedServer._data.push("(" + code.toString() + ")(true)");
+        }
+        else if (typeof code === "string") {
+            ModAPI.dedicatedServer._data.push(code);
+        }
+    };
+    ModAPI.util ||= {};
+    ModAPI.util.getMethodFromPackage = function (classId, methodName) {
+        if (ModAPI.is_1_12) {
+            classId = classId.replace(".eaglercraft.v1_8", ".eaglercraft"); //why peyton why must you do this. you couldve changed it to v1_12 too, that would've worked
+            classId = classId.replace(".entity.RenderItem", ".RenderItem");
+        }
+        var name = "";
+        var classStuff = classId.split(".");
+        classStuff.forEach((component, i) => {
+            if (i === classStuff.length - 1) {
+                name += "_" + component;
+            }
+            else {
+                name += component[0].toLowerCase();
+            }
+        });
+        name += "_" + methodName;
+        return name;
+    };
+    ModAPI.util.getCompiledNameFromPackage = ModAPI.util.getCompiledName = function (classId) {
+        if (ModAPI.is_1_12) {
+            classId = classId.replace(".eaglercraft.v1_8", ".eaglercraft"); //why peyton why must you do this. you couldve changed it to v1_12 too, that would've worked
+        }
+        var name = "";
+        var classStuff = classId.split(".");
+        classStuff.forEach((component, i) => {
+            if (i === classStuff.length - 1) {
+                name += "_" + component;
+            }
+            else {
+                name += component[0].toLowerCase();
+            }
+        });
+        return name;
+    };
+    ModAPI.util.asClass = ModAPI.hooks._teavm.$rt_cls;
+    ModAPI.util.wrap = function (outputValue, target, corrective, disableFunctions) {
+        target ||= {};
+        corrective ||= false;
+        disableFunctions ||= false;
+        const CorrectiveArray = patchProxyConfToCorrective(ModAPI.util.TeaVMArray_To_Recursive_BaseData_ProxyConf);
+        const CorrectiveRecursive = patchProxyConfToCorrective(ModAPI.util.TeaVM_to_Recursive_BaseData_ProxyConf);
+        if (outputValue && typeof outputValue === "object" && Array.isArray(outputValue.data) && typeof outputValue.type === "function") {
+            if (corrective) {
+                return new Proxy(outputValue.data, CorrectiveArray);
+            }
+            return new Proxy(outputValue.data, ModAPI.util.TeaVMArray_To_Recursive_BaseData_ProxyConf);
+        }
+        if (ModAPI.is_1_12 && outputValue && typeof outputValue === "object" && outputValue.constructor === NonNullList) { //1.12 NonNullList support
+            const targetProperty = Object.values(outputValue)?.find(x => x && typeof x === "object" && x.constructor === ArrayAsList);
+            if (targetProperty) {
+                const arrayProp = Object.values(targetProperty).find(x => x && typeof x === "object" && Array.isArray(x.data) && typeof x.type === "function");
+                if (corrective) {
+                    return new Proxy(arrayProp.data, CorrectiveArray);
+                }
+                return new Proxy(arrayProp.data, ModAPI.util.TeaVMArray_To_Recursive_BaseData_ProxyConf);
+            }
+        }
+        if (outputValue && typeof outputValue === "object" && !Array.isArray(outputValue)) {
+            if (corrective) {
+                return new Proxy(outputValue, CorrectiveRecursive);
+            }
+            return new Proxy(outputValue, ModAPI.util.TeaVM_to_Recursive_BaseData_ProxyConf);
+        }
+        if (!disableFunctions && outputValue && typeof outputValue === "function" && target) {
+            return function (...args) {
+                var xOut = outputValue.apply(target, args);
+                if (xOut && typeof xOut === "object" && Array.isArray(xOut.data) && typeof xOut.type === "function") {
+                    if (corrective) {
+                        return new Proxy(xOut.data, CorrectiveArray);
+                    }
+                    return new Proxy(xOut.data, ModAPI.util.TeaVMArray_To_Recursive_BaseData_ProxyConf);
+                }
+                if (xOut && typeof xOut === "object" && !Array.isArray(xOut)) {
+                    if (corrective) {
+                        return new Proxy(xOut, CorrectiveRecursive);
+                    }
+                    return new Proxy(xOut, ModAPI.util.TeaVM_to_Recursive_BaseData_ProxyConf);
+                }
+                return xOut;
+            };
+        }
+        return null;
+    };
+    ModAPI.array.object = function (jclass, size) {
+        if (typeof jclass === "string") {
+            jclass = ModAPI.reflect.getClassById(jclass).class;
+        }
+        if (Array.isArray(size)) {
+            return ModAPI.hooks._teavm.$rt_createArrayFromData(jclass, size);
+        }
+        return ModAPI.hooks._teavm.$rt_createArray(jclass, size);
+    };
+    ModAPI.array.boolean = function (size) {
+        if (Array.isArray(size)) {
+            return ModAPI.hooks._teavm.$rt_createBooleanArrayFromData(size);
+        }
+        return ModAPI.hooks._teavm.$rt_createBooleanArray(size);
+    };
+    ModAPI.array.byte = function (size) {
+        if (Array.isArray(size)) {
+            return ModAPI.hooks._teavm.$rt_createByteArrayFromData(size);
+        }
+        return ModAPI.hooks._teavm.$rt_createByteArray(size);
+    };
+    ModAPI.array.char = function (size) {
+        if (Array.isArray(size)) {
+            return ModAPI.hooks._teavm.$rt_createCharArrayFromData(size);
+        }
+        return ModAPI.hooks._teavm.$rt_createCharArray(size);
+    };
+    ModAPI.array.short = function (size) {
+        if (Array.isArray(size)) {
+            return ModAPI.hooks._teavm.$rt_createShortArrayFromData(size);
+        }
+        return ModAPI.hooks._teavm.$rt_createShortArray(size);
+    };
+    ModAPI.array.int = function (size) {
+        if (Array.isArray(size)) {
+            return ModAPI.hooks._teavm.$rt_createIntArrayFromData(size);
+        }
+        return ModAPI.hooks._teavm.$rt_createIntArray(size);
+    };
+    ModAPI.array.float = function (size) {
+        if (Array.isArray(size)) {
+            return ModAPI.hooks._teavm.$rt_createFloatArrayFromData(size);
+        }
+        return ModAPI.hooks._teavm.$rt_createFloatArray(size);
+    };
+    ModAPI.array.double = function (size) {
+        if (Array.isArray(size)) {
+            return ModAPI.hooks._teavm.$rt_createDoubleArrayFromData(size);
+        }
+        return ModAPI.hooks._teavm.$rt_createDoubleArray(size);
+    };
+    function staticKeyMapper(k) {
+        return k.split(/(?=[A-Z])/).map((x) => x.toUpperCase()).join("_");
+    }
+    //Proxy to make sure static variables are initialized before access, as well as fixing some issues in 1.12
+    function makeClinitProxy(staticVariables, clinit) {
+        return new Proxy(staticVariables, {
+            get: function (a, b, c) {
+                clinit();
+                return Reflect.get(a, b, c) || Reflect.get(a, staticKeyMapper(b), c);
+            }
+        });
+    }
+    ModAPI.hooks.regenerateClassMap = function () {
+        ModAPI.hooks._rippedConstructorKeys = Object.keys(ModAPI.hooks._rippedConstructors);
+        ModAPI.hooks._rippedInternalConstructorKeys = Object.keys(ModAPI.hooks._rippedInternalConstructors);
+        ModAPI.hooks._rippedMethodKeys = Object.keys(ModAPI.hooks._rippedMethodTypeMap);
+        ModAPI.hooks._rippedInterfaceKeys = Object.keys(ModAPI.hooks._rippedInterfaceMap);
+        var compiledNames = new Set();
+        var metaMap = {};
+        //Loop through ripped metadata passes. Classes obtained through this method have full metadata (superclasses, full names, binary names, actual class)
+        ModAPI.hooks._rippedData.forEach((block) => {
+            block.forEach((item) => {
+                if (typeof item === "function") {
+                    if (!item.$meta || typeof item.$meta.name !== "string") {
+                        if (item.name && item.name.split("_").length === 2) {
+                            metaMap[item.name] = item;
+                            compiledNames.add(item.name);
+                        }
+                        return;
+                    }
+                    var compiledName = ModAPI.util.getCompiledNameFromPackage(item.$meta.name);
+                    compiledNames.add(compiledName);
+                    metaMap[compiledName] = item;
+                }
+            });
+        });
+        ModAPI.hooks._rippedConstructorKeys.forEach((constructor) => {
+            if (typeof constructor === "string" && constructor.length > 0) {
+                //Constructor names are phrased as aaa_Apple__init_3 or similar, the separator is __init_
+                var constructorData = constructor.split("__init_");
+                if (constructorData[0] && constructorData[0].includes("_")) {
+                    compiledNames.add(constructorData[0]);
+                }
+            }
+        });
+        ModAPI.hooks._rippedInterfaceKeys.forEach((className) => {
+            if (typeof className === "string" && className.length > 0) {
+                //Interfaces using $rt_classWithoutFields(0) and no constructors.
+                if (className && className.includes("_")) {
+                    compiledNames.add(className);
+                }
+            }
+        });
+        //Initialise all compiled names into the class map
+        compiledNames.forEach(compiledName => {
+            var item = metaMap[compiledName] || ModAPI.hooks._rippedInterfaceMap[compiledName];
+            var classId = item?.$meta?.name || null;
+            if (!ModAPI.hooks._classMap[compiledName]) {
+                var argumentCache = null;
+                ModAPI.hooks._classMap[compiledName] = {
+                    "name": compiledName.split("_")[1],
+                    "id": classId,
+                    "binaryName": item?.$meta?.binaryName || null,
+                    "constructors": [],
+                    "internalConstructors": [],
+                    "methods": {},
+                    "staticMethods": {},
+                    "staticVariables": {},
+                    "staticVariableNames": [],
+                    "class": item || null,
+                    "hasMeta": !!(item?.$meta),
+                    "instanceOf": function (object) {
+                        try {
+                            return ModAPI.hooks._teavm.$rt_isInstance(object, item || null);
+                        }
+                        catch {
+                            return false;
+                        }
+                    },
+                    "compiledName": compiledName,
+                    "getConstructorByArgs": function (...argNames) {
+                        if (!argumentCache) {
+                            argumentCache = [];
+                            this.internalConstructors.forEach((x) => {
+                                argumentCache.push(getParamNames(x).slice(1).map((y) => y.substring(1)));
+                            });
+                        }
+                        for (let i = 0; i < argumentCache.length; i++) {
+                            const args = argumentCache[i];
+                            if (arraysAreSame(args, argNames)) {
+                                return this.constructors[i];
+                            }
+                        }
+                    },
+                };
+            }
+            if (typeof item?.$meta?.superclass === "function" && item?.$meta?.superclass?.$meta) {
+                ModAPI.hooks._classMap[compiledName].superclassRaw = item.$meta.superclass;
+            }
+            else {
+                ModAPI.hooks._classMap[compiledName].superclassRaw = null;
+            }
+            if (item?.["$constructor$"]) {
+                //Class does not have any hand written constructors
+                //Eg: class MyClass {}
+                ModAPI.hooks._classMap[compiledName].constructors.push(item["$constructor$"]);
+            }
+            else {
+                //Class has hand written constructors, we need to search in the stash
+                ModAPI.hooks._rippedConstructorKeys.forEach((constructor) => {
+                    if (constructor.startsWith(compiledName + "__init_") && !constructor.includes("$lambda$")) {
+                        ModAPI.hooks._classMap[compiledName].constructors.push(ModAPI.hooks._rippedConstructors[constructor]);
+                    }
+                });
+            }
+            ModAPI.hooks._classMap[compiledName].areConstructorsBaked = ModAPI.hooks._classMap[compiledName].constructors.length === 0;
+            //^^^ IF TRUE: TeaVM wants us to have an aneurism, and is optimising constructors out of the code.
+            // ModAPI will to it's best to recreate the constructors programmatically
+            ModAPI.hooks._rippedInternalConstructorKeys.forEach((initialiser) => {
+                if (initialiser.startsWith(compiledName + "__init_") && !initialiser.includes("$lambda$")) {
+                    const internalConstructor = ModAPI.hooks._rippedInternalConstructors[initialiser];
+                    ModAPI.hooks._classMap[compiledName].internalConstructors.push(internalConstructor);
+                    if (ModAPI.hooks._classMap[compiledName].areConstructorsBaked) {
+                        // Recreate constructors due to TeaVM over-optimisation
+                        const argIds = (new Array(2)).fill(0).map((x, i) => "_" + i);
+                        ModAPI.hooks._classMap[compiledName].constructors.push((new Function(...argIds, "const inst = new this.theClass; this.init(inst, " + argIds.join(", ") + "); return inst;")).bind({
+                            theClass: ModAPI.hooks._classMap[compiledName].class,
+                            init: internalConstructor
+                        }));
+                    }
+                }
+            });
+            ModAPI.hooks._rippedMethodKeys.forEach((method) => {
+                if (method.startsWith(compiledName + "_") && !method.includes("$lambda$")) {
+                    var targetMethodMap = ModAPI.hooks._classMap[compiledName].methods;
+                    if (ModAPI.hooks._rippedMethodTypeMap[method] === "static") {
+                        targetMethodMap = ModAPI.hooks._classMap[compiledName].staticMethods;
+                    }
+                    targetMethodMap[method.replace(compiledName + "_", "")] = {
+                        method: ModAPI.hooks.methods[method],
+                        methodName: method,
+                        methodNameShort: method.replace(compiledName + "_", "")
+                    };
+                    //Prototype Injection, allows for far easier access to methods
+                    if (typeof item === "function" && ModAPI.hooks._rippedMethodTypeMap[method] === "instance") {
+                        var prototypeInjectedMethod = function prototypeInjectedMethod(...args) {
+                            return ModAPI.hooks.methods[method].apply(this, [this, ...args]);
+                        };
+                        if ((item.prototype["$" + method.replace(compiledName + "_", "")]?.name ?? "prototypeInjectedMethod") === "prototypeInjectedMethod") {
+                            item.prototype["$" + method.replace(compiledName + "_", "")] = prototypeInjectedMethod;
+                        }
+                        else {
+                            item.prototype["$" + method.replace(compiledName + "_", "")] ||= prototypeInjectedMethod;
+                        }
+                    }
+                }
+            });
+            ModAPI.hooks._classMap[compiledName].staticVariables = makeClinitProxy(ModAPI.hooks._rippedStaticProperties[compiledName] || {}, (() => {
+                (ModAPI.hooks._rippedStaticProperties[compiledName].$callClinit ?? (() => { }))();
+            }));
+            ModAPI.hooks._classMap[compiledName].staticVariableNames = Object.keys(ModAPI.hooks._classMap[compiledName].staticVariables);
+        });
+        //populate superclasses
+        compiledNames.forEach(compiledName => {
+            var item = ModAPI.hooks._classMap[compiledName];
+            if (item.superclassRaw) {
+                item.superclass = ModAPI.hooks._classMap[item.superclassRaw.name];
+            }
+            else {
+                item.superclass = null;
+            }
+        });
+        ModAPI.reflect.classes = Object.values(ModAPI.hooks._classMap);
+        ModAPI.reflect.classMap = ModAPI.hooks._classMap;
+        console.log("[ModAPI] Regenerated hook classmap.");
+    };
+    ModAPI.hooks.regenerateClassMap();
+    ModAPI.reflect.getClassById = function (classId) {
+        return ModAPI.hooks._classMap[ModAPI.util.getCompiledName(classId)];
+    };
+    ModAPI.reflect.getClassByName = function (className) {
+        var classKeys = Object.keys(ModAPI.hooks._classMap);
+        var key = classKeys.filter(k => { return ModAPI.hooks._classMap[k].name === className; })[0];
+        return key ? ModAPI.hooks._classMap[key] : null;
+    };
+    //Magical function for making a subclass with a custom constructor that you can easily use super(...) on.
+    ModAPI.reflect.getSuper = function getSuper(reflectClass, filter) {
+        filter ||= (x) => x.length === 1;
+        while (!reflectClass.internalConstructors.find(filter) && reflectClass.superclass) {
+            reflectClass = reflectClass.superclass;
+        }
+        var initialiser = reflectClass.internalConstructors.find(filter);
+        if (!initialiser) {
+            throw new Error("[ModAPI] Failed to find matching superclass constructor in tree.");
+        }
+        return function superFunction(thisArg, ...extra_args) {
+            reflectClass.class.call(thisArg);
+            initialiser(thisArg, ...extra_args);
+        };
+    };
+    //Make it extend the parent. Used to iteratively load the superclasses' prototype methods.
+    ModAPI.reflect.prototypeStack = function prototypeStack(reflectClass, classFn) {
+        classFn.prototype = Object.create(reflectClass.class.prototype);
+        classFn.prototype.constructor = classFn;
+        classFn.$meta = {
+            item: null,
+            supertypes: [reflectClass.class]
+        };
+        classFn.classObject = null;
+    };
+    ModAPI.reflect.implements = function impl(classFn, reflectClass) {
+        classFn.$meta ||= {};
+        classFn.$meta.supertypes ||= [];
+        if (reflectClass && reflectClass.class) {
+            classFn.$meta.supertypes.push(reflectClass.class);
+        }
+    };
+    var reloadDeprecationWarnings = 0;
+    const TeaVMArray_To_Recursive_BaseData_ProxyConf = {
+        get(target, prop, receiver) {
+            var corrective = !!this._corrective;
+            if (prop === "getRef") {
+                return function () {
+                    return target;
+                };
+            }
+            if (prop === "getCorrective") {
+                return function () {
+                    return new Proxy(target, patchProxyConfToCorrective(TeaVMArray_To_Recursive_BaseData_ProxyConf));
+                };
+            }
+            if (prop === "isCorrective") {
+                return function () {
+                    return corrective;
+                };
+            }
+            if (prop === "reload") {
+                return function () {
+                    if (reloadDeprecationWarnings < 10) {
+                        console.warn("ModAPI/PluginAPI reload() is obsolete, please stop using it in code.");
+                        reloadDeprecationWarnings++;
+                    }
+                };
+            }
+            var outputValue = Reflect.get(target, prop, receiver);
+            var wrapped = ModAPI.util.wrap(outputValue, target, corrective, true);
+            if (wrapped) {
+                return wrapped;
+            }
+            return outputValue;
+        },
+        set(object, prop, value) {
+            object[prop] = value;
+            return true;
+        }
+    };
+    const TeaVM_to_Recursive_BaseData_ProxyConf = {
+        ownKeys(target) {
+            return Reflect.ownKeys(target).map(x => x.substring(1));
+        },
+        getOwnPropertyDescriptor(target, prop) {
+            return Object.getOwnPropertyDescriptor(target, "$" + prop);
+        },
+        has(target, prop) {
+            return ("$" + prop) in target;
+        },
+        get(target, prop, receiver) {
+            var corrective = !!this._corrective;
+            if (prop === "getCorrective") {
+                return function () {
+                    return new Proxy(target, patchProxyConfToCorrective(TeaVM_to_Recursive_BaseData_ProxyConf));
+                };
+            }
+            if (prop === "isCorrective") {
+                return function () {
+                    return corrective;
+                };
+            }
+            if (prop === "getRef") {
+                return function () {
+                    return target;
+                };
+            }
+            if (prop === "reload") {
+                return function () {
+                    if (reloadDeprecationWarnings < 10) {
+                        console.warn("ModAPI/PluginAPI reload() is obsolete, please stop using it in code.");
+                        reloadDeprecationWarnings++;
+                    }
+                };
+            }
+            if (prop === "isModProxy") {
+                return true;
+            }
+            var outProp = "$" + prop;
+            if (corrective) {
+                outProp = ModAPI.util.getNearestProperty(target, outProp);
+            }
+            var outputValue = Reflect.get(target, outProp, receiver);
+            var wrapped = ModAPI.util.wrap(outputValue, target, corrective, false);
+            if (wrapped) {
+                return wrapped;
+            }
+            return outputValue;
+        },
+        set(object, prop, value) {
+            var corrective = !!this._corrective;
+            var outProp = "$" + prop;
+            if (corrective) {
+                outProp = ModAPI.util.getNearestProperty(object, outProp);
+            }
+            object[outProp] = value;
+            return true;
+        },
+    };
+    function patchProxyConfToCorrective(conf) {
+        var pconf = Object.assign({}, conf);
+        pconf._corrective = true;
+        return pconf;
+    }
+    const StaticProps_ProxyConf = {
+        get(target, prop, receiver) {
+            var outProp = prop;
+            var outputValue = Reflect.get(target, outProp, receiver);
+            if (outputValue && typeof outputValue === "object" && Array.isArray(outputValue.data) && typeof outputValue.type === "function") {
+                return new Proxy(outputValue.data, TeaVMArray_To_Recursive_BaseData_ProxyConf);
+            }
+            if (outputValue && typeof outputValue === "object" && !Array.isArray(outputValue)) {
+                return new Proxy(outputValue, TeaVM_to_Recursive_BaseData_ProxyConf);
+            }
+            return outputValue;
+        },
+        set(object, prop, value) {
+            var outProp = prop;
+            object[outProp] = value;
+            return true;
+        },
+    };
+    ModAPI.util.TeaVMArray_To_Recursive_BaseData_ProxyConf = TeaVMArray_To_Recursive_BaseData_ProxyConf;
+    ModAPI.util.TeaVM_to_Recursive_BaseData_ProxyConf = TeaVM_to_Recursive_BaseData_ProxyConf;
+    ModAPI.util.StaticProps_ProxyConf = StaticProps_ProxyConf;
+    ModAPI.required = new Set();
+    ModAPI.events = {};
+    ModAPI.events.types = ["event"];
+    ModAPI.events.lib_map = {};
+    ModAPI.events.listeners = { "event": [] };
+    ModAPI.addEventListener = function addEventListener(name, callback) {
+        if (name.startsWith("lib:")) {
+            if (Object.keys(ModAPI.events.lib_map).includes(name)) {
+                callback(ModAPI.events.lib_map[name]);
+            }
+            else {
+                if (!Array.isArray(ModAPI.events.listeners[name])) {
+                    ModAPI.events.listeners[name] = [];
+                }
+                ModAPI.events.listeners[name].push(callback);
+            }
+            console.log("[ModAPI] Added new library listener: " + name);
+            return;
+        }
+        if (!callback || typeof callback !== "function") {
+            throw new Error("[ModAPI] Invalid callback!");
+        }
+        if (ModAPI.events.types.includes(name) || name.startsWith("custom:")) {
+            if (!Array.isArray(ModAPI.events.listeners[name])) {
+                ModAPI.events.listeners[name] = [];
+            }
+            ModAPI.events.listeners[name].push(callback);
+            console.log("[ModAPI] Added new event listener: " + name);
+        }
+        else {
+            throw new Error("[ModAPI] This event does not exist!");
+        }
+    };
+    ModAPI.removeEventListener = function removeEventListener(name, func, slow) {
+        if (!func) {
+            throw new Error("Invalid callback!");
+        }
+        if (!Array.isArray(ModAPI.events.listeners[name])) {
+            ModAPI.events.listeners[name] = [];
+        }
+        var targetArr = ModAPI.events.listeners[name];
+        if (!slow) {
+            if (targetArr.indexOf(func) !== -1) {
+                targetArr.splice(targetArr.indexOf(func), 1);
+                console.log("[ModAPI] Removed event listener.");
+            }
+        }
+        else {
+            var functionString = func.toString();
+            targetArr.forEach((f, i) => {
+                if (f.toString() === functionString) {
+                    targetArr.splice(i, 1);
+                    console.log("[ModAPI] Removed event listener.");
+                }
+            });
+        }
+    };
+    ModAPI.events.newEvent = function newEvent(name, side = "unknown") {
+        if (!ModAPI.events.types.includes(name)) {
+            console.log("[ModAPI] Registered " + side + " event: " + name);
+            ModAPI.events.types.push(name);
+        }
+    };
+    ModAPI.events.callEvent = function callEvent(name, data) {
+        if (ModAPI.events.types.includes(name) && name.startsWith("lib:")) {
+            if (Array.isArray(ModAPI.events.listeners[name])) {
+                ModAPI.events.listeners[name].forEach((func) => {
+                    func(data);
+                });
+            }
+            ModAPI.events.lib_map[name] = data;
+            return;
+        }
+        if (!ModAPI.events.types.includes(name) ||
+            !Array.isArray(ModAPI.events.listeners[name])) {
+            if (!Array.isArray(ModAPI.events.listeners[name])) {
+                if (ModAPI.events.types.includes(name)) {
+                    ModAPI.events.listeners.event.forEach((func) => {
+                        func({ event: name, data: data });
+                    });
+                    return;
+                }
+                return;
+            }
+            console.error("ModAPI/PluginAPI has been called with an invalid event name: " + name);
+            console.error("Please report this bug to the repo.");
+            return;
+        }
+        ModAPI.events.listeners[name].forEach((func) => {
+            func(data);
+        });
+        ModAPI.events.listeners.event.forEach((func) => {
+            func({ event: name, data: data });
+        });
+    };
+    ModAPI.events.newEvent("update", "client");
+    ModAPI.require = function (module) {
+        ModAPI.required.add(module);
+    };
+    ModAPI.onUpdate = function () {
+        if (ModAPI.required.has("player") && ModAPI.javaClient && ModAPI.javaClient.$thePlayer) {
+            ModAPI.player = new Proxy(ModAPI.javaClient.$thePlayer, TeaVM_to_Recursive_BaseData_ProxyConf);
+        }
+        if (ModAPI.required.has("network") && ModAPI.javaClient && ModAPI.javaClient.$thePlayer && ModAPI.javaClient.$thePlayer.$sendQueue) {
+            ModAPI.network = new Proxy(ModAPI.javaClient.$thePlayer.$sendQueue, TeaVM_to_Recursive_BaseData_ProxyConf);
+        }
+        if (ModAPI.required.has("world") && ModAPI.javaClient && ModAPI.javaClient.$theWorld) {
+            ModAPI.world = new Proxy(ModAPI.javaClient.$theWorld, TeaVM_to_Recursive_BaseData_ProxyConf);
+        }
+        try {
+            ModAPI.events.callEvent("update");
+        }
+        catch (error) {
+            console.error(error);
+        }
+    };
+    ModAPI.util.stringToUint16Array = function stringToUint16Array(str) {
+        const buffer = new ArrayBuffer(str.length * 2); // 2 bytes for each char
+        const uint16Array = new Uint16Array(buffer);
+        for (let i = 0; i < str.length; i++) {
+            uint16Array[i] = str.charCodeAt(i);
+        }
+        return uint16Array;
+    };
+    //Overrides $rt_resuming, $rt_suspending, $rt_currentThread. Experimental, but should be used if call stack leaks occur as a result of running internal code.
+    ModAPI.freezeCallstack = function () {
+        ModAPI.hooks.freezeCallstack = true;
+    };
+    ModAPI.unfreezeCallstack = function () {
+        ModAPI.hooks.freezeCallstack = false;
+    };
+    //Function used for running @Async / @Async-dependent TeaVM methods.
+    ModAPI.promisify = function promisify(fn) {
+        if (typeof fn !== "function") {
+            console.error("[ModAPI.promisify] Input was not a function: ", fn);
+        }
+        return function promisifiedJavaMethod(...inArguments) {
+            return new Promise((res, rej) => {
+                Promise.resolve().then(//queue microtask
+                () => {
+                    ModAPI.hooks._teavm.$rt_startThread(() => {
+                        return fn(...inArguments);
+                    }, function (out) {
+                        res(out);
+                    });
+                });
+            });
+        };
+    };
+    ModAPI.util.string = ModAPI.util.str = ModAPI.hooks._teavm.$rt_str;
+    ModAPI.util.setStringContent = function (jclString, string) {
+        jclString.$characters.data = ModAPI.util.stringToUint16Array(string);
+    };
+    ModAPI.util.jclStrToJsStr = ModAPI.util.unstr = ModAPI.util.unstring = ModAPI.util.ustr = ModAPI.hooks._teavm.$rt_ustr;
+    ModAPI.displayToChat = function (param) {
+        var v = typeof param === "object" ? param.msg : (param + "");
+        v ||= "";
+        var jclString = ModAPI.util.string(v);
+        if (ModAPI.is_1_12) {
+            ModAPI.hooks.methods["nmcg_GuiNewChat_printChatMessage"](ModAPI.javaClient.$ingameGUI.$persistantChatGUI, ModAPI.hooks._classMap[ModAPI.util.getCompiledName("net.minecraft.util.text.TextComponentString")].constructors[0](jclString));
+        }
+        else {
+            ModAPI.hooks.methods["nmcg_GuiNewChat_printChatMessage"](ModAPI.javaClient.$ingameGUI.$persistantChatGUI, ModAPI.hooks._classMap[ModAPI.util.getCompiledName("net.minecraft.util.ChatComponentText")].constructors[0](jclString));
+        }
+    };
+    ModAPI.util.makeArray = function makeArray(arrayClass, arrayContents = []) {
+        return ModAPI.hooks._teavm.$rt_createArrayFromData(arrayClass, arrayContents);
+    };
+    ModAPI.util.hashCode = function hashCode(string) {
+        var hash = 0;
+        for (var i = 0; i < string.length; i++) {
+            var code = string.charCodeAt(i);
+            hash = ((hash << 5) - hash) + code;
+            hash = hash & hash;
+        }
+        return Math.floor(Math.abs(hash)) + "";
+    };
+    //Check whether the thread is in a critical transition state (resuming or suspending)
+    //Calling functions in a critical state will cause stack implosions.
+    ModAPI.util.isCritical = function isCritical() {
+        return ModAPI.hooks._teavm.$rt_suspending() || ModAPI.hooks._teavm.$rt_resuming();
+    };
+    ModAPI.util.getNearestProperty = function getNearestProperty(object, prop) {
+        if (!object) {
+            return null;
+        }
+        if ((prop in object) && Object.keys(object).includes(prop)) {
+            return prop;
+        }
+        var possibleKeys = Object.keys(object).filter(x => { return x.startsWith(prop); });
+        possibleKeys = possibleKeys.filter(x => {
+            return Number.isFinite(parseInt(x.substring(prop.length))) || (x.substring(prop.length).length === 0);
+        });
+        return possibleKeys.sort((a, b) => {
+            return a.length - b.length;
+        })[0] || prop;
+    };
+    ModAPI.util.modifyFunction = function (fn, patcherFn) {
+        // Convert the original function to a string
+        let functionString = fn.toString();
+        // Extract the function body
+        let bodyStart = functionString.indexOf('{') + 1;
+        let bodyEnd = functionString.lastIndexOf('}');
+        let functionBody = functionString.substring(bodyStart, bodyEnd);
+        // Replace the function body with new instructions
+        let modifiedFunctionBody = patcherFn(functionBody) || 'return;';
+        // Create a new function with the same arguments and the modified body
+        let args = functionString.substring(functionString.indexOf('(') + 1, functionString.indexOf(')'));
+        let modifiedFunction = new Function(args, modifiedFunctionBody);
+        return modifiedFunction;
+    };
+    ModAPI.clickMouse = function () {
+        ModAPI.hooks.methods["nmc_Minecraft_clickMouse"](ModAPI.javaClient);
+    };
+    ModAPI.rightClickMouse = function () {
+        ModAPI.hooks.methods["nmc_Minecraft_rightClickMouse"](ModAPI.javaClient);
+    };
+    ModAPI.getFPS = function () {
+        return ModAPI.hooks.methods["nmc_Minecraft_getDebugFPS"](ModAPI.javaClient);
+    };
+    const updateMethodName = ModAPI.util.getMethodFromPackage("net.minecraft.client.entity.EntityPlayerSP", "onUpdate");
+    const originalUpdate = ModAPI.hooks.methods[updateMethodName];
+    ModAPI.hooks.methods[updateMethodName] = function (...args) {
+        ModAPI.onUpdate();
+        return originalUpdate.apply(this, args);
+    };
+    const getCreditsName = ModAPI.util.getMethodFromPackage("net.lax1dude.eaglercraft.v1_8.EagRuntime", "getResourceString");
+    const originalGetCredits = ModAPI.hooks.methods[getCreditsName];
+    ModAPI.hooks.methods[getCreditsName] = function ($path) {
+        if (!$path) {
+            return originalGetCredits.apply(this, [$path]);
+        }
+        if (ModAPI.util.ustr($path).toLowerCase().endsWith("credits.txt")) {
+            var out = originalGetCredits.apply(this, [$path]);
+            out = ModAPI.util.ustr(out);
+            out = getCreditsString() + out;
+            out = ModAPI.util.str(out);
+            return out;
+        }
+        return originalGetCredits.apply(this, [$path]);
+    };
+    const initMethodName = ModAPI.util.getMethodFromPackage("net.minecraft.client.Minecraft", "startGame");
+    const originalInit = ModAPI.hooks.methods[initMethodName];
+    ModAPI.hooks.methods[initMethodName] = function (...args) {
+        var x = originalInit.apply(this, args);
+        //args[0] means $this (ie: minecraft instance).
+        ModAPI.mc = ModAPI.minecraft = new Proxy(args[0], TeaVM_to_Recursive_BaseData_ProxyConf);
+        globalThis.Minecraft = ModAPI.mcinstance = ModAPI.javaClient = args[0];
+        ModAPI.settings = new Proxy(ModAPI.mcinstance.$gameSettings, TeaVM_to_Recursive_BaseData_ProxyConf);
+        if (ModAPI.is_1_12) {
+            easyAlias(ModAPI.javaClient, "$player", "$thePlayer");
+            easyAlias(ModAPI.javaClient, "$world", "$theWorld");
+        }
+        startModLoader();
+        ModAPI.hooks.methods[initMethodName] = originalInit; //unhook
+        return x;
+    };
+    var inlineIntegratedServerStartup = ModAPI.util.getMethodFromPackage("net.lax1dude.eaglercraft.v1_8.sp.internal.ClientPlatformSingleplayer", "loadIntegratedServerSourceInline");
+    //Integrated server setup has a randomised suffix on the end
+    inlineIntegratedServerStartup = ModAPI.hooks._rippedMethodKeys.filter((key) => { return key.startsWith(inlineIntegratedServerStartup); })[0];
+    const inlineIntegratedServerStartupMethod = ModAPI.hooks.methods[inlineIntegratedServerStartup];
+    ModAPI.hooks.methods[inlineIntegratedServerStartup] = function (worker, bootstrap) {
+        var x = inlineIntegratedServerStartupMethod.apply(this, [worker, bootstrap + ";" + globalThis.modapi_postinit + ";ModAPI.isServer=true;" + ModAPI.dedicatedServer._data.join(";")]);
+        ModAPI.dedicatedServer._data = [];
+        ModAPI.dedicatedServer._wasUsed = true;
+        console.log("[ModAPI] Hooked into inline integrated server.");
+        return x;
+    };
+    var integratedServerStartup = ModAPI.util.getMethodFromPackage("net.lax1dude.eaglercraft.v1_8.sp.internal.ClientPlatformSingleplayer", "createBlobObj");
+    //Integrated server setup has a randomised suffix on the end
+    integratedServerStartup = ModAPI.hooks._rippedMethodKeys.filter((key) => { return key.startsWith(integratedServerStartup); })[0];
+    const integratedServerStartupMethod = ModAPI.hooks.methods[integratedServerStartup];
+    ModAPI.hooks.methods[integratedServerStartup] = function (worker, bootstrap) {
+        var x = integratedServerStartupMethod.apply(this, [worker, bootstrap + ";" + globalThis.modapi_postinit + ";" + ModAPI.dedicatedServer._data.join(";")]);
+        ModAPI.dedicatedServer._data = [];
+        ModAPI.dedicatedServer._wasUsed = true;
+        console.log("[ModAPI] Hooked into external integrated server.");
+        return x;
+    };
+    var desktopServerStartup = ModAPI.util.getMethodFromPackage("net.lax1dude.eaglercraft.v1_8.sp.internal.ClientPlatformSingleplayer", "startIntegratedServer");
+    const desktopServerStartupMethod = ModAPI.hooks.methods[desktopServerStartup];
+    ModAPI.hooks.methods[desktopServerStartup] = function (...args) {
+        var x = desktopServerStartupMethod.apply(this, args);
+        ModAPI.dedicatedServer._data.forEach((code) => {
+            (new Function(code))();
+        });
+        console.log("[ModAPI] Hooked into external integrated server.");
+        return x;
+    };
+    ModAPI.events.newEvent("load", "client");
+    ModAPI.events.newEvent("sendchatmessage", "client");
+    const sendChatMessageMethodName = ModAPI.util.getMethodFromPackage("net.minecraft.client.entity.EntityPlayerSP", "sendChatMessage");
+    const sendChatMessage = ModAPI.hooks.methods[sendChatMessageMethodName];
+    ModAPI.hooks.methods[sendChatMessageMethodName] = function ($this, $message) {
+        var data = {
+            preventDefault: false,
+            message: ModAPI.util.jclStrToJsStr($message)
+        };
+        ModAPI.events.callEvent("sendchatmessage", data);
+        if (data.preventDefault) {
+            return;
+        }
+        if (typeof data.message === "string") {
+            ModAPI.util.setStringContent($message, data.message);
+        }
+        return sendChatMessage.apply(this, [$this, $message]);
+    };
+    const ScaledResolutionConstructor = ModAPI.reflect.getClassByName("ScaledResolution").constructors[0];
+    ModAPI.events.newEvent("frame", "client");
+    const frameMethodName = ModAPI.util.getMethodFromPackage("net.minecraft.client.Minecraft", "runTick");
+    const frameMethod = ModAPI.hooks.methods[frameMethodName];
+    ModAPI.hooks.methods[frameMethodName] = function (...args) {
+        ModAPI.events.callEvent("frame", {});
+        if (ModAPI.required.has("resolution") && ModAPI.mcinstance) {
+            ModAPI.ScaledResolution = ModAPI.resolution = new Proxy(ScaledResolutionConstructor(ModAPI.mcinstance), TeaVM_to_Recursive_BaseData_ProxyConf);
+        }
+        return frameMethod.apply(this, args);
+    };
+    ModAPI.events.newEvent("tick", "server");
+    const serverTickMethodName = ModAPI.util.getMethodFromPackage("net.minecraft.server.MinecraftServer", "tick");
+    const serverTickMethod = ModAPI.hooks.methods[serverTickMethodName];
+    ModAPI.hooks.methods[serverTickMethodName] = function ($this) {
+        if (ModAPI.util.isCritical()) {
+            return serverTickMethod.apply(this, [$this]);
+        }
+        var data = { preventDefault: false };
+        ModAPI.events.callEvent("tick", data);
+        if (data.preventDefault) {
+            return;
+        }
+        return serverTickMethod.apply(this, [$this]);
+    };
+    ModAPI.events.newEvent("serverstart", "server");
+    const serverStartMethodName = ModAPI.util.getMethodFromPackage("net.lax1dude.eaglercraft.v1_8.sp.server.EaglerMinecraftServer", "startServer");
+    const serverStartMethod = ModAPI.hooks.methods[serverStartMethodName];
+    ModAPI.hooks.methods[serverStartMethodName] = function ($this) {
+        var x = serverStartMethod.apply(this, [$this]);
+        ModAPI.server = new Proxy($this, ModAPI.util.TeaVM_to_Recursive_BaseData_ProxyConf);
+        ModAPI.rawServer = $this;
+        ModAPI.events.callEvent("serverstart", {});
+        return x;
+    };
+    ModAPI.events.newEvent("serverstop", "server");
+    const serverStopMethodName = ModAPI.util.getMethodFromPackage("net.minecraft.server.MinecraftServer", "stopServer");
+    const serverStopMethod = ModAPI.hooks.methods[serverStopMethodName];
+    ModAPI.hooks.methods[serverStopMethodName] = function ($this) {
+        var x = serverStopMethod.apply(this, [$this]);
+        ModAPI.server = ModAPI.serverInstance = null;
+        ModAPI.events.callEvent("serverstop", {});
+        return x;
+    };
+    ModAPI.events.newEvent("receivechatmessage", "server");
+    const receiveChatMessageMethodName = ModAPI.util.getMethodFromPackage("net.minecraft.network.play.client.C01PacketChatMessage", "processPacket");
+    const receiveChatMessageMethod = ModAPI.hooks.methods[receiveChatMessageMethodName];
+    ModAPI.hooks.methods[receiveChatMessageMethodName] = function (...args) {
+        var $this = args[0];
+        const _this = ModAPI.util.wrap($this).getCorrective();
+        const str = _this.message.getRef();
+        var data = {
+            preventDefault: false,
+            message: ModAPI.util.jclStrToJsStr(str)
+        };
+        ModAPI.events.callEvent("sendchatmessage", data);
+        if (data.preventDefault) {
+            return;
+        }
+        if (typeof data.message === "string") {
+            ModAPI.util.setStringContent(str, data.message);
+        }
+        var x = receiveChatMessageMethod.apply(this, args);
+        return x;
+    };
+    ModAPI.events.newEvent("processcommand", "server");
+    const processCommandMethodName = ModAPI.util.getMethodFromPackage("net.minecraft.command.CommandHandler", "executeCommand");
+    const processCommandMethod = ModAPI.hooks.methods[processCommandMethodName];
+    ModAPI.hooks.methods[processCommandMethodName] = function ($this, $sender, $rawCommand) {
+        var data = {
+            preventDefault: false,
+            sender: new Proxy($sender, TeaVM_to_Recursive_BaseData_ProxyConf),
+            command: ModAPI.util.jclStrToJsStr($rawCommand)
+        };
+        if (data.command.toLowerCase().startsWith("/efdebug")) {
+            // Utility command to debug the dedicated server.
+            data.preventDefault = true;
+            debugger;
+        }
+        else {
+            ModAPI.events.callEvent("processcommand", data);
+        }
+        if (data.preventDefault) {
+            return 0;
+        }
+        if (typeof data.command === "string") {
+            ModAPI.util.setStringContent($rawCommand, data.command);
+        }
+        var x = processCommandMethod.apply(this, [$this, $sender, $rawCommand]);
+        return x;
+    };
+    ModAPI.util.bootstrap = function () {
+        ModAPI.items = new Proxy(ModAPI.reflect.getClassById("net.minecraft.init.Items").staticVariables, StaticProps_ProxyConf);
+        if (!ModAPI.items.apple) {
+            return false;
+        }
+        ModAPI.blocks = new Proxy(ModAPI.reflect.getClassById("net.minecraft.init.Blocks").staticVariables, StaticProps_ProxyConf);
+        ModAPI.materials = new Proxy(ModAPI.reflect.getClassById("net.minecraft.block.material.Material").staticVariables, StaticProps_ProxyConf);
+        if (ModAPI.is_1_12) {
+            ModAPI.enchantments = new Proxy(ModAPI.reflect.getClassById("net.minecraft.init.Enchantments").staticVariables, StaticProps_ProxyConf);
+        }
+        else {
+            ModAPI.enchantments = new Proxy(ModAPI.reflect.getClassById("net.minecraft.enchantment.Enchantment").staticVariables, StaticProps_ProxyConf);
+        }
+        if (ModAPI.is_1_12) {
+            //1.12 specific globals
+            ModAPI.blockSounds = new Proxy(ModAPI.reflect.getClassById("net.minecraft.block.SoundType").staticVariables, StaticProps_ProxyConf);
+        }
+        return true;
+    };
+    ModAPI.events.newEvent("bootstrap", "server");
+    const bootstrapClass = ModAPI.reflect.getClassById("net.minecraft.init.Bootstrap");
+    const originalBootstrap = ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.init.Bootstrap", "register")];
+    ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.init.Bootstrap", "register")] = function (...args) {
+        if (bootstrapClass.staticVariables.alreadyRegistered) {
+            return;
+        }
+        var x = originalBootstrap.apply(this, args);
+        if (ModAPI.util.bootstrap()) {
+            console.log("[ModAPI] Hooked into bootstrap. .blocks, .items, .materials and .enchantments are now accessible.");
+            ModAPI.events.callEvent("bootstrap", {});
+        }
+        return x;
+    };
+    const originalOptionsInit = ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.gui.GuiOptions", "initGui")];
+    ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.gui.GuiOptions", "initGui")] = function (...args) {
+        var x = originalOptionsInit.apply(this, args);
+        //NOT A BUG DO NOT FIX
+        var msg = Math.random() < 0.025 ? "Plugins" : "Mods";
+        // Find the right constructor. (int id, int x, int y, int width, int height, String buttonText);
+        var btnConstructor = ModAPI.hooks._classMap['nmcg_GuiButton'].constructors.filter((c) => { return c.length === 6; })[0];
+        var heightProp = ModAPI.util.getNearestProperty(args[0], "$height");
+        var btn = btnConstructor(9635329, 0, args[0][heightProp] - 21, 100, 20, ModAPI.util.str(msg));
+        args[0].$buttonList.$add(btn);
+        return x;
+    };
+    const originalOptionsAction = ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.gui.GuiOptions", "actionPerformed")];
+    ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.gui.GuiOptions", "actionPerformed")] = function (...args) {
+        var idProp = ModAPI.util.getNearestProperty(args[1], "$id");
+        if (args[1] && args[1][idProp] === 9635329) {
+            if (typeof window.modapi_displayModGui === "function") {
+                window.modapi_displayModGui();
+            }
+            else {
+                alert("[ModAPI] Mod Manager GUI does not exist!");
+            }
+        }
+        var x = originalOptionsAction.apply(this, args);
+        return x;
+    };
+    const originalCrashMethod = ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.lax1dude.eaglercraft.v1_8.internal.teavm.ClientMain", "showCrashScreen")];
+    ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.lax1dude.eaglercraft.v1_8.internal.teavm.ClientMain", "showCrashScreen")] = function (...args) {
+        if (window.confirm("Your game has crashed, do you want to open the mod manager gui?")) {
+            return modapi_displayModGui();
+        }
+        ;
+        var x = originalCrashMethod.apply(this, args);
+        return x;
+    };
+    var inited = false;
+    const originalMainMethod = ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.lax1dude.eaglercraft.v1_8.internal.teavm.ClientMain", "_main")];
+    ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.lax1dude.eaglercraft.v1_8.internal.teavm.ClientMain", "_main")] = function (...args) {
+        if ((!inited) && (!getEaglerConfigFlag("noInitialModGui"))) {
+            inited = true;
+            ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.lax1dude.eaglercraft.v1_8.internal.teavm.ClientMain", "_main")] = originalMainMethod; //unhook
+            return modapi_displayModGui(globalThis.main);
+        }
+        else {
+            return originalMainMethod.apply(this, args);
+        }
+    };
+    if (globalThis.modapi_specialevents && Array.isArray(globalThis.modapi_specialevents)) {
+        globalThis.modapi_specialevents.forEach(eventName => {
+            ModAPI.events.newEvent(eventName, "patcher");
+        });
+    }
+    ModAPI.util.getIdFromItem = easyStaticMethod("net.minecraft.item.Item", "getIdFromItem", true);
+    ModAPI.util.getItemById = easyStaticMethod("net.minecraft.item.Item", "getItemById", false);
+    ModAPI.util.getItemFromBlock = easyStaticMethod("net.minecraft.item.Item", "getItemFromBlock", true);
+    ModAPI.util.getBlockById = easyStaticMethod("net.minecraft.block.Block", "getBlockById", false);
+    ModAPI.util.getBlockFromItem = easyStaticMethod("net.minecraft.block.Block", "getBlockFromItem", true);
+    ModAPI.util.getIdFromBlock = easyStaticMethod("net.minecraft.block.Block", "getIdFromBlock", true);
+    // 1.12 utility junk
+    if (ModAPI.is_1_12) {
+        var Block = ModAPI.reflect.getClassById("net.minecraft.block.Block").class;
+        var NonNullList = ModAPI.reflect.getClassById("net.minecraft.util.NonNullList").class;
+        var ArrayAsList = ModAPI.reflect.getClassById("java.util.Arrays$ArrayAsList").class;
+        easyStaticPropAlias("net.minecraft.block.Block", "REGISTRY", "blockRegistry");
+        easyStaticPropAlias("net.minecraft.item.Item", "REGISTRY", "itemRegistry");
+    }
+    function qhash(txt, arr, interval) {
+        arr ||= [];
+        interval ||= 32767;
+        // var interval = 4095; //used to be 4095 - arr.length, but that increases incompatibility based on load order and other circumstances
+        if (arr.length >= interval) {
+            console.error("[ModAPI.keygen] Ran out of IDs while generating for " + txt);
+            return -1;
+        }
+        var x = 1;
+        for (let i = 0; i < txt.length; i++) {
+            x += txt.charCodeAt(i);
+            x = x << txt.charCodeAt(i);
+            x = Math.abs(x);
+            x = x % interval;
+        }
+        var hash = x;
+        while (arr.includes(hash)) {
+            hash = (hash + 1) % interval;
+        }
+        return hash;
+    }
+    ModAPI.util.qhash = qhash;
+    ModAPI.keygen = {};
+    var registryNamespaceMethod = ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.util.RegistryNamespaced", "register")];
+    ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.util.RegistryNamespaced", "register")] = function (...args) {
+        args[0].$modapi_specmap ||= new Map();
+        args[0].$modapi_specmap.set(args[2], args[1]);
+        return registryNamespaceMethod.apply(this, args);
+    };
+    ModAPI.keygen.item = function (item) {
+        if (ModAPI.is_1_12) {
+            var values = ModAPI.util.wrap(ModAPI.reflect.getClassById("net.minecraft.item.Item").staticVariables.REGISTRY).getCorrective().underlyingIntegerMap.identityMap.elementData.filter((x) => !!x).map((y) => y.value.value);
+        }
+        else {
+            var values = [...ModAPI.reflect.getClassById("net.minecraft.item.Item").staticVariables.itemRegistry.$modapi_specmap.values()];
+        }
+        return qhash(item, values, 4095);
+    };
+    ModAPI.keygen.block = function (block) {
+        if (ModAPI.is_1_12) {
+            var values = ModAPI.util.wrap(ModAPI.reflect.getClassById("net.minecraft.block.Block").staticVariables.REGISTRY).getCorrective().underlyingIntegerMap.identityMap.elementData.filter((x) => !!x).map((y) => y.value.value);
+        }
+        else {
+            var values = [...ModAPI.reflect.getClassById("net.minecraft.block.Block").staticVariables.blockRegistry.$modapi_specmap.values()];
+        }
+        return qhash(block, values, 4095);
+    };
+    ModAPI.keygen.entity = function (entity) {
+        var values = [];
+        if (ModAPI.is_1_12) {
+            var arrayList = ModAPI.util.wrap(ModAPI.reflect.getClassById("net.minecraft.entity.EntityList").staticVariables.field_191311_g).getCorrective().array;
+            arrayList.forEach((x, i) => {
+                if (x) {
+                    values.push(i);
+                }
+            });
+        }
+        else {
+            var hashMap = ModAPI.util.wrap(ModAPI.reflect.getClassById("net.minecraft.entity.EntityList").staticVariables.idToClassMapping).getCorrective();
+            values = hashMap.keys.getRef().data.filter((x) => hashMap.get(x));
+        }
+        return qhash(entity, values, 127);
+    };
+    ModAPI.keygen.sound = function (soundId) {
+        if (!ModAPI.is_1_12) {
+            return -1;
+        }
+        const SoundEvent = ModAPI.reflect.getClassByName("SoundEvent");
+        const values = ModAPI.util.wrap(SoundEvent.staticVariables.REGISTRY).getCorrective().underlyingIntegerMap.identityMap.elementData.filter((x) => !!x).map((y) => y.value.value);
+        return qhash(soundId, values, 4095);
+    };
+    ModAPI.keygen.enchantment = function (enchantment) {
+        const Enchantment = ModAPI.reflect.getClassByName("Enchantment");
+        if (ModAPI.is_1_12) {
+            const values = ModAPI.util.wrap(Enchantment.staticVariables.REGISTRY).getCorrective().underlyingIntegerMap.identityMap.elementData.filter((x) => !!x).map((y) => y.value.value);
+            return qhash(enchantment, values, 4095);
+        }
+        const values = ModAPI.util.wrap(Enchantment.staticVariables.enchantmentsList).getCorrective().filter((x) => !!x).map((y) => y.effectId);
+        return qhash(enchantment, values, 4095);
+    };
+})();
+</script>
+    <script type="text/x-devon-deferred" id="modapi_modloader">(() => {
+    globalThis.promisifyIDBRequest = function promisifyIDBRequest(request) {
+        return new Promise((resolve, reject) => {
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    };
+    globalThis.getDatabase = async function getDatabase() {
+        const dbRequest = indexedDB.open("EF_MODS");
+        const db = await promisifyIDBRequest(dbRequest);
+        if (!db.objectStoreNames.contains("filesystem")) {
+            db.close();
+            const version = db.version + 1;
+            const upgradeRequest = indexedDB.open("EF_MODS", version);
+            upgradeRequest.onupgradeneeded = (event) => {
+                const upgradedDb = event.target.result;
+                upgradedDb.createObjectStore("filesystem");
+            };
+            return promisifyIDBRequest(upgradeRequest);
+        }
+        return db;
+    };
+    globalThis.getMods = async function getMods() {
+        const db = await getDatabase();
+        const transaction = db.transaction(["filesystem"], "readonly");
+        const objectStore = transaction.objectStore("filesystem");
+        const object = await promisifyIDBRequest(objectStore.get("mods.txt"));
+        var out = object ? (await object.text()).split("|").toSorted() : [];
+        db.close();
+        return out;
+    };
+    globalThis.getMod = async function getMod(mod) {
+        const db = await getDatabase();
+        const transaction = db.transaction(["filesystem"], "readonly");
+        const objectStore = transaction.objectStore("filesystem");
+        const object = await promisifyIDBRequest(objectStore.get("mods/" + mod));
+        var out = object ? (await object.text()) : "";
+        db.close();
+        return out;
+    };
+    globalThis.saveMods = async function saveMods(mods) {
+        const db = await getDatabase();
+        const transaction = db.transaction(["filesystem"], "readwrite");
+        const objectStore = transaction.objectStore("filesystem");
+        const encoder = new TextEncoder();
+        const modsData = encoder.encode(mods.toSorted().join("|"));
+        const modsBlob = new Blob([modsData], { type: "text/plain" });
+        await promisifyIDBRequest(objectStore.put(modsBlob, "mods.txt"));
+        db.close();
+    };
+    globalThis.addMod = async function addMod(mod) {
+        const mods = await getMods();
+        mods.push("web@" + mod);
+        await saveMods(mods);
+    };
+    globalThis.addFileMod = async function addFileMod(mod, textContents) {
+        const mods = await getMods();
+        if (mods.includes(mod)) {
+            await removeMod(mods.indexOf(mod));
+        }
+        else {
+            mods.push(mod);
+        }
+        await saveMods(mods);
+        const db = await getDatabase();
+        const transaction = db.transaction(["filesystem"], "readwrite");
+        const objectStore = transaction.objectStore("filesystem");
+        const encoder = new TextEncoder();
+        const modsData = encoder.encode(textContents);
+        const modsBlob = new Blob([modsData], { type: "text/plain" });
+        await promisifyIDBRequest(objectStore.put(modsBlob, "mods/" + mod));
+        db.close();
+    };
+    globalThis.removeMod = async function removeMod(index) {
+        const mods = await getMods();
+        if (index >= 0 && index < mods.length) {
+            var deleted = mods.splice(index, 1)[0];
+            await saveMods(mods);
+            if (!deleted.startsWith("web@")) {
+                const db = await getDatabase();
+                const transaction = db.transaction(["filesystem"], "readwrite");
+                const objectStore = transaction.objectStore("filesystem");
+                await promisifyIDBRequest(objectStore.delete("mods/" + deleted));
+                db.close();
+            }
+        }
+    };
+    globalThis.resetMods = async function resetMods() {
+        console.log("Resetting mods...");
+        const db = await getDatabase();
+        const transaction = db.transaction(["filesystem"], "readwrite");
+        const objectStore = transaction.objectStore("filesystem");
+        await promisifyIDBRequest(objectStore.clear());
+        console.log("Mods reset");
+        db.close();
+    };
+    globalThis.modLoader = async function modLoader(modsArr = []) {
+        if (!window.eaglerMLoaderMainRun) {
+            var searchParams = new URLSearchParams(location.search);
+            searchParams.getAll("mod").forEach((modToAdd) => {
+                console.log("[EaglerML] Adding mod to loadlist from search params: " + modToAdd);
+                modsArr.push("web@" + modToAdd);
+            });
+            searchParams.getAll("plugin").forEach((modToAdd) => {
+                console.log("[EaglerML] Adding mod to loadlist from search params: " + modToAdd);
+                modsArr.push("web@" + modToAdd);
+            });
+            if (!!eaglercraftXOpts &&
+                !!eaglercraftXOpts.Mods &&
+                Array.isArray(eaglercraftXOpts.Mods)) {
+                eaglercraftXOpts.Mods.forEach((modToAdd) => {
+                    console.log("[EaglerML] Adding mod to loadlist from eaglercraftXOpts: " +
+                        modToAdd);
+                    modsArr.push("web@" + modToAdd);
+                });
+            }
+            // Mods compiled into the client (src/mods/builtin, see build.mjs)
+            (globalThis.modapi_builtinMods || []).forEach((mod) => {
+                console.log("[EaglerML] Adding built-in mod to loadlist: " + mod.name);
+                modsArr.push("builtin@" + mod.name);
+            });
+            console.log("[EaglerML] Searching in iDB");
+            try {
+                var idbMods = await getMods();
+                modsArr = modsArr.concat(idbMods
+                    .filter(x => { return x && x.length > 0; }));
+            }
+            catch (error) {
+                console.error(error);
+            }
+            window.eaglerMLoaderMainRun = true;
+        }
+        if (window.noLoadMods === true) {
+            modsArr.splice(0, modsArr.length);
+        }
+        function checkModsLoaded(totalLoaded, identifier) {
+            console.log("[EaglerML] Checking if mods are finished :: " +
+                totalLoaded +
+                "/" +
+                modsArr.length);
+            if (totalLoaded >= modsArr.length) {
+                clearInterval(identifier ?? undefined);
+                window.ModGracePeriod = false;
+                if (window.eaglerMLoaderMainRun &&
+                    ModAPI &&
+                    ModAPI.events &&
+                    ModAPI.events.callEvent) {
+                    ModAPI.events.callEvent("load", {});
+                }
+                console.log("[EaglerML] Checking if mods are finished :: All mods loaded! Grace period off.");
+            }
+        }
+        function methodB(currentMod) {
+            try {
+                console.log("[EaglerML] Loading " + currentMod + " via method B.");
+                var script = document.createElement("script");
+                script.setAttribute("data-hash", ModAPI.util.hashCode("web@" + currentMod));
+                script.src = currentMod;
+                script.setAttribute("data-isMod", "true");
+                script.onerror = () => {
+                    console.log("[EaglerML] Failed to load " + currentMod + " via method B!");
+                    script.remove();
+                    totalLoaded++;
+                };
+                script.onload = () => {
+                    console.log("[EaglerML] Successfully loaded " + currentMod + " via method B.");
+                    totalLoaded++;
+                };
+                document.body.appendChild(script);
+            }
+            catch (error) {
+                console.log("[EaglerML] Oh no! The mod " + currentMod + " failed to load!");
+                totalLoaded++;
+            }
+        }
+        window.ModGracePeriod = true;
+        var totalLoaded = 0;
+        var loaderCheckInterval = null;
+        modsArr.sort();
+        for (let i = 0; i < modsArr.length; i++) {
+            let currentMod = modsArr[i];
+            var builtinMod = currentMod.startsWith("builtin@")
+                ? (globalThis.modapi_builtinMods || []).find((m) => "builtin@" + m.name === currentMod)
+                : undefined;
+            var isIDBMod = !builtinMod && !currentMod.startsWith("web@");
+            if (!isIDBMod && !builtinMod) {
+                currentMod = currentMod.replace("web@", "");
+            }
+            console.log("[EaglerML] Starting " + currentMod);
+            try {
+                var responseText = builtinMod ? builtinMod.code : isIDBMod ? await getMod(currentMod) : await (await fetch(currentMod)).text();
+                console.log("[EaglerML] Loading " + currentMod + " via method A.");
+                var script = document.createElement("script");
+                script.setAttribute("data-hash", ModAPI.util.hashCode((isIDBMod || builtinMod ? "" : "web@") + currentMod));
+                try {
+                    script.src =
+                        "data:text/javascript," + encodeURIComponent(responseText);
+                }
+                catch (error) {
+                    methodB(currentMod);
+                    return;
+                }
+                script.setAttribute("data-isMod", "true");
+                script.onerror = () => {
+                    console.log("[EaglerML] Failed to load " + currentMod + " via method A!");
+                    script.remove();
+                    totalLoaded++;
+                };
+                script.onload = () => {
+                    console.log("[EaglerML] Successfully loaded " + currentMod + " via method A.");
+                    totalLoaded++;
+                };
+                document.body.appendChild(script);
+            }
+            catch (error) {
+                methodB(currentMod);
+            }
+        }
+        loaderCheckInterval = setInterval(() => {
+            checkModsLoaded(totalLoaded, loaderCheckInterval);
+        }, 500);
+        console.log("[EaglerML] Starting to load " + modsArr.length + " mods...");
+        window.returnTotalLoadedMods = function returnTotalLoadedMods() {
+            return totalLoaded;
+        };
+    };
+})();
+</script>
+    <script type="text/x-devon-deferred" id="modapi_guikit">(() => {
+    // ModAPI GUI made by TheIdiotPlays
+    // https://github.com/TheIdiotPlays
+    var splashes = [
+        "Now with A.I.D.S (automatically injected dedicated server)",
+        "Only causes death 90% of the time!",
+        "HTML is better.",
+        "https://github.com/EaglerForge",
+        "hey you should check out https://github.com/ZXMushroom63/scratch-gui",
+        "99% of people stop gambling before they win big.",
+        "Now with free estradiol!",
+        "Now with H.I.V (Hyper Injected Virtual-debugger)",
+        "asdasd",
+        "Star us on GitHub to support us! https://github.com/EaglerForge/EaglerForgeInjector"
+    ];
+    var gui = `<div id="modapi_gui_container">
+      <header>
+        <h1 class="title">EaglerForge Mod Manager</h1>
+        <h4>
+          <!-- Now with with A.I.D.S. (automatically injected dedicated server)! -->
+           {splash_msg}
+        </h4>
+        <h5>
+          Warning: installing malicious mods can delete your worlds, ip-grab you, or even download more serious malware onto your computer. The EaglerForge developers are not liable for any damage caused by the use of EaglerForge and its related tools.
+        </h5>
+      </header>
+
+      <table id="modapi_gui_modTable">
+        <thead>
+          <tr>
+            <td>
+              Mod
+            </td>
+            <td class="nothing"></td>
+            <td>
+              Controls
+            </td>
+          </tr>
+        </thead>
+        <tbody>
+        </tbody>
+      </table>
+
+      <div class="controls">
+        <button class="button" onclick="window.modapi_uploadmod()">Upload Mod (.js)</button>
+        <button class="button" onclick="window.modapi_addmod()">Add Mod From URL</button>
+        <button class="button" style="text-shadow: 0px 0px 10px rgba(255, 0, 0, 0.5)" onclick="window.modapi_clearmods()">Clear All Mods</button>
+        <button class="button _doneButton" onclick="this.parentElement.parentElement.remove();">Done</button>
+      </div>
+
+      <span>(reload to apply changes)</span>
+
+      <footer>
+        <p>
+          GUI by <a href="https://github.com/TheIdiotPlays">TheIdiotPlays</a>
+        </p>
+        <p>
+          Modloader linker by
+          <a href="https://github.com/ZXMushroom63">ZXMushroom63</a>
+        </p>
+        <p>
+          API by <a href="https://github.com/ZXMushroom63">ZXMushroom63,</a> <a href="https://leah.chromebooks.lol">Leah Anderson,</a> and <a href="https://github.com/radmanplays">radmanplays</a>
+        </p>
+      </footer>
+
+      <style>
+        #modapi_gui_container td:not(.nothing):not(:has(.button)) {
+          padding: 0.5rem 1.5rem;
+          margin: 0.5rem;
+          box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+        #modapi_gui_container td.nothing {
+          user-select: none;
+          opacity: 0;
+          width: 5rem;
+        }
+        #modapi_gui_container td {
+          text-align: center;
+        }
+        #modapi_gui_container h4, #modapi_gui_container h5 {
+          padding-bottom: 0;
+          margin-bottom: 0;
+        }
+        #modapi_gui_container h5 {
+          color: white;
+          text-shadow: 0px 0px 10px rgba(255,0,0,0.5);
+          font-size: 0.75rem;
+        }
+        #modapi_gui_container a {
+          color: white;
+          transition: 1s;
+        }
+        #modapi_gui_container a:hover {
+          color: lightblue;
+        }
+
+        #modapi_gui_container {
+          overflow-y: scroll;
+          overflow-x: hidden;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: space-between;
+          height: 100vh;
+          width: 100vw;
+          position: fixed;
+          z-index: 127;
+          top: 0;
+          left: 0;
+          font-family: sans-serif;
+          background: white;
+        }
+
+        #modapi_gui_container header {
+          background-color: #333;
+          width: 100%;
+          padding: 1rem 0;
+          text-align: center;
+          color: white;
+          box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        #modapi_gui_container .title {
+          font-size: 3rem;
+          margin: 0;
+          font-weight: 700;
+          text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+        }
+
+        #modapi_gui_container .controls {
+          display: flex;
+          gap: 1rem;
+          margin-bottom: 2rem;
+          flex-wrap: wrap;
+          justify-content: center;
+          width: 100%;
+        }
+
+        #modapi_gui_container .button {
+          background-color: #555;
+          color: white;
+          padding: 12px 24px;
+          font-size: 1rem;
+          font-weight: 600;
+          border: none;
+          border-radius: 2px;
+          cursor: pointer;
+          transition: background-color 0.3s ease, transform 0.2s ease;
+          box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        #modapi_gui_container .button:hover {
+          background-color: #777;
+          transform: translateY(-2px);
+        }
+
+        #modapi_gui_container footer {
+          width: 100%;
+          padding: 1rem;
+          background-color: #333;
+          text-align: center;
+          color: white;
+          font-size: 1.25rem;
+          box-shadow: 0 -4px 6px rgba(0, 0, 0, 0.1);
+        }
+        #modapi_gui_modTable {
+          min-width: 40vw;
+        }
+      </style>
+    </div>`;
+    async function fileToText(file) {
+        return new Promise((res, rej) => {
+            var fr = new FileReader();
+            fr.addEventListener("error", (e) => { rej(e); });
+            fr.addEventListener("load", (e) => { res(fr.result); });
+            fr.readAsText(file);
+        });
+    }
+    window.modapi_displayModGui = async function (cb) {
+        if (!getMods) {
+            return;
+        }
+        if (document.querySelector("#modapi_gui_container")) {
+            cb ||= document.querySelector("#modapi_gui_container")._cb;
+            document.querySelector("#modapi_gui_container").remove();
+        }
+        var element = document.createElement("div");
+        element.innerHTML = gui.replace("{splash_msg}", splashes[Math.floor(Math.random() * splashes.length)]);
+        document.body.appendChild(element);
+        document.querySelector("#modapi_gui_container")._cb = cb;
+        var modsList = await getMods();
+        var tbody = document.querySelector("#modapi_gui_container #modapi_gui_modTable tbody");
+        tbody.innerHTML = "";
+        modsList.forEach((modtxt, i) => {
+            if (!modtxt) {
+                return;
+            }
+            var hash = ModAPI.util.hashCode(modtxt);
+            var tr = document.createElement("tr");
+            var mod = document.createElement("td");
+            if (ModAPI.meta._titleMap[hash]) {
+                //Mod has metadata
+                if (ModAPI.meta._iconMap[hash]) {
+                    var img = document.createElement("img");
+                    img.style.width = "48px";
+                    img.style.height = "48px";
+                    img.style.imageRendering = "pixelated";
+                    img.src = ModAPI.meta._iconMap[hash];
+                    mod.appendChild(img);
+                }
+                var h4 = document.createElement("h4");
+                h4.style.margin = "0";
+                h4.style.padding = "0";
+                h4.innerText = ModAPI.meta._titleMap[hash] + (ModAPI.meta._versionMap[hash] ? " " + ModAPI.meta._versionMap[hash] : "");
+                mod.appendChild(h4);
+                if (ModAPI.meta._developerMap[hash]) {
+                    var h6 = document.createElement("h6");
+                    h6.style.margin = "0";
+                    h6.style.padding = "0";
+                    h6.innerText = ModAPI.meta._developerMap[hash];
+                    mod.appendChild(h6);
+                }
+                if (ModAPI.meta._descriptionMap[hash]) {
+                    var span = document.createElement("span");
+                    span.style.fontSize = "0.65rem";
+                    span.innerText = ModAPI.meta._descriptionMap[hash];
+                    mod.appendChild(span);
+                }
+            }
+            else {
+                //Mod does not have metadata
+                if (modtxt.length > 125) {
+                    try {
+                        mod.innerText = modtxt.match(/data:text\/\S+?;fs=\S+;/m)[0];
+                    }
+                    catch (error) {
+                        mod.innerText = "Unknown Mod.";
+                    }
+                }
+                else {
+                    mod.innerText = modtxt;
+                }
+            }
+            var spacer = document.createElement("td");
+            spacer.classList.add("nothing");
+            var controls = document.createElement("td");
+            var deleteBtn = document.createElement("button");
+            deleteBtn.innerText = "Delete";
+            deleteBtn.style.height = "3rem";
+            deleteBtn.addEventListener("click", async () => {
+                await removeMod(i);
+                window.modapi_displayModGui();
+            });
+            deleteBtn.classList.add("button");
+            controls.appendChild(deleteBtn);
+            if (typeof ModAPI.meta._configMap[hash] === "function") {
+                var configBtn = document.createElement("button");
+                configBtn.innerText = "Config";
+                configBtn.style.height = "3rem";
+                configBtn.style.marginLeft = "1rem";
+                configBtn.addEventListener("click", async () => {
+                    ModAPI.meta._configMap[hash]();
+                });
+                configBtn.classList.add("button");
+                controls.appendChild(configBtn);
+            }
+            tr.appendChild(mod);
+            tr.appendChild(spacer);
+            tr.appendChild(controls);
+            tbody.appendChild(tr);
+        });
+        var once = false;
+        if (cb) {
+            document.querySelector("#modapi_gui_container ._doneButton").addEventListener("mousedown", () => {
+                if (once) {
+                    return;
+                }
+                once = true;
+                cb();
+                document.querySelector("#modapi_gui_container").remove();
+            });
+        }
+    };
+    window.modapi_clearmods = async () => {
+        await resetMods();
+        window.modapi_displayModGui();
+    };
+    window.modapi_addmod = async () => {
+        var mod = window.prompt("Paste in the URL of the mod you wish to add: ");
+        if (!mod || mod.length === 0) {
+            return;
+        }
+        await addMod(mod);
+        window.modapi_displayModGui();
+    };
+    window.modapi_uploadmod = async () => {
+        var f = document.createElement("input");
+        f.type = "file";
+        f.accept = "text/javascript";
+        f.multiple = true;
+        f.addEventListener("input", async () => {
+            if (!f.files || f.files.length < 1) {
+                return;
+            }
+            for (let i = 0; i < f.files.length; i++) {
+                await addFileMod(f.files[i].name, (await fileToText(f.files[i])));
+            }
+            window.modapi_displayModGui();
+        });
+        f.click();
+    };
+})();
+</script>
+    <script type="text/x-devon-deferred" id="modapi_builtin_mods">globalThis.modapi_builtinMods = [{"name":"auto-jump","code":"/*\n * Auto Jump for EaglercraftX 1.8.8 u53 (EaglerForge mod)\n *\n * Works like the auto-jump from newer Minecraft versions: when you walk into a\n * 1-block step, you hop up it by yourself. It won't jump at walls that are 2 or\n * more blocks tall, or when there's no headroom. It also stays off while you're\n * sneaking, flying, swimming, on a ladder or riding something.\n *\n * Toggle: press J in game, or type .autojump in chat.\n * Settings: type .autojump settings in chat, or use the Config button in the Mod Manager.\n *\n * Built in: this copy is compiled into the client and loaded by the mod loader on\n * every launch (see build.mjs / modloader.ts), so it doesn't need to be uploaded.\n */\n(function AutoJumpMod() {\n    // If an uploaded copy of this mod is also installed, only run once.\n    if (globalThis.__autoJumpLoaded)\n        return;\n    globalThis.__autoJumpLoaded = true;\n    ModAPI.meta.title(\"Auto Jump\");\n    ModAPI.meta.version(\"1.2\");\n    ModAPI.meta.credits(\"Made for Allen with Claude\");\n    ModAPI.meta.description(\"Automatically jumps up 1-block steps like modern Minecraft. Press J or type .autojump to toggle.\");\n    ModAPI.require(\"player\");\n    ModAPI.require(\"world\");\n    // ---------------- settings ---------------- //\n    const STORAGE_KEY = \"autojump_mod_settings\";\n    const DEFAULTS = {\n        enabled: true,\n        toggleKey: \"KeyJ\", // keyboard key code used to toggle\n        lookAhead: 0.35, // how far in front of your hitbox to look for a step (blocks)\n        jumpCooldown: 4, // minimum ticks between jumps\n        showMessages: true // print \"Auto Jump: ON/OFF\" in chat\n    };\n    let settings = Object.assign({}, DEFAULTS);\n    try {\n        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || \"{}\");\n        settings = Object.assign(settings, saved);\n    }\n    catch (e) { }\n    function save() {\n        try {\n            localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));\n        }\n        catch (e) { }\n    }\n    function chat(msg) {\n        try {\n            ModAPI.displayToChat(msg);\n        }\n        catch (e) { }\n    }\n    function setEnabled(on) {\n        settings.enabled = on;\n        save();\n        if (settings.showMessages) {\n            chat(\"§b[Auto Jump] \" + (on ? \"§aON\" : \"§cOFF\"));\n        }\n    }\n    // ---------------- world helpers ---------------- //\n    let blockPosCtor = null;\n    let worldCheckBroken = false; // if block lookups keep failing, fall back to collision-only mode\n    let worldErrors = 0;\n    function getBlockPosCtor() {\n        if (!blockPosCtor) {\n            const cls = ModAPI.reflect.getClassById(\"net.minecraft.util.BlockPos\");\n            blockPosCtor = cls.constructors.find((c) => c.length === 3) ?? null;\n        }\n        return blockPosCtor;\n    }\n    // true if the block at x,y,z would stop the player (stone, dirt, planks, glass...)\n    // NOTE: never call this from inside the \"update\" event. That event runs in the middle of\n    // the game's own tick, and world lookups there can stall or corrupt the game thread\n    // (this is what broke v1.0). All checks run from a normal JS timer instead, the same way\n    // EaglerForge's example Anti-AFK mod calls jump().\n    function isSolid(x, y, z) {\n        const pos = getBlockPosCtor()(Math.floor(x), Math.floor(y), Math.floor(z));\n        const state = ModAPI.world.getBlockState(pos);\n        if (!state)\n            return false;\n        const block = state.getBlock();\n        if (!block)\n            return false;\n        return !!block.getMaterial().blocksMovement();\n    }\n    // ---------------- auto jump logic ---------------- //\n    let cooldown = 0;\n    let pendingJumpY = null; // y level we jumped from, used to detect \"jumped but didn't climb\"\n    let failedJumps = 0;\n    let lastPosX = 0, lastPosZ = 0;\n    let wasOnGround = true;\n    function shouldSkip(p) {\n        try {\n            if (!p.onGround)\n                return true;\n            if (p.isSneaking && p.isSneaking())\n                return true;\n            if (p.capabilities && p.capabilities.isFlying)\n                return true;\n            if (p.isInWater && p.isInWater())\n                return true;\n            if (p.isInLava && p.isInLava())\n                return true;\n            if (p.isOnLadder && p.isOnLadder())\n                return true;\n            if (p.ridingEntity)\n                return true;\n        }\n        catch (e) { }\n        return false;\n    }\n    // The update event only counts ticks (no game calls in there). The real work happens\n    // in a timer that runs once for every new game tick.\n    let tickCounter = 0;\n    let lastHandledTick = 0;\n    ModAPI.addEventListener(\"update\", () => { tickCounter++; });\n    setInterval(() => {\n        if (tickCounter === lastHandledTick)\n            return;\n        lastHandledTick = tickCounter;\n        try {\n            autoJumpTick();\n        }\n        catch (e) {\n            console.warn(\"[Auto Jump]\", e);\n        }\n    }, 15);\n    // one chat line the first time you're in a world, so you can tell the mod is installed\n    let announced = false;\n    function announce() {\n        if (announced || !ModAPI.player)\n            return;\n        announced = true;\n        chat(\"\\u00a7b[Auto Jump] \\u00a77v1.2 loaded - \" + (settings.enabled ? \"\\u00a7aON\" : \"\\u00a7cOFF\") +\n            \"\\u00a77 (press \" + settings.toggleKey.replace(\"Key\", \"\") + \" or type .autojump to toggle)\");\n    }\n    function autoJumpTick() {\n        announce();\n        if (!settings.enabled || !ModAPI.player)\n            return;\n        let p;\n        try {\n            p = ModAPI.player.getCorrective();\n        }\n        catch (e) {\n            p = ModAPI.player;\n        }\n        if (!p)\n            return;\n        if (cooldown > 0)\n            cooldown--;\n        // detect landing after a jump that didn't get us any higher (e.g. a fence or a wall we misread)\n        const onGround = !!p.onGround;\n        if (onGround && !wasOnGround && pendingJumpY !== null) {\n            if (p.posY \u003c pendingJumpY + 0.5 && p.isCollidedHorizontally) {\n                failedJumps++;\n                cooldown = Math.max(cooldown, failedJumps >= 2 ? 40 : 12);\n            }\n            else {\n                failedJumps = 0;\n            }\n            pendingJumpY = null;\n        }\n        wasOnGround = onGround;\n        // walking away resets the \"failed\" memory\n        const moved = Math.hypot(p.posX - lastPosX, p.posZ - lastPosZ);\n        if (moved > 0.08)\n            failedJumps = 0;\n        lastPosX = p.posX;\n        lastPosZ = p.posZ;\n        if (cooldown > 0 || shouldSkip(p))\n            return;\n        // which way is the player trying to walk (from their keys, not their velocity,\n        // because velocity is zero once they're pressed against a block)\n        const forward = p.moveForward || 0;\n        const strafe = p.moveStrafing || 0;\n        if (Math.abs(forward) \u003c 0.01 && Math.abs(strafe) \u003c 0.01)\n            return;\n        const yaw = p.rotationYaw * Math.PI / 180;\n        let dx = strafe * Math.cos(yaw) - forward * Math.sin(yaw);\n        let dz = forward * Math.cos(yaw) + strafe * Math.sin(yaw);\n        const len = Math.hypot(dx, dz);\n        if (len \u003c 0.001)\n            return;\n        dx /= len;\n        dz /= len;\n        const feetY = p.posY + 0.01;\n        let jump = false;\n        if (!worldCheckBroken) {\n            try {\n                // look just past the edge of the player's 0.6 wide hitbox\n                const reach = 0.3 + settings.lookAhead;\n                const ax = p.posX + dx * reach;\n                const az = p.posZ + dz * reach;\n                const px = p.posX, pz = p.posZ;\n                // only jump for a real 1-block step we can actually stand on\n                jump = isSolid(ax, feetY, az) && !isSolid(ax, feetY + 1, az) &&\n                    !isSolid(ax, feetY + 2, az) && !isSolid(px, feetY + 2, pz);\n            }\n            catch (e) {\n                worldErrors++;\n                if (worldErrors >= 20)\n                    worldCheckBroken = true;\n                console.warn(\"[Auto Jump] block check failed, using collision check this tick\", e);\n                jump = !!p.isCollidedHorizontally && failedJumps \u003c 2;\n            }\n        }\n        if (worldCheckBroken) {\n            // fallback: jump whenever we're pushing into a block (failed-jump memory stops wall spam)\n            jump = !!p.isCollidedHorizontally && failedJumps \u003c 2;\n        }\n        if (jump) {\n            try {\n                ModAPI.player.jump();\n                pendingJumpY = p.posY;\n                cooldown = settings.jumpCooldown;\n            }\n            catch (e) { }\n        }\n    }\n    // ---------------- toggles ---------------- //\n    window.addEventListener(\"keydown\", (e) => {\n        // only while actually playing (mouse captured = no menu or chat open)\n        if (!document.pointerLockElement)\n            return;\n        if (e.code === settings.toggleKey && !e.repeat) {\n            setEnabled(!settings.enabled);\n        }\n    });\n    ModAPI.addEventListener(\"sendchatmessage\", (e) => {\n        const msg = (e.message || \"\").trim().toLowerCase();\n        if (!msg.startsWith(\".autojump\"))\n            return;\n        e.preventDefault = true;\n        const arg = msg.split(/\\s+/)[1];\n        if (arg === \"on\")\n            setEnabled(true);\n        else if (arg === \"off\")\n            setEnabled(false);\n        else if (arg === \"settings\")\n            openSettings();\n        else\n            setEnabled(!settings.enabled);\n    });\n    function openSettings() {\n        const look = prompt(\"Auto Jump: look-ahead distance in blocks (0.1 - 1.0, default 0.35)\", String(settings.lookAhead));\n        if (look !== null && !isNaN(parseFloat(look)))\n            settings.lookAhead = Math.min(1, Math.max(0.1, parseFloat(look)));\n        const key = prompt(\"Auto Jump: toggle key (letter A-Z, default J)\", settings.toggleKey.replace(\"Key\", \"\"));\n        if (key && /^[a-zA-Z]$/.test(key.trim()))\n            settings.toggleKey = \"Key\" + key.trim().toUpperCase();\n        settings.showMessages = confirm(\"Auto Jump: show ON/OFF messages in chat?\\n(OK = yes, Cancel = no)\");\n        save();\n        chat(\"§b[Auto Jump] §7settings saved (look-ahead \" + settings.lookAhead + \", key \" + settings.toggleKey.replace(\"Key\", \"\") + \")\");\n    }\n    try {\n        ModAPI.meta.config(openSettings);\n    }\n    catch (e) { }\n})();\n"}];</script>
+    <script type="text/x-devon-deferred" id="modapi_postinit_data">globalThis.modapi_postinit = `(() => {
+    //EaglerForge post initialization code.
+    //This script cannot contain backticks, escape characters, or backslashes in order to inject into the dedicated server code.
+    var startedModLoader = false;
+    var BACKSLASH = String.fromCharCode(92);
+    var LF = String.fromCharCode(10);
+    var STRIP_COMMENTS = new RegExp(atob("KChcL1wvLiokKXwoXC9cKltcc1xTXSo/XCpcLykp"), "gm");
+    var ARGUMENT_NAMES = new RegExp(atob("KFteXHMsXSsp"), "g");
+    function startModLoader() {
+        if (!startedModLoader) {
+            startedModLoader = true;
+            modLoader([]);
+        }
+    }
+    ModAPI.hooks._classMap = {};
+    ModAPI.is_1_12 = !!ModAPI.hooks.methods.nleit_MainClass_main;
+    globalThis.PluginAPI ||= ModAPI;
+    ModAPI.mcinstance ||= {};
+    ModAPI.javaClient ||= {};
+    ModAPI.meta = {};
+    ModAPI.meta._titleMap = {};
+    ModAPI.meta._descriptionMap = {};
+    ModAPI.meta._configMap = {};
+    ModAPI.meta._developerMap = {};
+    ModAPI.meta._iconMap = {};
+    ModAPI.meta._versionMap = {};
+    ModAPI.isServer = false;
+    const credits = {};
+    ModAPI.addCredit = function (category, name, contents) {
+        if (!credits[category]) {
+            credits[category] = [];
+        }
+        credits[category].push(LF + LF + " " + name + ": " + LF + LF + contents);
+    };
+    function getCreditsString() {
+        return Object.entries(credits).map((entry) => {
+            return " " + entry[0] + LF + " " + (new Array(entry[0].length)).fill("~").join("") + entry[1].join("") + LF + LF + LF;
+        }).join("");
+    }
+    ModAPI.array = {};
+    ModAPI.version = "__modapi_version_code__";
+    ModAPI.flavour = "injector";
+    ModAPI.GNU = "terry pratchett";
+    ModAPI.addCredit("EaglerForge Devs", "ZXMushroom63", "  - Built the original PluginAPI for EaglerReborn" + LF +
+        "  - Built EaglerForgeInjector as a procedural replacement for EaglerForge clients" + LF +
+        "  - Made the mod loader and gui loader" + LF +
+        "  - Added singleplayer support" + LF +
+        "  - Made the AsyncSink corelib");
+    ModAPI.addCredit("EaglerForge Devs", "radmanplays", "  - Ported and maintained EaglerReborn's PluginAPI to modern version of eaglercrafts (u22+)" + LF +
+        "  - Rebranded PluginAPI to ModAPI" + LF +
+        "  - Added various new features to ModAPI" + LF +
+        "  - Made the worldedit mod + a few other mods");
+    ModAPI.addCredit("EaglerForge Devs", "LeahOnBrainrot / OtterCodes101 / OtterDev", "  - Created EaglerReborn" + LF +
+        "  - EaglerForge developer" + LF +
+        "  - Helped update the client to newer versions" + LF +
+        "  - Made signed clients work in the legacy version" + LF +
+        "  - Maintainer nowadays" + LF +
+        "  - Various bug fixes for EaglerForgeInjector");
+    ModAPI.addCredit("EaglerForge Devs", "Murturtle", "  - Added the render event to EaglerForgeInjector" + LF +
+        "  - Added pi optimiser to the injector (now removed)");
+    ModAPI.addCredit("EaglerForge Devs", "TheIdiotPlays", "  - Made the mod manager GUI");
+    ModAPI.addCredit("EaglerForge Devs", "OeildeLynx31", "  - Work on the worldedit mod");
+    ModAPI.addCredit("EaglerForge Devs", "Stpv22", "  - Made the mod gui open before the client starts");
+    function limitSize(x, n) {
+        if (!x) {
+            return "";
+        }
+        if (x.length > n) {
+            return x.substring(0, n) + "…";
+        }
+        else {
+            return x;
+        }
+    }
+    function arraysAreSame(arr1, arr2) {
+        if (!arr1 || !arr2)
+            return false;
+        if (arr1 === arr2)
+            return true;
+        if (arr1.length !== arr2.length)
+            return false;
+        for (var i = 0, l = arr1.length; i < l; i++) {
+            if (arr1[i] instanceof Array && arr2[i] instanceof Array) {
+                if (!arr1[i].equals(arr2[i]))
+                    return false;
+            }
+            else if (arr1[i] !== arr2[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+    function getParamNames(func) {
+        var fnStr = func.toString().replace(STRIP_COMMENTS, '');
+        var result = fnStr.slice(fnStr.indexOf('(') + 1, fnStr.indexOf(')')).match(ARGUMENT_NAMES);
+        if (result === null)
+            result = [];
+        return result;
+    }
+    function getEaglerConfigFlag(key) {
+        var searchParams = new URLSearchParams(location.search);
+        return (globalThis.eaglercraftXOpts?.[key] || searchParams.get(key)) ? true : false;
+    }
+    function easyStaticMethod(classId, methodName, autoUnpack) {
+        var method = ModAPI.reflect.getClassById(classId).staticMethods[methodName].method;
+        return function easyImpl(...args) {
+            return method(...(autoUnpack ? args.map(x => {
+                if ((typeof x === "object") && (x.isModProxy === true)) {
+                    return x.getRef();
+                }
+                return x;
+            }) : args));
+        };
+    }
+    function easyAlias(obj, realProperty, alias) {
+        Object.defineProperty(obj, alias, {
+            get: function () {
+                return obj[realProperty];
+            },
+            set: function (x) {
+                obj[realProperty] = x;
+            }
+        });
+    }
+    function easyStaticPropAlias(clsId, real, alias) {
+        easyAlias(ModAPI.reflect.getClassById(clsId).staticVariables, real, alias);
+    }
+    ModAPI.meta.title = function (title) {
+        if (!document.currentScript || document.currentScript.getAttribute("data-isMod") !== "true") {
+            return console.log("[ModAPIMeta] Cannot set meta for non-mod script.");
+        }
+        if (!document.currentScript.hasAttribute("data-hash")) {
+            return console.log("[ModAPIMeta] Script does not have a hashcode.");
+        }
+        ModAPI.meta._titleMap[document.currentScript.getAttribute("data-hash")] = limitSize(title, 36);
+    };
+    ModAPI.meta.icon = function (iconSrc) {
+        if (!document.currentScript || document.currentScript.getAttribute("data-isMod") !== "true") {
+            return console.log("[ModAPIMeta] Cannot set meta for non-mod script.");
+        }
+        if (!document.currentScript.hasAttribute("data-hash")) {
+            return console.log("[ModAPIMeta] Script does not have a hashcode.");
+        }
+        ModAPI.meta._iconMap[document.currentScript.getAttribute("data-hash")] = iconSrc;
+    };
+    ModAPI.meta.credits = function (cd) {
+        if (!document.currentScript || document.currentScript.getAttribute("data-isMod") !== "true") {
+            return console.log("[ModAPIMeta] Cannot set meta for non-mod script.");
+        }
+        if (!document.currentScript.hasAttribute("data-hash")) {
+            return console.log("[ModAPIMeta] Script does not have a hashcode.");
+        }
+        ModAPI.meta._developerMap[document.currentScript.getAttribute("data-hash")] = limitSize(cd, 128);
+    };
+    ModAPI.meta.description = function (desc) {
+        if (!document.currentScript || document.currentScript.getAttribute("data-isMod") !== "true") {
+            return console.log("[ModAPIMeta] Cannot set meta for non-mod script.");
+        }
+        if (!document.currentScript.hasAttribute("data-hash")) {
+            return console.log("[ModAPIMeta] Script does not have a hashcode.");
+        }
+        ModAPI.meta._descriptionMap[document.currentScript.getAttribute("data-hash")] = limitSize(desc, 160);
+    };
+    ModAPI.meta.config = function (conf) {
+        if (typeof conf !== "function") {
+            return console.log("[ModAPIMeta] Config value was not a function");
+        }
+        if (!document.currentScript || document.currentScript.getAttribute("data-isMod") !== "true") {
+            return console.log("[ModAPIMeta] Cannot set meta for non-mod script.");
+        }
+        if (!document.currentScript.hasAttribute("data-hash")) {
+            return console.log("[ModAPIMeta] Script does not have a hashcode.");
+        }
+        ModAPI.meta._configMap[document.currentScript.getAttribute("data-hash")] = conf;
+    };
+    ModAPI.meta.version = function (ver) {
+        if (!document.currentScript || document.currentScript.getAttribute("data-isMod") !== "true") {
+            return console.log("[ModAPIMeta] Cannot set meta for non-mod script.");
+        }
+        if (!document.currentScript.hasAttribute("data-hash")) {
+            return console.log("[ModAPIMeta] Script does not have a hashcode.");
+        }
+        ModAPI.meta._versionMap[document.currentScript.getAttribute("data-hash")] = limitSize(ver, 7);
+    };
+    ModAPI.reflect ||= {};
+    ModAPI.server = ModAPI.serverInstance = null;
+    ModAPI.dedicatedServer ||= {};
+    ModAPI.dedicatedServer._data ||= [];
+    ModAPI.dedicatedServer._wasUsed = false;
+    ModAPI.dedicatedServer.appendCode = function (code) {
+        if (ModAPI.dedicatedServer._wasUsed) {
+            return console.warn("The dedicated server has already launched, ModAPI.dedicatedServer.appendCode() is useless.");
+        }
+        if (typeof code === "function") {
+            ModAPI.dedicatedServer._data.push("(" + code.toString() + ")(true)");
+        }
+        else if (typeof code === "string") {
+            ModAPI.dedicatedServer._data.push(code);
+        }
+    };
+    ModAPI.util ||= {};
+    ModAPI.util.getMethodFromPackage = function (classId, methodName) {
+        if (ModAPI.is_1_12) {
+            classId = classId.replace(".eaglercraft.v1_8", ".eaglercraft"); //why peyton why must you do this. you couldve changed it to v1_12 too, that would've worked
+            classId = classId.replace(".entity.RenderItem", ".RenderItem");
+        }
+        var name = "";
+        var classStuff = classId.split(".");
+        classStuff.forEach((component, i) => {
+            if (i === classStuff.length - 1) {
+                name += "_" + component;
+            }
+            else {
+                name += component[0].toLowerCase();
+            }
+        });
+        name += "_" + methodName;
+        return name;
+    };
+    ModAPI.util.getCompiledNameFromPackage = ModAPI.util.getCompiledName = function (classId) {
+        if (ModAPI.is_1_12) {
+            classId = classId.replace(".eaglercraft.v1_8", ".eaglercraft"); //why peyton why must you do this. you couldve changed it to v1_12 too, that would've worked
+        }
+        var name = "";
+        var classStuff = classId.split(".");
+        classStuff.forEach((component, i) => {
+            if (i === classStuff.length - 1) {
+                name += "_" + component;
+            }
+            else {
+                name += component[0].toLowerCase();
+            }
+        });
+        return name;
+    };
+    ModAPI.util.asClass = ModAPI.hooks._teavm.$rt_cls;
+    ModAPI.util.wrap = function (outputValue, target, corrective, disableFunctions) {
+        target ||= {};
+        corrective ||= false;
+        disableFunctions ||= false;
+        const CorrectiveArray = patchProxyConfToCorrective(ModAPI.util.TeaVMArray_To_Recursive_BaseData_ProxyConf);
+        const CorrectiveRecursive = patchProxyConfToCorrective(ModAPI.util.TeaVM_to_Recursive_BaseData_ProxyConf);
+        if (outputValue && typeof outputValue === "object" && Array.isArray(outputValue.data) && typeof outputValue.type === "function") {
+            if (corrective) {
+                return new Proxy(outputValue.data, CorrectiveArray);
+            }
+            return new Proxy(outputValue.data, ModAPI.util.TeaVMArray_To_Recursive_BaseData_ProxyConf);
+        }
+        if (ModAPI.is_1_12 && outputValue && typeof outputValue === "object" && outputValue.constructor === NonNullList) { //1.12 NonNullList support
+            const targetProperty = Object.values(outputValue)?.find(x => x && typeof x === "object" && x.constructor === ArrayAsList);
+            if (targetProperty) {
+                const arrayProp = Object.values(targetProperty).find(x => x && typeof x === "object" && Array.isArray(x.data) && typeof x.type === "function");
+                if (corrective) {
+                    return new Proxy(arrayProp.data, CorrectiveArray);
+                }
+                return new Proxy(arrayProp.data, ModAPI.util.TeaVMArray_To_Recursive_BaseData_ProxyConf);
+            }
+        }
+        if (outputValue && typeof outputValue === "object" && !Array.isArray(outputValue)) {
+            if (corrective) {
+                return new Proxy(outputValue, CorrectiveRecursive);
+            }
+            return new Proxy(outputValue, ModAPI.util.TeaVM_to_Recursive_BaseData_ProxyConf);
+        }
+        if (!disableFunctions && outputValue && typeof outputValue === "function" && target) {
+            return function (...args) {
+                var xOut = outputValue.apply(target, args);
+                if (xOut && typeof xOut === "object" && Array.isArray(xOut.data) && typeof xOut.type === "function") {
+                    if (corrective) {
+                        return new Proxy(xOut.data, CorrectiveArray);
+                    }
+                    return new Proxy(xOut.data, ModAPI.util.TeaVMArray_To_Recursive_BaseData_ProxyConf);
+                }
+                if (xOut && typeof xOut === "object" && !Array.isArray(xOut)) {
+                    if (corrective) {
+                        return new Proxy(xOut, CorrectiveRecursive);
+                    }
+                    return new Proxy(xOut, ModAPI.util.TeaVM_to_Recursive_BaseData_ProxyConf);
+                }
+                return xOut;
+            };
+        }
+        return null;
+    };
+    ModAPI.array.object = function (jclass, size) {
+        if (typeof jclass === "string") {
+            jclass = ModAPI.reflect.getClassById(jclass).class;
+        }
+        if (Array.isArray(size)) {
+            return ModAPI.hooks._teavm.$rt_createArrayFromData(jclass, size);
+        }
+        return ModAPI.hooks._teavm.$rt_createArray(jclass, size);
+    };
+    ModAPI.array.boolean = function (size) {
+        if (Array.isArray(size)) {
+            return ModAPI.hooks._teavm.$rt_createBooleanArrayFromData(size);
+        }
+        return ModAPI.hooks._teavm.$rt_createBooleanArray(size);
+    };
+    ModAPI.array.byte = function (size) {
+        if (Array.isArray(size)) {
+            return ModAPI.hooks._teavm.$rt_createByteArrayFromData(size);
+        }
+        return ModAPI.hooks._teavm.$rt_createByteArray(size);
+    };
+    ModAPI.array.char = function (size) {
+        if (Array.isArray(size)) {
+            return ModAPI.hooks._teavm.$rt_createCharArrayFromData(size);
+        }
+        return ModAPI.hooks._teavm.$rt_createCharArray(size);
+    };
+    ModAPI.array.short = function (size) {
+        if (Array.isArray(size)) {
+            return ModAPI.hooks._teavm.$rt_createShortArrayFromData(size);
+        }
+        return ModAPI.hooks._teavm.$rt_createShortArray(size);
+    };
+    ModAPI.array.int = function (size) {
+        if (Array.isArray(size)) {
+            return ModAPI.hooks._teavm.$rt_createIntArrayFromData(size);
+        }
+        return ModAPI.hooks._teavm.$rt_createIntArray(size);
+    };
+    ModAPI.array.float = function (size) {
+        if (Array.isArray(size)) {
+            return ModAPI.hooks._teavm.$rt_createFloatArrayFromData(size);
+        }
+        return ModAPI.hooks._teavm.$rt_createFloatArray(size);
+    };
+    ModAPI.array.double = function (size) {
+        if (Array.isArray(size)) {
+            return ModAPI.hooks._teavm.$rt_createDoubleArrayFromData(size);
+        }
+        return ModAPI.hooks._teavm.$rt_createDoubleArray(size);
+    };
+    function staticKeyMapper(k) {
+        return k.split(/(?=[A-Z])/).map((x) => x.toUpperCase()).join("_");
+    }
+    //Proxy to make sure static variables are initialized before access, as well as fixing some issues in 1.12
+    function makeClinitProxy(staticVariables, clinit) {
+        return new Proxy(staticVariables, {
+            get: function (a, b, c) {
+                clinit();
+                return Reflect.get(a, b, c) || Reflect.get(a, staticKeyMapper(b), c);
+            }
+        });
+    }
+    ModAPI.hooks.regenerateClassMap = function () {
+        ModAPI.hooks._rippedConstructorKeys = Object.keys(ModAPI.hooks._rippedConstructors);
+        ModAPI.hooks._rippedInternalConstructorKeys = Object.keys(ModAPI.hooks._rippedInternalConstructors);
+        ModAPI.hooks._rippedMethodKeys = Object.keys(ModAPI.hooks._rippedMethodTypeMap);
+        ModAPI.hooks._rippedInterfaceKeys = Object.keys(ModAPI.hooks._rippedInterfaceMap);
+        var compiledNames = new Set();
+        var metaMap = {};
+        //Loop through ripped metadata passes. Classes obtained through this method have full metadata (superclasses, full names, binary names, actual class)
+        ModAPI.hooks._rippedData.forEach((block) => {
+            block.forEach((item) => {
+                if (typeof item === "function") {
+                    if (!item.$meta || typeof item.$meta.name !== "string") {
+                        if (item.name && item.name.split("_").length === 2) {
+                            metaMap[item.name] = item;
+                            compiledNames.add(item.name);
+                        }
+                        return;
+                    }
+                    var compiledName = ModAPI.util.getCompiledNameFromPackage(item.$meta.name);
+                    compiledNames.add(compiledName);
+                    metaMap[compiledName] = item;
+                }
+            });
+        });
+        ModAPI.hooks._rippedConstructorKeys.forEach((constructor) => {
+            if (typeof constructor === "string" && constructor.length > 0) {
+                //Constructor names are phrased as aaa_Apple__init_3 or similar, the separator is __init_
+                var constructorData = constructor.split("__init_");
+                if (constructorData[0] && constructorData[0].includes("_")) {
+                    compiledNames.add(constructorData[0]);
+                }
+            }
+        });
+        ModAPI.hooks._rippedInterfaceKeys.forEach((className) => {
+            if (typeof className === "string" && className.length > 0) {
+                //Interfaces using $rt_classWithoutFields(0) and no constructors.
+                if (className && className.includes("_")) {
+                    compiledNames.add(className);
+                }
+            }
+        });
+        //Initialise all compiled names into the class map
+        compiledNames.forEach(compiledName => {
+            var item = metaMap[compiledName] || ModAPI.hooks._rippedInterfaceMap[compiledName];
+            var classId = item?.$meta?.name || null;
+            if (!ModAPI.hooks._classMap[compiledName]) {
+                var argumentCache = null;
+                ModAPI.hooks._classMap[compiledName] = {
+                    "name": compiledName.split("_")[1],
+                    "id": classId,
+                    "binaryName": item?.$meta?.binaryName || null,
+                    "constructors": [],
+                    "internalConstructors": [],
+                    "methods": {},
+                    "staticMethods": {},
+                    "staticVariables": {},
+                    "staticVariableNames": [],
+                    "class": item || null,
+                    "hasMeta": !!(item?.$meta),
+                    "instanceOf": function (object) {
+                        try {
+                            return ModAPI.hooks._teavm.$rt_isInstance(object, item || null);
+                        }
+                        catch {
+                            return false;
+                        }
+                    },
+                    "compiledName": compiledName,
+                    "getConstructorByArgs": function (...argNames) {
+                        if (!argumentCache) {
+                            argumentCache = [];
+                            this.internalConstructors.forEach((x) => {
+                                argumentCache.push(getParamNames(x).slice(1).map((y) => y.substring(1)));
+                            });
+                        }
+                        for (let i = 0; i < argumentCache.length; i++) {
+                            const args = argumentCache[i];
+                            if (arraysAreSame(args, argNames)) {
+                                return this.constructors[i];
+                            }
+                        }
+                    },
+                };
+            }
+            if (typeof item?.$meta?.superclass === "function" && item?.$meta?.superclass?.$meta) {
+                ModAPI.hooks._classMap[compiledName].superclassRaw = item.$meta.superclass;
+            }
+            else {
+                ModAPI.hooks._classMap[compiledName].superclassRaw = null;
+            }
+            if (item?.["$constructor$"]) {
+                //Class does not have any hand written constructors
+                //Eg: class MyClass {}
+                ModAPI.hooks._classMap[compiledName].constructors.push(item["$constructor$"]);
+            }
+            else {
+                //Class has hand written constructors, we need to search in the stash
+                ModAPI.hooks._rippedConstructorKeys.forEach((constructor) => {
+                    if (constructor.startsWith(compiledName + "__init_") && !constructor.includes("$lambda$")) {
+                        ModAPI.hooks._classMap[compiledName].constructors.push(ModAPI.hooks._rippedConstructors[constructor]);
+                    }
+                });
+            }
+            ModAPI.hooks._classMap[compiledName].areConstructorsBaked = ModAPI.hooks._classMap[compiledName].constructors.length === 0;
+            //^^^ IF TRUE: TeaVM wants us to have an aneurism, and is optimising constructors out of the code.
+            // ModAPI will to it's best to recreate the constructors programmatically
+            ModAPI.hooks._rippedInternalConstructorKeys.forEach((initialiser) => {
+                if (initialiser.startsWith(compiledName + "__init_") && !initialiser.includes("$lambda$")) {
+                    const internalConstructor = ModAPI.hooks._rippedInternalConstructors[initialiser];
+                    ModAPI.hooks._classMap[compiledName].internalConstructors.push(internalConstructor);
+                    if (ModAPI.hooks._classMap[compiledName].areConstructorsBaked) {
+                        // Recreate constructors due to TeaVM over-optimisation
+                        const argIds = (new Array(2)).fill(0).map((x, i) => "_" + i);
+                        ModAPI.hooks._classMap[compiledName].constructors.push((new Function(...argIds, "const inst = new this.theClass; this.init(inst, " + argIds.join(", ") + "); return inst;")).bind({
+                            theClass: ModAPI.hooks._classMap[compiledName].class,
+                            init: internalConstructor
+                        }));
+                    }
+                }
+            });
+            ModAPI.hooks._rippedMethodKeys.forEach((method) => {
+                if (method.startsWith(compiledName + "_") && !method.includes("$lambda$")) {
+                    var targetMethodMap = ModAPI.hooks._classMap[compiledName].methods;
+                    if (ModAPI.hooks._rippedMethodTypeMap[method] === "static") {
+                        targetMethodMap = ModAPI.hooks._classMap[compiledName].staticMethods;
+                    }
+                    targetMethodMap[method.replace(compiledName + "_", "")] = {
+                        method: ModAPI.hooks.methods[method],
+                        methodName: method,
+                        methodNameShort: method.replace(compiledName + "_", "")
+                    };
+                    //Prototype Injection, allows for far easier access to methods
+                    if (typeof item === "function" && ModAPI.hooks._rippedMethodTypeMap[method] === "instance") {
+                        var prototypeInjectedMethod = function prototypeInjectedMethod(...args) {
+                            return ModAPI.hooks.methods[method].apply(this, [this, ...args]);
+                        };
+                        if ((item.prototype["$" + method.replace(compiledName + "_", "")]?.name ?? "prototypeInjectedMethod") === "prototypeInjectedMethod") {
+                            item.prototype["$" + method.replace(compiledName + "_", "")] = prototypeInjectedMethod;
+                        }
+                        else {
+                            item.prototype["$" + method.replace(compiledName + "_", "")] ||= prototypeInjectedMethod;
+                        }
+                    }
+                }
+            });
+            ModAPI.hooks._classMap[compiledName].staticVariables = makeClinitProxy(ModAPI.hooks._rippedStaticProperties[compiledName] || {}, (() => {
+                (ModAPI.hooks._rippedStaticProperties[compiledName].$callClinit ?? (() => { }))();
+            }));
+            ModAPI.hooks._classMap[compiledName].staticVariableNames = Object.keys(ModAPI.hooks._classMap[compiledName].staticVariables);
+        });
+        //populate superclasses
+        compiledNames.forEach(compiledName => {
+            var item = ModAPI.hooks._classMap[compiledName];
+            if (item.superclassRaw) {
+                item.superclass = ModAPI.hooks._classMap[item.superclassRaw.name];
+            }
+            else {
+                item.superclass = null;
+            }
+        });
+        ModAPI.reflect.classes = Object.values(ModAPI.hooks._classMap);
+        ModAPI.reflect.classMap = ModAPI.hooks._classMap;
+        console.log("[ModAPI] Regenerated hook classmap.");
+    };
+    ModAPI.hooks.regenerateClassMap();
+    ModAPI.reflect.getClassById = function (classId) {
+        return ModAPI.hooks._classMap[ModAPI.util.getCompiledName(classId)];
+    };
+    ModAPI.reflect.getClassByName = function (className) {
+        var classKeys = Object.keys(ModAPI.hooks._classMap);
+        var key = classKeys.filter(k => { return ModAPI.hooks._classMap[k].name === className; })[0];
+        return key ? ModAPI.hooks._classMap[key] : null;
+    };
+    //Magical function for making a subclass with a custom constructor that you can easily use super(...) on.
+    ModAPI.reflect.getSuper = function getSuper(reflectClass, filter) {
+        filter ||= (x) => x.length === 1;
+        while (!reflectClass.internalConstructors.find(filter) && reflectClass.superclass) {
+            reflectClass = reflectClass.superclass;
+        }
+        var initialiser = reflectClass.internalConstructors.find(filter);
+        if (!initialiser) {
+            throw new Error("[ModAPI] Failed to find matching superclass constructor in tree.");
+        }
+        return function superFunction(thisArg, ...extra_args) {
+            reflectClass.class.call(thisArg);
+            initialiser(thisArg, ...extra_args);
+        };
+    };
+    //Make it extend the parent. Used to iteratively load the superclasses' prototype methods.
+    ModAPI.reflect.prototypeStack = function prototypeStack(reflectClass, classFn) {
+        classFn.prototype = Object.create(reflectClass.class.prototype);
+        classFn.prototype.constructor = classFn;
+        classFn.$meta = {
+            item: null,
+            supertypes: [reflectClass.class]
+        };
+        classFn.classObject = null;
+    };
+    ModAPI.reflect.implements = function impl(classFn, reflectClass) {
+        classFn.$meta ||= {};
+        classFn.$meta.supertypes ||= [];
+        if (reflectClass && reflectClass.class) {
+            classFn.$meta.supertypes.push(reflectClass.class);
+        }
+    };
+    var reloadDeprecationWarnings = 0;
+    const TeaVMArray_To_Recursive_BaseData_ProxyConf = {
+        get(target, prop, receiver) {
+            var corrective = !!this._corrective;
+            if (prop === "getRef") {
+                return function () {
+                    return target;
+                };
+            }
+            if (prop === "getCorrective") {
+                return function () {
+                    return new Proxy(target, patchProxyConfToCorrective(TeaVMArray_To_Recursive_BaseData_ProxyConf));
+                };
+            }
+            if (prop === "isCorrective") {
+                return function () {
+                    return corrective;
+                };
+            }
+            if (prop === "reload") {
+                return function () {
+                    if (reloadDeprecationWarnings < 10) {
+                        console.warn("ModAPI/PluginAPI reload() is obsolete, please stop using it in code.");
+                        reloadDeprecationWarnings++;
+                    }
+                };
+            }
+            var outputValue = Reflect.get(target, prop, receiver);
+            var wrapped = ModAPI.util.wrap(outputValue, target, corrective, true);
+            if (wrapped) {
+                return wrapped;
+            }
+            return outputValue;
+        },
+        set(object, prop, value) {
+            object[prop] = value;
+            return true;
+        }
+    };
+    const TeaVM_to_Recursive_BaseData_ProxyConf = {
+        ownKeys(target) {
+            return Reflect.ownKeys(target).map(x => x.substring(1));
+        },
+        getOwnPropertyDescriptor(target, prop) {
+            return Object.getOwnPropertyDescriptor(target, "$" + prop);
+        },
+        has(target, prop) {
+            return ("$" + prop) in target;
+        },
+        get(target, prop, receiver) {
+            var corrective = !!this._corrective;
+            if (prop === "getCorrective") {
+                return function () {
+                    return new Proxy(target, patchProxyConfToCorrective(TeaVM_to_Recursive_BaseData_ProxyConf));
+                };
+            }
+            if (prop === "isCorrective") {
+                return function () {
+                    return corrective;
+                };
+            }
+            if (prop === "getRef") {
+                return function () {
+                    return target;
+                };
+            }
+            if (prop === "reload") {
+                return function () {
+                    if (reloadDeprecationWarnings < 10) {
+                        console.warn("ModAPI/PluginAPI reload() is obsolete, please stop using it in code.");
+                        reloadDeprecationWarnings++;
+                    }
+                };
+            }
+            if (prop === "isModProxy") {
+                return true;
+            }
+            var outProp = "$" + prop;
+            if (corrective) {
+                outProp = ModAPI.util.getNearestProperty(target, outProp);
+            }
+            var outputValue = Reflect.get(target, outProp, receiver);
+            var wrapped = ModAPI.util.wrap(outputValue, target, corrective, false);
+            if (wrapped) {
+                return wrapped;
+            }
+            return outputValue;
+        },
+        set(object, prop, value) {
+            var corrective = !!this._corrective;
+            var outProp = "$" + prop;
+            if (corrective) {
+                outProp = ModAPI.util.getNearestProperty(object, outProp);
+            }
+            object[outProp] = value;
+            return true;
+        },
+    };
+    function patchProxyConfToCorrective(conf) {
+        var pconf = Object.assign({}, conf);
+        pconf._corrective = true;
+        return pconf;
+    }
+    const StaticProps_ProxyConf = {
+        get(target, prop, receiver) {
+            var outProp = prop;
+            var outputValue = Reflect.get(target, outProp, receiver);
+            if (outputValue && typeof outputValue === "object" && Array.isArray(outputValue.data) && typeof outputValue.type === "function") {
+                return new Proxy(outputValue.data, TeaVMArray_To_Recursive_BaseData_ProxyConf);
+            }
+            if (outputValue && typeof outputValue === "object" && !Array.isArray(outputValue)) {
+                return new Proxy(outputValue, TeaVM_to_Recursive_BaseData_ProxyConf);
+            }
+            return outputValue;
+        },
+        set(object, prop, value) {
+            var outProp = prop;
+            object[outProp] = value;
+            return true;
+        },
+    };
+    ModAPI.util.TeaVMArray_To_Recursive_BaseData_ProxyConf = TeaVMArray_To_Recursive_BaseData_ProxyConf;
+    ModAPI.util.TeaVM_to_Recursive_BaseData_ProxyConf = TeaVM_to_Recursive_BaseData_ProxyConf;
+    ModAPI.util.StaticProps_ProxyConf = StaticProps_ProxyConf;
+    ModAPI.required = new Set();
+    ModAPI.events = {};
+    ModAPI.events.types = ["event"];
+    ModAPI.events.lib_map = {};
+    ModAPI.events.listeners = { "event": [] };
+    ModAPI.addEventListener = function addEventListener(name, callback) {
+        if (name.startsWith("lib:")) {
+            if (Object.keys(ModAPI.events.lib_map).includes(name)) {
+                callback(ModAPI.events.lib_map[name]);
+            }
+            else {
+                if (!Array.isArray(ModAPI.events.listeners[name])) {
+                    ModAPI.events.listeners[name] = [];
+                }
+                ModAPI.events.listeners[name].push(callback);
+            }
+            console.log("[ModAPI] Added new library listener: " + name);
+            return;
+        }
+        if (!callback || typeof callback !== "function") {
+            throw new Error("[ModAPI] Invalid callback!");
+        }
+        if (ModAPI.events.types.includes(name) || name.startsWith("custom:")) {
+            if (!Array.isArray(ModAPI.events.listeners[name])) {
+                ModAPI.events.listeners[name] = [];
+            }
+            ModAPI.events.listeners[name].push(callback);
+            console.log("[ModAPI] Added new event listener: " + name);
+        }
+        else {
+            throw new Error("[ModAPI] This event does not exist!");
+        }
+    };
+    ModAPI.removeEventListener = function removeEventListener(name, func, slow) {
+        if (!func) {
+            throw new Error("Invalid callback!");
+        }
+        if (!Array.isArray(ModAPI.events.listeners[name])) {
+            ModAPI.events.listeners[name] = [];
+        }
+        var targetArr = ModAPI.events.listeners[name];
+        if (!slow) {
+            if (targetArr.indexOf(func) !== -1) {
+                targetArr.splice(targetArr.indexOf(func), 1);
+                console.log("[ModAPI] Removed event listener.");
+            }
+        }
+        else {
+            var functionString = func.toString();
+            targetArr.forEach((f, i) => {
+                if (f.toString() === functionString) {
+                    targetArr.splice(i, 1);
+                    console.log("[ModAPI] Removed event listener.");
+                }
+            });
+        }
+    };
+    ModAPI.events.newEvent = function newEvent(name, side = "unknown") {
+        if (!ModAPI.events.types.includes(name)) {
+            console.log("[ModAPI] Registered " + side + " event: " + name);
+            ModAPI.events.types.push(name);
+        }
+    };
+    ModAPI.events.callEvent = function callEvent(name, data) {
+        if (ModAPI.events.types.includes(name) && name.startsWith("lib:")) {
+            if (Array.isArray(ModAPI.events.listeners[name])) {
+                ModAPI.events.listeners[name].forEach((func) => {
+                    func(data);
+                });
+            }
+            ModAPI.events.lib_map[name] = data;
+            return;
+        }
+        if (!ModAPI.events.types.includes(name) ||
+            !Array.isArray(ModAPI.events.listeners[name])) {
+            if (!Array.isArray(ModAPI.events.listeners[name])) {
+                if (ModAPI.events.types.includes(name)) {
+                    ModAPI.events.listeners.event.forEach((func) => {
+                        func({ event: name, data: data });
+                    });
+                    return;
+                }
+                return;
+            }
+            console.error("ModAPI/PluginAPI has been called with an invalid event name: " + name);
+            console.error("Please report this bug to the repo.");
+            return;
+        }
+        ModAPI.events.listeners[name].forEach((func) => {
+            func(data);
+        });
+        ModAPI.events.listeners.event.forEach((func) => {
+            func({ event: name, data: data });
+        });
+    };
+    ModAPI.events.newEvent("update", "client");
+    ModAPI.require = function (module) {
+        ModAPI.required.add(module);
+    };
+    ModAPI.onUpdate = function () {
+        if (ModAPI.required.has("player") && ModAPI.javaClient && ModAPI.javaClient.$thePlayer) {
+            ModAPI.player = new Proxy(ModAPI.javaClient.$thePlayer, TeaVM_to_Recursive_BaseData_ProxyConf);
+        }
+        if (ModAPI.required.has("network") && ModAPI.javaClient && ModAPI.javaClient.$thePlayer && ModAPI.javaClient.$thePlayer.$sendQueue) {
+            ModAPI.network = new Proxy(ModAPI.javaClient.$thePlayer.$sendQueue, TeaVM_to_Recursive_BaseData_ProxyConf);
+        }
+        if (ModAPI.required.has("world") && ModAPI.javaClient && ModAPI.javaClient.$theWorld) {
+            ModAPI.world = new Proxy(ModAPI.javaClient.$theWorld, TeaVM_to_Recursive_BaseData_ProxyConf);
+        }
+        try {
+            ModAPI.events.callEvent("update");
+        }
+        catch (error) {
+            console.error(error);
+        }
+    };
+    ModAPI.util.stringToUint16Array = function stringToUint16Array(str) {
+        const buffer = new ArrayBuffer(str.length * 2); // 2 bytes for each char
+        const uint16Array = new Uint16Array(buffer);
+        for (let i = 0; i < str.length; i++) {
+            uint16Array[i] = str.charCodeAt(i);
+        }
+        return uint16Array;
+    };
+    //Overrides $rt_resuming, $rt_suspending, $rt_currentThread. Experimental, but should be used if call stack leaks occur as a result of running internal code.
+    ModAPI.freezeCallstack = function () {
+        ModAPI.hooks.freezeCallstack = true;
+    };
+    ModAPI.unfreezeCallstack = function () {
+        ModAPI.hooks.freezeCallstack = false;
+    };
+    //Function used for running @Async / @Async-dependent TeaVM methods.
+    ModAPI.promisify = function promisify(fn) {
+        if (typeof fn !== "function") {
+            console.error("[ModAPI.promisify] Input was not a function: ", fn);
+        }
+        return function promisifiedJavaMethod(...inArguments) {
+            return new Promise((res, rej) => {
+                Promise.resolve().then(//queue microtask
+                () => {
+                    ModAPI.hooks._teavm.$rt_startThread(() => {
+                        return fn(...inArguments);
+                    }, function (out) {
+                        res(out);
+                    });
+                });
+            });
+        };
+    };
+    ModAPI.util.string = ModAPI.util.str = ModAPI.hooks._teavm.$rt_str;
+    ModAPI.util.setStringContent = function (jclString, string) {
+        jclString.$characters.data = ModAPI.util.stringToUint16Array(string);
+    };
+    ModAPI.util.jclStrToJsStr = ModAPI.util.unstr = ModAPI.util.unstring = ModAPI.util.ustr = ModAPI.hooks._teavm.$rt_ustr;
+    ModAPI.displayToChat = function (param) {
+        var v = typeof param === "object" ? param.msg : (param + "");
+        v ||= "";
+        var jclString = ModAPI.util.string(v);
+        if (ModAPI.is_1_12) {
+            ModAPI.hooks.methods["nmcg_GuiNewChat_printChatMessage"](ModAPI.javaClient.$ingameGUI.$persistantChatGUI, ModAPI.hooks._classMap[ModAPI.util.getCompiledName("net.minecraft.util.text.TextComponentString")].constructors[0](jclString));
+        }
+        else {
+            ModAPI.hooks.methods["nmcg_GuiNewChat_printChatMessage"](ModAPI.javaClient.$ingameGUI.$persistantChatGUI, ModAPI.hooks._classMap[ModAPI.util.getCompiledName("net.minecraft.util.ChatComponentText")].constructors[0](jclString));
+        }
+    };
+    ModAPI.util.makeArray = function makeArray(arrayClass, arrayContents = []) {
+        return ModAPI.hooks._teavm.$rt_createArrayFromData(arrayClass, arrayContents);
+    };
+    ModAPI.util.hashCode = function hashCode(string) {
+        var hash = 0;
+        for (var i = 0; i < string.length; i++) {
+            var code = string.charCodeAt(i);
+            hash = ((hash << 5) - hash) + code;
+            hash = hash & hash;
+        }
+        return Math.floor(Math.abs(hash)) + "";
+    };
+    //Check whether the thread is in a critical transition state (resuming or suspending)
+    //Calling functions in a critical state will cause stack implosions.
+    ModAPI.util.isCritical = function isCritical() {
+        return ModAPI.hooks._teavm.$rt_suspending() || ModAPI.hooks._teavm.$rt_resuming();
+    };
+    ModAPI.util.getNearestProperty = function getNearestProperty(object, prop) {
+        if (!object) {
+            return null;
+        }
+        if ((prop in object) && Object.keys(object).includes(prop)) {
+            return prop;
+        }
+        var possibleKeys = Object.keys(object).filter(x => { return x.startsWith(prop); });
+        possibleKeys = possibleKeys.filter(x => {
+            return Number.isFinite(parseInt(x.substring(prop.length))) || (x.substring(prop.length).length === 0);
+        });
+        return possibleKeys.sort((a, b) => {
+            return a.length - b.length;
+        })[0] || prop;
+    };
+    ModAPI.util.modifyFunction = function (fn, patcherFn) {
+        // Convert the original function to a string
+        let functionString = fn.toString();
+        // Extract the function body
+        let bodyStart = functionString.indexOf('{') + 1;
+        let bodyEnd = functionString.lastIndexOf('}');
+        let functionBody = functionString.substring(bodyStart, bodyEnd);
+        // Replace the function body with new instructions
+        let modifiedFunctionBody = patcherFn(functionBody) || 'return;';
+        // Create a new function with the same arguments and the modified body
+        let args = functionString.substring(functionString.indexOf('(') + 1, functionString.indexOf(')'));
+        let modifiedFunction = new Function(args, modifiedFunctionBody);
+        return modifiedFunction;
+    };
+    ModAPI.clickMouse = function () {
+        ModAPI.hooks.methods["nmc_Minecraft_clickMouse"](ModAPI.javaClient);
+    };
+    ModAPI.rightClickMouse = function () {
+        ModAPI.hooks.methods["nmc_Minecraft_rightClickMouse"](ModAPI.javaClient);
+    };
+    ModAPI.getFPS = function () {
+        return ModAPI.hooks.methods["nmc_Minecraft_getDebugFPS"](ModAPI.javaClient);
+    };
+    const updateMethodName = ModAPI.util.getMethodFromPackage("net.minecraft.client.entity.EntityPlayerSP", "onUpdate");
+    const originalUpdate = ModAPI.hooks.methods[updateMethodName];
+    ModAPI.hooks.methods[updateMethodName] = function (...args) {
+        ModAPI.onUpdate();
+        return originalUpdate.apply(this, args);
+    };
+    const getCreditsName = ModAPI.util.getMethodFromPackage("net.lax1dude.eaglercraft.v1_8.EagRuntime", "getResourceString");
+    const originalGetCredits = ModAPI.hooks.methods[getCreditsName];
+    ModAPI.hooks.methods[getCreditsName] = function ($path) {
+        if (!$path) {
+            return originalGetCredits.apply(this, [$path]);
+        }
+        if (ModAPI.util.ustr($path).toLowerCase().endsWith("credits.txt")) {
+            var out = originalGetCredits.apply(this, [$path]);
+            out = ModAPI.util.ustr(out);
+            out = getCreditsString() + out;
+            out = ModAPI.util.str(out);
+            return out;
+        }
+        return originalGetCredits.apply(this, [$path]);
+    };
+    const initMethodName = ModAPI.util.getMethodFromPackage("net.minecraft.client.Minecraft", "startGame");
+    const originalInit = ModAPI.hooks.methods[initMethodName];
+    ModAPI.hooks.methods[initMethodName] = function (...args) {
+        var x = originalInit.apply(this, args);
+        //args[0] means $this (ie: minecraft instance).
+        ModAPI.mc = ModAPI.minecraft = new Proxy(args[0], TeaVM_to_Recursive_BaseData_ProxyConf);
+        globalThis.Minecraft = ModAPI.mcinstance = ModAPI.javaClient = args[0];
+        ModAPI.settings = new Proxy(ModAPI.mcinstance.$gameSettings, TeaVM_to_Recursive_BaseData_ProxyConf);
+        if (ModAPI.is_1_12) {
+            easyAlias(ModAPI.javaClient, "$player", "$thePlayer");
+            easyAlias(ModAPI.javaClient, "$world", "$theWorld");
+        }
+        startModLoader();
+        ModAPI.hooks.methods[initMethodName] = originalInit; //unhook
+        return x;
+    };
+    var inlineIntegratedServerStartup = ModAPI.util.getMethodFromPackage("net.lax1dude.eaglercraft.v1_8.sp.internal.ClientPlatformSingleplayer", "loadIntegratedServerSourceInline");
+    //Integrated server setup has a randomised suffix on the end
+    inlineIntegratedServerStartup = ModAPI.hooks._rippedMethodKeys.filter((key) => { return key.startsWith(inlineIntegratedServerStartup); })[0];
+    const inlineIntegratedServerStartupMethod = ModAPI.hooks.methods[inlineIntegratedServerStartup];
+    ModAPI.hooks.methods[inlineIntegratedServerStartup] = function (worker, bootstrap) {
+        var x = inlineIntegratedServerStartupMethod.apply(this, [worker, bootstrap + ";" + globalThis.modapi_postinit + ";ModAPI.isServer=true;" + ModAPI.dedicatedServer._data.join(";")]);
+        ModAPI.dedicatedServer._data = [];
+        ModAPI.dedicatedServer._wasUsed = true;
+        console.log("[ModAPI] Hooked into inline integrated server.");
+        return x;
+    };
+    var integratedServerStartup = ModAPI.util.getMethodFromPackage("net.lax1dude.eaglercraft.v1_8.sp.internal.ClientPlatformSingleplayer", "createBlobObj");
+    //Integrated server setup has a randomised suffix on the end
+    integratedServerStartup = ModAPI.hooks._rippedMethodKeys.filter((key) => { return key.startsWith(integratedServerStartup); })[0];
+    const integratedServerStartupMethod = ModAPI.hooks.methods[integratedServerStartup];
+    ModAPI.hooks.methods[integratedServerStartup] = function (worker, bootstrap) {
+        var x = integratedServerStartupMethod.apply(this, [worker, bootstrap + ";" + globalThis.modapi_postinit + ";" + ModAPI.dedicatedServer._data.join(";")]);
+        ModAPI.dedicatedServer._data = [];
+        ModAPI.dedicatedServer._wasUsed = true;
+        console.log("[ModAPI] Hooked into external integrated server.");
+        return x;
+    };
+    var desktopServerStartup = ModAPI.util.getMethodFromPackage("net.lax1dude.eaglercraft.v1_8.sp.internal.ClientPlatformSingleplayer", "startIntegratedServer");
+    const desktopServerStartupMethod = ModAPI.hooks.methods[desktopServerStartup];
+    ModAPI.hooks.methods[desktopServerStartup] = function (...args) {
+        var x = desktopServerStartupMethod.apply(this, args);
+        ModAPI.dedicatedServer._data.forEach((code) => {
+            (new Function(code))();
+        });
+        console.log("[ModAPI] Hooked into external integrated server.");
+        return x;
+    };
+    ModAPI.events.newEvent("load", "client");
+    ModAPI.events.newEvent("sendchatmessage", "client");
+    const sendChatMessageMethodName = ModAPI.util.getMethodFromPackage("net.minecraft.client.entity.EntityPlayerSP", "sendChatMessage");
+    const sendChatMessage = ModAPI.hooks.methods[sendChatMessageMethodName];
+    ModAPI.hooks.methods[sendChatMessageMethodName] = function ($this, $message) {
+        var data = {
+            preventDefault: false,
+            message: ModAPI.util.jclStrToJsStr($message)
+        };
+        ModAPI.events.callEvent("sendchatmessage", data);
+        if (data.preventDefault) {
+            return;
+        }
+        if (typeof data.message === "string") {
+            ModAPI.util.setStringContent($message, data.message);
+        }
+        return sendChatMessage.apply(this, [$this, $message]);
+    };
+    const ScaledResolutionConstructor = ModAPI.reflect.getClassByName("ScaledResolution").constructors[0];
+    ModAPI.events.newEvent("frame", "client");
+    const frameMethodName = ModAPI.util.getMethodFromPackage("net.minecraft.client.Minecraft", "runTick");
+    const frameMethod = ModAPI.hooks.methods[frameMethodName];
+    ModAPI.hooks.methods[frameMethodName] = function (...args) {
+        ModAPI.events.callEvent("frame", {});
+        if (ModAPI.required.has("resolution") && ModAPI.mcinstance) {
+            ModAPI.ScaledResolution = ModAPI.resolution = new Proxy(ScaledResolutionConstructor(ModAPI.mcinstance), TeaVM_to_Recursive_BaseData_ProxyConf);
+        }
+        return frameMethod.apply(this, args);
+    };
+    ModAPI.events.newEvent("tick", "server");
+    const serverTickMethodName = ModAPI.util.getMethodFromPackage("net.minecraft.server.MinecraftServer", "tick");
+    const serverTickMethod = ModAPI.hooks.methods[serverTickMethodName];
+    ModAPI.hooks.methods[serverTickMethodName] = function ($this) {
+        if (ModAPI.util.isCritical()) {
+            return serverTickMethod.apply(this, [$this]);
+        }
+        var data = { preventDefault: false };
+        ModAPI.events.callEvent("tick", data);
+        if (data.preventDefault) {
+            return;
+        }
+        return serverTickMethod.apply(this, [$this]);
+    };
+    ModAPI.events.newEvent("serverstart", "server");
+    const serverStartMethodName = ModAPI.util.getMethodFromPackage("net.lax1dude.eaglercraft.v1_8.sp.server.EaglerMinecraftServer", "startServer");
+    const serverStartMethod = ModAPI.hooks.methods[serverStartMethodName];
+    ModAPI.hooks.methods[serverStartMethodName] = function ($this) {
+        var x = serverStartMethod.apply(this, [$this]);
+        ModAPI.server = new Proxy($this, ModAPI.util.TeaVM_to_Recursive_BaseData_ProxyConf);
+        ModAPI.rawServer = $this;
+        ModAPI.events.callEvent("serverstart", {});
+        return x;
+    };
+    ModAPI.events.newEvent("serverstop", "server");
+    const serverStopMethodName = ModAPI.util.getMethodFromPackage("net.minecraft.server.MinecraftServer", "stopServer");
+    const serverStopMethod = ModAPI.hooks.methods[serverStopMethodName];
+    ModAPI.hooks.methods[serverStopMethodName] = function ($this) {
+        var x = serverStopMethod.apply(this, [$this]);
+        ModAPI.server = ModAPI.serverInstance = null;
+        ModAPI.events.callEvent("serverstop", {});
+        return x;
+    };
+    ModAPI.events.newEvent("receivechatmessage", "server");
+    const receiveChatMessageMethodName = ModAPI.util.getMethodFromPackage("net.minecraft.network.play.client.C01PacketChatMessage", "processPacket");
+    const receiveChatMessageMethod = ModAPI.hooks.methods[receiveChatMessageMethodName];
+    ModAPI.hooks.methods[receiveChatMessageMethodName] = function (...args) {
+        var $this = args[0];
+        const _this = ModAPI.util.wrap($this).getCorrective();
+        const str = _this.message.getRef();
+        var data = {
+            preventDefault: false,
+            message: ModAPI.util.jclStrToJsStr(str)
+        };
+        ModAPI.events.callEvent("sendchatmessage", data);
+        if (data.preventDefault) {
+            return;
+        }
+        if (typeof data.message === "string") {
+            ModAPI.util.setStringContent(str, data.message);
+        }
+        var x = receiveChatMessageMethod.apply(this, args);
+        return x;
+    };
+    ModAPI.events.newEvent("processcommand", "server");
+    const processCommandMethodName = ModAPI.util.getMethodFromPackage("net.minecraft.command.CommandHandler", "executeCommand");
+    const processCommandMethod = ModAPI.hooks.methods[processCommandMethodName];
+    ModAPI.hooks.methods[processCommandMethodName] = function ($this, $sender, $rawCommand) {
+        var data = {
+            preventDefault: false,
+            sender: new Proxy($sender, TeaVM_to_Recursive_BaseData_ProxyConf),
+            command: ModAPI.util.jclStrToJsStr($rawCommand)
+        };
+        if (data.command.toLowerCase().startsWith("/efdebug")) {
+            // Utility command to debug the dedicated server.
+            data.preventDefault = true;
+            debugger;
+        }
+        else {
+            ModAPI.events.callEvent("processcommand", data);
+        }
+        if (data.preventDefault) {
+            return 0;
+        }
+        if (typeof data.command === "string") {
+            ModAPI.util.setStringContent($rawCommand, data.command);
+        }
+        var x = processCommandMethod.apply(this, [$this, $sender, $rawCommand]);
+        return x;
+    };
+    ModAPI.util.bootstrap = function () {
+        ModAPI.items = new Proxy(ModAPI.reflect.getClassById("net.minecraft.init.Items").staticVariables, StaticProps_ProxyConf);
+        if (!ModAPI.items.apple) {
+            return false;
+        }
+        ModAPI.blocks = new Proxy(ModAPI.reflect.getClassById("net.minecraft.init.Blocks").staticVariables, StaticProps_ProxyConf);
+        ModAPI.materials = new Proxy(ModAPI.reflect.getClassById("net.minecraft.block.material.Material").staticVariables, StaticProps_ProxyConf);
+        if (ModAPI.is_1_12) {
+            ModAPI.enchantments = new Proxy(ModAPI.reflect.getClassById("net.minecraft.init.Enchantments").staticVariables, StaticProps_ProxyConf);
+        }
+        else {
+            ModAPI.enchantments = new Proxy(ModAPI.reflect.getClassById("net.minecraft.enchantment.Enchantment").staticVariables, StaticProps_ProxyConf);
+        }
+        if (ModAPI.is_1_12) {
+            //1.12 specific globals
+            ModAPI.blockSounds = new Proxy(ModAPI.reflect.getClassById("net.minecraft.block.SoundType").staticVariables, StaticProps_ProxyConf);
+        }
+        return true;
+    };
+    ModAPI.events.newEvent("bootstrap", "server");
+    const bootstrapClass = ModAPI.reflect.getClassById("net.minecraft.init.Bootstrap");
+    const originalBootstrap = ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.init.Bootstrap", "register")];
+    ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.init.Bootstrap", "register")] = function (...args) {
+        if (bootstrapClass.staticVariables.alreadyRegistered) {
+            return;
+        }
+        var x = originalBootstrap.apply(this, args);
+        if (ModAPI.util.bootstrap()) {
+            console.log("[ModAPI] Hooked into bootstrap. .blocks, .items, .materials and .enchantments are now accessible.");
+            ModAPI.events.callEvent("bootstrap", {});
+        }
+        return x;
+    };
+    const originalOptionsInit = ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.gui.GuiOptions", "initGui")];
+    ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.gui.GuiOptions", "initGui")] = function (...args) {
+        var x = originalOptionsInit.apply(this, args);
+        //NOT A BUG DO NOT FIX
+        var msg = Math.random() < 0.025 ? "Plugins" : "Mods";
+        // Find the right constructor. (int id, int x, int y, int width, int height, String buttonText);
+        var btnConstructor = ModAPI.hooks._classMap['nmcg_GuiButton'].constructors.filter((c) => { return c.length === 6; })[0];
+        var heightProp = ModAPI.util.getNearestProperty(args[0], "$height");
+        var btn = btnConstructor(9635329, 0, args[0][heightProp] - 21, 100, 20, ModAPI.util.str(msg));
+        args[0].$buttonList.$add(btn);
+        return x;
+    };
+    const originalOptionsAction = ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.gui.GuiOptions", "actionPerformed")];
+    ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.client.gui.GuiOptions", "actionPerformed")] = function (...args) {
+        var idProp = ModAPI.util.getNearestProperty(args[1], "$id");
+        if (args[1] && args[1][idProp] === 9635329) {
+            if (typeof window.modapi_displayModGui === "function") {
+                window.modapi_displayModGui();
+            }
+            else {
+                alert("[ModAPI] Mod Manager GUI does not exist!");
+            }
+        }
+        var x = originalOptionsAction.apply(this, args);
+        return x;
+    };
+    const originalCrashMethod = ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.lax1dude.eaglercraft.v1_8.internal.teavm.ClientMain", "showCrashScreen")];
+    ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.lax1dude.eaglercraft.v1_8.internal.teavm.ClientMain", "showCrashScreen")] = function (...args) {
+        if (window.confirm("Your game has crashed, do you want to open the mod manager gui?")) {
+            return modapi_displayModGui();
+        }
+        ;
+        var x = originalCrashMethod.apply(this, args);
+        return x;
+    };
+    var inited = false;
+    const originalMainMethod = ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.lax1dude.eaglercraft.v1_8.internal.teavm.ClientMain", "_main")];
+    ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.lax1dude.eaglercraft.v1_8.internal.teavm.ClientMain", "_main")] = function (...args) {
+        if ((!inited) && (!getEaglerConfigFlag("noInitialModGui"))) {
+            inited = true;
+            ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.lax1dude.eaglercraft.v1_8.internal.teavm.ClientMain", "_main")] = originalMainMethod; //unhook
+            return modapi_displayModGui(globalThis.main);
+        }
+        else {
+            return originalMainMethod.apply(this, args);
+        }
+    };
+    if (globalThis.modapi_specialevents && Array.isArray(globalThis.modapi_specialevents)) {
+        globalThis.modapi_specialevents.forEach(eventName => {
+            ModAPI.events.newEvent(eventName, "patcher");
+        });
+    }
+    ModAPI.util.getIdFromItem = easyStaticMethod("net.minecraft.item.Item", "getIdFromItem", true);
+    ModAPI.util.getItemById = easyStaticMethod("net.minecraft.item.Item", "getItemById", false);
+    ModAPI.util.getItemFromBlock = easyStaticMethod("net.minecraft.item.Item", "getItemFromBlock", true);
+    ModAPI.util.getBlockById = easyStaticMethod("net.minecraft.block.Block", "getBlockById", false);
+    ModAPI.util.getBlockFromItem = easyStaticMethod("net.minecraft.block.Block", "getBlockFromItem", true);
+    ModAPI.util.getIdFromBlock = easyStaticMethod("net.minecraft.block.Block", "getIdFromBlock", true);
+    // 1.12 utility junk
+    if (ModAPI.is_1_12) {
+        var Block = ModAPI.reflect.getClassById("net.minecraft.block.Block").class;
+        var NonNullList = ModAPI.reflect.getClassById("net.minecraft.util.NonNullList").class;
+        var ArrayAsList = ModAPI.reflect.getClassById("java.util.Arrays$ArrayAsList").class;
+        easyStaticPropAlias("net.minecraft.block.Block", "REGISTRY", "blockRegistry");
+        easyStaticPropAlias("net.minecraft.item.Item", "REGISTRY", "itemRegistry");
+    }
+    function qhash(txt, arr, interval) {
+        arr ||= [];
+        interval ||= 32767;
+        // var interval = 4095; //used to be 4095 - arr.length, but that increases incompatibility based on load order and other circumstances
+        if (arr.length >= interval) {
+            console.error("[ModAPI.keygen] Ran out of IDs while generating for " + txt);
+            return -1;
+        }
+        var x = 1;
+        for (let i = 0; i < txt.length; i++) {
+            x += txt.charCodeAt(i);
+            x = x << txt.charCodeAt(i);
+            x = Math.abs(x);
+            x = x % interval;
+        }
+        var hash = x;
+        while (arr.includes(hash)) {
+            hash = (hash + 1) % interval;
+        }
+        return hash;
+    }
+    ModAPI.util.qhash = qhash;
+    ModAPI.keygen = {};
+    var registryNamespaceMethod = ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.util.RegistryNamespaced", "register")];
+    ModAPI.hooks.methods[ModAPI.util.getMethodFromPackage("net.minecraft.util.RegistryNamespaced", "register")] = function (...args) {
+        args[0].$modapi_specmap ||= new Map();
+        args[0].$modapi_specmap.set(args[2], args[1]);
+        return registryNamespaceMethod.apply(this, args);
+    };
+    ModAPI.keygen.item = function (item) {
+        if (ModAPI.is_1_12) {
+            var values = ModAPI.util.wrap(ModAPI.reflect.getClassById("net.minecraft.item.Item").staticVariables.REGISTRY).getCorrective().underlyingIntegerMap.identityMap.elementData.filter((x) => !!x).map((y) => y.value.value);
+        }
+        else {
+            var values = [...ModAPI.reflect.getClassById("net.minecraft.item.Item").staticVariables.itemRegistry.$modapi_specmap.values()];
+        }
+        return qhash(item, values, 4095);
+    };
+    ModAPI.keygen.block = function (block) {
+        if (ModAPI.is_1_12) {
+            var values = ModAPI.util.wrap(ModAPI.reflect.getClassById("net.minecraft.block.Block").staticVariables.REGISTRY).getCorrective().underlyingIntegerMap.identityMap.elementData.filter((x) => !!x).map((y) => y.value.value);
+        }
+        else {
+            var values = [...ModAPI.reflect.getClassById("net.minecraft.block.Block").staticVariables.blockRegistry.$modapi_specmap.values()];
+        }
+        return qhash(block, values, 4095);
+    };
+    ModAPI.keygen.entity = function (entity) {
+        var values = [];
+        if (ModAPI.is_1_12) {
+            var arrayList = ModAPI.util.wrap(ModAPI.reflect.getClassById("net.minecraft.entity.EntityList").staticVariables.field_191311_g).getCorrective().array;
+            arrayList.forEach((x, i) => {
+                if (x) {
+                    values.push(i);
+                }
+            });
+        }
+        else {
+            var hashMap = ModAPI.util.wrap(ModAPI.reflect.getClassById("net.minecraft.entity.EntityList").staticVariables.idToClassMapping).getCorrective();
+            values = hashMap.keys.getRef().data.filter((x) => hashMap.get(x));
+        }
+        return qhash(entity, values, 127);
+    };
+    ModAPI.keygen.sound = function (soundId) {
+        if (!ModAPI.is_1_12) {
+            return -1;
+        }
+        const SoundEvent = ModAPI.reflect.getClassByName("SoundEvent");
+        const values = ModAPI.util.wrap(SoundEvent.staticVariables.REGISTRY).getCorrective().underlyingIntegerMap.identityMap.elementData.filter((x) => !!x).map((y) => y.value.value);
+        return qhash(soundId, values, 4095);
+    };
+    ModAPI.keygen.enchantment = function (enchantment) {
+        const Enchantment = ModAPI.reflect.getClassByName("Enchantment");
+        if (ModAPI.is_1_12) {
+            const values = ModAPI.util.wrap(Enchantment.staticVariables.REGISTRY).getCorrective().underlyingIntegerMap.identityMap.elementData.filter((x) => !!x).map((y) => y.value.value);
+            return qhash(enchantment, values, 4095);
+        }
+        const values = ModAPI.util.wrap(Enchantment.staticVariables.enchantmentsList).getCorrective().filter((x) => !!x).map((y) => y.effectId);
+        return qhash(enchantment, values, 4095);
+    };
+})();
+`;</script>
+    <script type="text/x-devon-deferred" id="libserverside">{"._|_libserverside_|_."}</script>
+    <script type="text/x-devon-deferred" id="__eaglerforgeinjector_installation_flag__">console.log("Thank you for using EaglerForge!");
+</script>
+<script type="text/x-devon-deferred" id="perf_tweaks">/* Performance tweaks (added for Allen)
+ * 1) Render scale cap: on high-DPI screens the game normally renders at 1.5-3x the pixels
+ *    (canvas size = window size x devicePixelRatio). This caps it at 1x, which is often the
+ *    single biggest FPS boost on laptops/phones. Override with ?renderScale=1.5 (or 2, etc.) in the URL.
+ * 2) Fast video settings: applied every launch until you save any option yourself, after that
+ *    your own choices always win. To reapply, run localStorage.removeItem("perfTweaks.saved") and reload.
+ */
+(function () {
+    "use strict";
+    var H = ModAPI.hooks.methods;
+    var q = new URLSearchParams(location.search);
+    var scale = parseFloat(q.get("renderScale") ?? "");
+    if (!(scale > 0))
+        scale = 1;
+    var dprName = "nlevi_PlatformInput_getDevicePixelRatio$js_body$_30";
+    var origDpr = H[dprName];
+    if (typeof origDpr === "function") {
+        H[dprName] = function (...args) {
+            var r = origDpr.apply(this, args);
+            return r > scale ? scale : r;
+        };
+    }
+    var FLAG = "perfTweaks.saved";
+    function saved() { try {
+        return localStorage.getItem(FLAG) === "1";
+    }
+    catch (e) {
+        return true;
+    } }
+    var loadName = "nmcs_GameSettings_loadOptions";
+    var origLoad = H[loadName];
+    if (typeof origLoad === "function") {
+        H[loadName] = function (...args) {
+            var $this = args[0];
+            var ret = origLoad.apply(this, args);
+            var t = ModAPI.hooks._teavm;
+            if (t && t.$rt_suspending && t.$rt_suspending())
+                return ret;
+            if (!saved() && $this) {
+                try {
+                    $this.$enableVsync = 0; // VSync off (uncapped FPS)
+                    $this.$limitFramerate = 260; // "Unlimited"
+                    $this.$fancyGraphics = 0; // Fast graphics
+                    $this.$ambientOcclusion = 0; // Smooth lighting off
+                    $this.$renderDistanceChunks = Math.min($this.$renderDistanceChunks || 4, 4);
+                    $this.$clouds = 0; // Clouds off
+                    $this.$particleSetting = 1; // Particles: decreased
+                    $this.$mipmapLevels = 0; // Mipmaps off
+                    $this.$shaders = 0; // PBR shaders off
+                    $this.$fxaa = 2; // FXAA off
+                    $this.$enableDynamicLights = 0; // Dynamic lights off
+                    $this.$connectedTexturesOF = 0; // Connected textures off (faster chunk loading)
+                    $this.$customSkyOF = 0;
+                    $this.$customItemsOF = 0;
+                    $this.$betterGrassOF = 0;
+                    $this.$smartLeavesOF = 0;
+                    console.log("[PerfTweaks] fast video settings applied");
+                }
+                catch (e) {
+                    console.warn("[PerfTweaks]", e);
+                }
+            }
+            return ret;
+        };
+    }
+    var saveName = "nmcs_GameSettings_saveOptions";
+    var origSave = H[saveName];
+    if (typeof origSave === "function") {
+        H[saveName] = function (...args) {
+            var ret = origSave.apply(this, args);
+            try {
+                localStorage.setItem(FLAG, "1");
+            }
+            catch (e) { }
+            return ret;
+        };
+    }
+    console.log("[PerfTweaks] loaded, render scale cap " + scale + "x");
+})();
+</script>
+<script type="text/x-devon-deferred" id="mod_apple_rp_fix">/*
+ * Apple Resource Pack Upload Fix  v2.0.0
+ * For Eaglercraft 1.8.8 (EaglercraftX u53) + EaglerForge Injector (EFI)
+ * on macOS Safari and iPhone / iPad (iOS / iPadOS 26)
+ *
+ * WHY UPLOADS FAIL ON APPLE DEVICES
+ *   1. Eaglercraft opens the file picker from its game loop, not directly
+ *      inside your tap. WebKit (Safari, and every browser on iOS) blocks that
+ *      without any message.
+ *   2. The picker only accepts files tagged as "application/zip". The iOS
+ *      Files app often doesn't tag .zip files that way, so they appear greyed out.
+ *
+ * WHAT THIS MOD DOES
+ *   - Hooks the game's own displayFileChooser method through EFI's ModAPI,
+ *     and also catches any file input the page creates, however it is opened.
+ *   - Removes the zip-only filter.
+ *   - Shows a "Tap to choose resource pack" button. Your tap counts as a real
+ *     gesture, so the picker opens and the file goes back to the game as usual.
+ *   - When it starts, it briefly shows "Resource pack fix loaded" so you can
+ *     tell it's running.
+ *
+ * BUILT IN
+ *   This copy is compiled into the client (see build.mjs), so it no longer has
+ *   to be installed from the Mods menu. It runs on every page load.
+ */
+(function () {
+    "use strict";
+    // ---------- Settings ----------
+    var FORCE_ON_ALL_PLATFORMS = false; // true = also run on Windows, Android, etc.
+    var SHOW_LOADED_TOAST = true; // brief on-screen "loaded" message
+    var DEBUG = /[?&]rpfixdebug\b/.test(location.search); // add ?rpfixdebug to the URL for logs on screen
+    var TAG = "[AppleRPFix]";
+    var g = (typeof window !== "undefined" ? window : globalThis);
+    if (g.__appleRPFix)
+        return;
+    // ---------- Platform detection ----------
+    var ua = navigator.userAgent || "";
+    var isIOS = /iPhone|iPad|iPod/.test(ua) ||
+        (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1); // iPadOS "desktop" mode
+    var isMac = /Macintosh|Mac OS X/.test(ua) && !isIOS;
+    var isWebKit = /AppleWebKit/.test(ua) && !/Chrome|Chromium|Edg|OPR|Firefox/.test(ua);
+    var strict = isIOS || isWebKit; // every iOS browser is WebKit, and so is Safari
+    var enabled = isIOS || isMac || FORCE_ON_ALL_PLATFORMS;
+    // ---------- Logging ----------
+    var logBox = null;
+    function log(...parts) {
+        var msg = parts.join(" ");
+        try {
+            console.log(TAG, msg);
+        }
+        catch (e) { }
+        if (!DEBUG)
+            return;
+        try {
+            if (!logBox) {
+                logBox = document.createElement("div");
+                logBox.style.cssText =
+                    "position:fixed;left:4px;bottom:4px;max-width:90vw;max-height:35vh;overflow:auto;" +
+                        "z-index:2147483646;background:rgba(0,0,0,.75);color:#0f0;font:11px monospace;" +
+                        "padding:4px;pointer-events:none;white-space:pre-wrap;";
+                (document.body || document.documentElement).appendChild(logBox);
+            }
+            logBox.textContent += msg + "\n";
+            logBox.scrollTop = logBox.scrollHeight;
+        }
+        catch (e) { }
+    }
+    function toast(text) {
+        try {
+            var t = document.createElement("div");
+            t.textContent = text;
+            t.style.cssText =
+                "position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483647;" +
+                    "background:#3c8527;color:#fff;padding:8px 14px;border-radius:8px;" +
+                    "font:600 14px -apple-system,Helvetica,Arial,sans-serif;pointer-events:none;" +
+                    "box-shadow:0 4px 14px rgba(0,0,0,.4);transition:opacity .4s;";
+            var add = function () {
+                (document.body || document.documentElement).appendChild(t);
+                setTimeout(function () {
+                    t.style.opacity = "0";
+                }, 3000);
+                setTimeout(function () {
+                    t.remove();
+                }, 3500);
+            };
+            if (document.body)
+                add();
+            else
+                document.addEventListener("DOMContentLoaded", add);
+        }
+        catch (e) { }
+    }
+    log("UA:", ua);
+    log("iOS:", isIOS, "Mac:", isMac, "WebKit:", isWebKit, "enabled:", enabled);
+    if (!enabled)
+        return;
+    // Native click lives on HTMLElement.prototype; save it before anything patches it
+    var nativeClick = HTMLElement.prototype.click;
+    var nativeShowPicker = HTMLInputElement.prototype.showPicker;
+    function isFileInput(el) {
+        try {
+            return el instanceof HTMLInputElement && String(el.type).toLowerCase() === "file";
+        }
+        catch (e) {
+            return false;
+        }
+    }
+    function hasUserActivation() {
+        try {
+            return !!(navigator.userActivation && navigator.userActivation.isActive);
+        }
+        catch (e) {
+            return false;
+        }
+    }
+    // Should we show our button instead of opening directly?
+    function needButton() {
+        if (strict)
+            return true; // WebKit needs a live tap; userActivation can't be trusted there
+        return !hasUserActivation();
+    }
+    // ---------- Prepare the game's input ----------
+    function prepareInput(input) {
+        try {
+            input.removeAttribute("accept");
+        }
+        catch (e) { }
+        if (!input.isConnected && document.body) {
+            input.style.cssText =
+                "position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;";
+            input.setAttribute("data-apple-rp-fix", "1");
+            document.body.appendChild(input);
+            var cleanup = function () {
+                setTimeout(function () {
+                    if (input.parentNode && input.getAttribute("data-apple-rp-fix") === "1")
+                        input.remove();
+                }, 1500);
+            };
+            input.addEventListener("change", cleanup, {
+                once: true
+            });
+            input.addEventListener("cancel", cleanup, {
+                once: true
+            });
+        }
+    }
+    // ---------- The button overlay ----------
+    var overlay = null;
+    function closeOverlay() {
+        if (overlay)
+            overlay.remove();
+        overlay = null;
+    }
+    function showOverlay(input) {
+        if (input.__rpfixShown)
+            return;
+        input.__rpfixShown = true;
+        prepareInput(input);
+        log("Showing picker button");
+        closeOverlay();
+        try {
+            if (document.pointerLockElement)
+                document.exitPointerLock();
+        }
+        catch (e) { }
+        var box = document.createElement("div");
+        overlay = box;
+        overlay.setAttribute("data-apple-rp-fix-overlay", "1");
+        overlay.style.cssText =
+            "position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483647;display:flex;" +
+                "align-items:center;justify-content:center;background:rgba(0,0,0,.6);" +
+                "touch-action:manipulation;-webkit-user-select:none;user-select:none;" +
+                "font-family:-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif;";
+        overlay.innerHTML =
+            '<div style="background:#1e1e1e;border:2px solid #555;border-radius:12px;padding:20px;' +
+                'max-width:320px;width:calc(100% - 32px);text-align:center;color:#fff;box-shadow:0 8px 30px rgba(0,0,0,.5)">' +
+                '<div style="font-size:18px;font-weight:600;margin-bottom:8px">Add a resource pack</div>' +
+                '<div style="font-size:14px;color:#bbb;margin-bottom:16px">Choose a .zip resource pack from Files or Finder.</div>' +
+                '<button type="button" data-act="pick" style="display:block;width:100%;padding:14px;font-size:16px;' +
+                'font-weight:600;border:none;border-radius:8px;background:#3c8527;color:#fff;margin-bottom:10px;' +
+                '-webkit-appearance:none;cursor:pointer">Tap to choose resource pack</button>' +
+                '<button type="button" data-act="cancel" style="display:block;width:100%;padding:12px;font-size:15px;' +
+                'border:none;border-radius:8px;background:#444;color:#fff;-webkit-appearance:none;cursor:pointer">Cancel</button>' +
+                "</div>";
+        ["mousedown", "mouseup", "pointerdown", "pointerup", "touchstart", "touchmove",
+            "wheel", "contextmenu", "keydown", "keyup"
+        ].forEach(function (type) {
+            box.addEventListener(type, function (e) {
+                e.stopPropagation();
+            });
+        });
+        var done = false;
+        function act(e) {
+            var target = e.target;
+            var btn = target && target.closest ? target.closest("button[data-act]") : null;
+            if (!btn)
+                return;
+            e.stopPropagation();
+            if (e.cancelable)
+                e.preventDefault();
+            if (done)
+                return;
+            done = true;
+            closeOverlay();
+            if (btn.getAttribute("data-act") === "pick") {
+                log("Opening native picker inside tap");
+                nativeClick.call(input); // inside a real gesture, so WebKit allows it
+            }
+            else {
+                input.__rpfixShown = false;
+                try {
+                    input.dispatchEvent(new Event("cancel"));
+                }
+                catch (err) { }
+            }
+        }
+        box.addEventListener("touchend", act);
+        box.addEventListener("click", act);
+        (document.body || document.documentElement).appendChild(box);
+    }
+    // Called whenever something tries to open a file picker
+    function handleOpen(input, how, fallback) {
+        log("File picker requested via", how, "accept=", input.getAttribute("accept"));
+        if (needButton()) {
+            showOverlay(input);
+        }
+        else {
+            prepareInput(input);
+            input.__rpfixShown = true;
+            return fallback();
+        }
+    }
+    // ---------- Hook 1: element.click() ----------
+    HTMLElement.prototype.click = function () {
+        if (isFileInput(this) && !this.__rpfixShown) {
+            var self = this;
+            handleOpen(this, "click()", function () {
+                return nativeClick.call(self);
+            });
+            return;
+        }
+        return nativeClick.call(this);
+    };
+    // Some engines put click on HTMLInputElement too
+    try {
+        Object.defineProperty(HTMLInputElement.prototype, "click", {
+            configurable: true,
+            writable: true,
+            value: HTMLElement.prototype.click
+        });
+    }
+    catch (e) { }
+    // ---------- Hook 2: input.showPicker() ----------
+    if (nativeShowPicker) {
+        HTMLInputElement.prototype.showPicker = function () {
+            if (isFileInput(this) && !this.__rpfixShown) {
+                var self = this;
+                handleOpen(this, "showPicker()", function () {
+                    return nativeShowPicker.call(self);
+                });
+                return;
+            }
+            return nativeShowPicker.call(this);
+        };
+    }
+    // ---------- Hook 3: dispatchEvent(new MouseEvent("click")) ----------
+    var nativeDispatch = EventTarget.prototype.dispatchEvent;
+    EventTarget.prototype.dispatchEvent = function (evt) {
+        if (evt && evt.type === "click" && isFileInput(this) && !this.__rpfixShown) {
+            var self = this;
+            return handleOpen(this, "dispatchEvent", function () {
+                return nativeDispatch.call(self, evt);
+            }) !== false;
+        }
+        return nativeDispatch.call(this, evt);
+    };
+    // ---------- Hook 4: remember file inputs the game creates ----------
+    var lastFileInput = null;
+    var nativeCreate = Document.prototype.createElement;
+    Document.prototype.createElement = function (tag, options) {
+        var el = nativeCreate.call(this, tag, options);
+        if (typeof tag === "string" && tag.toLowerCase() === "input") {
+            // type is set right after creation, so check a moment later
+            Promise.resolve().then(function () {
+                if (isFileInput(el))
+                    lastFileInput = {
+                        el: el,
+                        t: Date.now()
+                    };
+            });
+            try {
+                el.addEventListener("change", function () { }, {
+                    once: true,
+                    passive: true
+                });
+            }
+            catch (e) { }
+        }
+        return el;
+    };
+    // ---------- Hook 5: the game's own displayFileChooser (via EFI ModAPI) ----------
+    function hookGameMethod() {
+        try {
+            if (typeof ModAPI === "undefined" || !ModAPI.hooks || !ModAPI.hooks.methods)
+                return false;
+            var methods = ModAPI.hooks.methods;
+            var keys = [];
+            try {
+                var k = ModAPI.util.getMethodFromPackage("net.lax1dude.eaglercraft.v1_8.internal.PlatformApplication", "displayFileChooser");
+                if (k && methods[k])
+                    keys.push(k);
+            }
+            catch (e) { }
+            if (!keys.length) {
+                Object.keys(methods).forEach(function (name) {
+                    if (/PlatformApplication_displayFileChooser/.test(name))
+                        keys.push(name);
+                });
+            }
+            if (!keys.length) {
+                log("displayFileChooser not found in ModAPI");
+                return false;
+            }
+            keys.forEach(function (key) {
+                var original = methods[key];
+                if (original.__rpfix)
+                    return;
+                var wrapped = function (...args) {
+                    log("Game called", key);
+                    var before = Date.now();
+                    var result = original.apply(this, args);
+                    // If the click hooks didn't catch it, grab the input the game just made
+                    Promise.resolve().then(function () {
+                        var li = lastFileInput;
+                        if (li && li.t >= before - 50 && !li.el.__rpfixShown && needButton()) {
+                            log("Click hooks missed it; using the input from createElement");
+                            showOverlay(li.el);
+                        }
+                    });
+                    return result;
+                };
+                wrapped.__rpfix = true;
+                methods[key] = wrapped;
+                log("Hooked", key);
+            });
+            return true;
+        }
+        catch (e) {
+            log("ModAPI hook failed:", e instanceof Error ? e.message : e);
+            return false;
+        }
+    }
+    if (!hookGameMethod()) {
+        // ModAPI may not be ready yet; retry for a few seconds
+        var tries = 0;
+        var iv = setInterval(function () {
+            if (hookGameMethod() || ++tries > 20)
+                clearInterval(iv);
+        }, 500);
+    }
+    // ---------- EFI metadata (only when loaded through the mod loader) ----------
+    try {
+        var cs = document.currentScript;
+        if (typeof ModAPI !== "undefined" && ModAPI.meta && cs && cs.getAttribute("data-isMod") === "true") {
+            ModAPI.meta.title("Apple Resource Pack Fix");
+            ModAPI.meta.version("v2.0.0");
+            ModAPI.meta.description("Lets you add resource packs on macOS Safari and iPhone/iPad.");
+            ModAPI.meta.credits("Made for Allen");
+        }
+    }
+    catch (e) { }
+    g.__appleRPFix = {
+        version: "2.0.0",
+        // For testing from the console: appleRPFix.test()
+        test: function () {
+            var i = document.createElement("input");
+            i.type = "file";
+            i.addEventListener("change", function () {
+                log("Test picked:", i.files && i.files[0] && i.files[0].name);
+            });
+            i.click();
+        }
+    };
+    g.appleRPFix = g.__appleRPFix;
+    log("Loaded v2.0.0");
+    if (SHOW_LOADED_TOAST)
+        toast("Resource pack fix loaded");
+})();
+</script>
+<div style="margin:0px;width:100%;height:100%;font-family:sans-serif;display:flex;align-items:center;user-select:none;" id="launch_countdown_screen">
+<div style="margin:auto;text-align:center;">
+<h1>This file is from <span style="color:#AA0000;">08/31/2025</span></h1>
+<h2>Game will launch in <span id="launchCountdownNumber">5</span>...</h2>
+<div style="border:2px solid black;width:100%;height:15px;padding:1px;margin-bottom:20vh;"><div id="launchCountdownProgress" style="background-color:#555555;width:0%;height:100%;"></div>
+<p style="margin-top:30px;"><button id="skipCountdown" autofocus>Skip Countdown</button>&emsp;<button id="bootMenu">Enter Boot Menu</button></p></div>
+</div>
+</div>
+
+<div id="devon_loading" style="position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:#111;color:#ddd;font-family:system-ui,-apple-system,sans-serif;">
+<div style="font-size:18px;font-weight:600;">EaglercraftX 1.8</div>
+<div style="width:240px;height:6px;border-radius:3px;background:rgba(255,255,255,.12);overflow:hidden;"><div id="devon_fill" style="width:0%;height:100%;background:#ff7a2f;transition:width .15s;"></div></div>
+<div id="devon_status" style="font-size:12px;color:#999;">Downloading game…</div>
+</div>
+<script>
+(function () {
+  var CLASSES = {"parts":2,"size":5935631}, ASSETS = {"parts":3,"size":7294941};
+  var total = CLASSES.size + ASSETS.size, got = 0;
+  var fill = document.getElementById("devon_fill"), status = document.getElementById("devon_status");
+  function progress() { fill.style.width = Math.round(100 * got / total) + "%"; }
+  function fail(e) {
+    var msg = e && e.message ? e.message : String(e);
+    status.textContent = msg; status.style.color = "#ff8a80";
+    try { parent.postMessage({ devonGame: "error", message: msg }, "*"); } catch (x) {}
+  }
+  function part(url) {
+    return fetch(url).then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status + " for " + url);
+      if (!res.body || !res.body.getReader) return res.blob().then(function (b) { got += b.size; progress(); return b; });
+      var reader = res.body.getReader(), chunks = [];
+      function pump() {
+        return reader.read().then(function (r) {
+          if (r.done) return new Blob(chunks);
+          chunks.push(r.value); got += r.value.byteLength; progress();
+          return pump();
+        });
+      }
+      return pump();
+    });
+  }
+  function joined(name, info) {
+    var jobs = [];
+    for (var i = 0; i < info.parts; i++) jobs.push(part("Build/" + name + ".part" + (i < 10 ? "0" : "") + i));
+    return Promise.all(jobs).then(function (parts) { return new Blob(parts); });
+  }
+  function gunzip(blob) {
+    if (typeof DecompressionStream === "undefined") throw new Error("This browser is too old to run Eaglercraft here (needs Safari 16.4+ / Chrome 80+)");
+    return new Response(blob.stream().pipeThrough(new DecompressionStream("gzip"))).blob();
+  }
+  function run(el, attrs) {
+    return new Promise(function (resolve, reject) {
+      var s = document.createElement("script");
+      if (el.id) s.id = el.id;
+      if (attrs && attrs.src) {
+        s.src = attrs.src;
+        s.onload = function () { resolve(); };
+        s.onerror = function () { reject(new Error("Couldn't start the game")); };
+      } else {
+        s.text = el.textContent;
+      }
+      el.parentNode.replaceChild(s, el);
+      if (!attrs || !attrs.src) resolve();
+    });
+  }
+  Promise.all([
+    joined("classes.js.gz", CLASSES).then(gunzip).then(function (b) { return URL.createObjectURL(new Blob([b], { type: "text/javascript" })); }),
+    joined("assets.epk", ASSETS).then(function (b) { return URL.createObjectURL(b); }),
+  ]).then(function (urls) {
+    status.textContent = "Starting…";
+    window.__devonAssetsURL = urls[1];
+    // classes.js records its own <script> element; the singleplayer worker is loaded from its src
+    return run(document.querySelector('script[type="text/x-devon-classes"]'), { src: urls[0] });
+  }).then(function () {
+    var list = document.querySelectorAll('script[type="text/x-devon-deferred"]');
+    var chain = Promise.resolve();
+    Array.prototype.forEach.call(list, function (el) { chain = chain.then(function () { return run(el); }); });
+    return chain;
+  }).then(function () {
+    var ui = document.getElementById("devon_loading");
+    if (ui) ui.parentNode.removeChild(ui);
+    try { parent.postMessage({ devonGame: "ready" }, "*"); } catch (x) {}
+  }).catch(fail);
+})();
+</script>
+</body>
+</html>
