@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0" />
+    <title>Game Inside a Game</title>
+    <link rel="icon" href="img/icon.png" />
+    <style>
+      html, body { margin: 0; height: 100%; background: #1b2728; overflow: hidden; font-family: system-ui, -apple-system, sans-serif; }
+      #stage { position: absolute; inset: 0; display: grid; place-items: center; }
+      #unity-canvas { display: block; background: #231f20; aspect-ratio: 16 / 9; width: min(100vw, calc(100vh * 16 / 9)); height: auto; outline: none; }
+      #loading { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; gap: 14px; color: #cfd8d9; }
+      #loading img { width: 72px; height: 72px; border-radius: 16px; }
+      #bar { width: 220px; height: 6px; border-radius: 3px; background: rgba(255,255,255,.12); overflow: hidden; }
+      #fill { width: 0%; height: 100%; background: #ff7a2f; transition: width .15s; }
+      #status { font-size: 12px; color: #8fa1a3; }
+      #status.error { color: #ff8a80; max-width: 320px; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <div id="stage"><canvas id="unity-canvas" tabindex="-1"></canvas></div>
+    <div id="loading">
+      <img src="img/icon.png" alt="" />
+      <div id="bar"><div id="fill"></div></div>
+      <div id="status">Downloading game…</div>
+    </div>
+    <script>
+      (function () {
+        // The big build files are gzipped and stored in ~3 MB parts (hosting limits on
+        // single files); they are downloaded, joined and unzipped into blob: URLs here.
+        var BUILD = "Build/webv0_2d";
+        var PARTS = { data: 4, wasm: 2 };
+        var TOTAL = 9593339 + 5903027; // gzipped sizes
+        var fill = document.getElementById("fill");
+        var status = document.getElementById("status");
+        var loading = document.getElementById("loading");
+        var got = 0;
+
+        function setProgress(p) { fill.style.width = Math.round(p * 100) + "%"; }
+        function fail(msg) {
+          status.textContent = msg;
+          status.className = "error";
+          parent.postMessage({ devonGame: "error", message: msg }, "*");
+        }
+
+        function fetchPart(url) {
+          return fetch(url).then(function (res) {
+            if (!res.ok) throw new Error("HTTP " + res.status + " for " + url);
+            if (!res.body || !res.body.getReader) {
+              return res.arrayBuffer().then(function (b) { got += b.byteLength; setProgress(0.85 * got / TOTAL); return b; });
+            }
+            var reader = res.body.getReader();
+            var chunks = [];
+            function pump() {
+              return reader.read().then(function (r) {
+                if (r.done) return new Blob(chunks);
+                chunks.push(r.value);
+                got += r.value.byteLength;
+                setProgress(0.85 * got / TOTAL);
+                return pump();
+              });
+            }
+            return pump();
+          });
+        }
+
+        function joined(kind, type) {
+          var jobs = [];
+          for (var i = 0; i < PARTS[kind]; i++) {
+            jobs.push(fetchPart(BUILD + "." + kind + ".gz.part" + (i < 10 ? "0" : "") + i));
+          }
+          return Promise.all(jobs).then(function (parts) {
+            if (typeof DecompressionStream === "undefined") throw new Error("This browser is too old to run the game (needs Safari 16.4+ / Chrome 80+)");
+            return new Response(new Blob(parts).stream().pipeThrough(new DecompressionStream("gzip"))).blob();
+          }).then(function (blob) {
+            return URL.createObjectURL(new Blob([blob], { type: type }));
+          });
+        }
+
+        function loadScript(src) {
+          return new Promise(function (resolve, reject) {
+            var s = document.createElement("script");
+            s.src = src;
+            s.onload = function () { resolve(); };
+            s.onerror = function () { reject(new Error("Failed to load " + src)); };
+            document.body.appendChild(s);
+          });
+        }
+
+        Promise.all([joined("data", "application/octet-stream"), joined("wasm", "application/wasm"), loadScript(BUILD + ".loader.js")])
+          .then(function (urls) {
+            status.textContent = "Starting…";
+            var config = {
+              dataUrl: urls[0],
+              frameworkUrl: BUILD + ".framework.js",
+              codeUrl: urls[1],
+              streamingAssetsUrl: "StreamingAssets",
+              companyName: "Sam Hogan",
+              productName: "Game Inside a Game",
+              productVersion: "0.2",
+            };
+            if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) config.devicePixelRatio = 1;
+            var canvas = document.getElementById("unity-canvas");
+            return createUnityInstance(canvas, config, function (p) { setProgress(0.85 + 0.15 * p); });
+          })
+          .then(function (instance) {
+            loading.style.display = "none";
+            window.unityInstance = instance;
+            document.getElementById("unity-canvas").focus();
+            parent.postMessage({ devonGame: "ready" }, "*");
+            window.addEventListener("message", function (e) {
+              if (e.data && e.data.devonGame === "fullscreen") instance.SetFullscreen(1);
+            });
+          })
+          .catch(function (err) { fail(err && err.message ? err.message : String(err)); });
+      })();
+    </script>
+  </body>
+</html>
