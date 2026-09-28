@@ -358,7 +358,13 @@ export function ProxyBrowser() {
       // Devon's built-in pages: Games (devon://games, devon://games/<id>) and
       // YouTube (devon://youtube, devon://youtube?q=…, devon://youtube/watch?v=…)
       const gameId = parseGamesUrl(trimmed)
-      const ytRoute = gameId === null ? parseYouTubeUrl(trimmed) : null
+      // A real YouTube video link (youtube.com/watch, youtu.be, shorts, embed,
+      // youtube-nocookie.com/embed…) opens in Devon's own player instead of
+      // being proxied: YouTube's pages refuse proxies and school networks block
+      // the direct embed, while Devon's player streams from the server.
+      const ytVideoId = gameId === null && !/^devon:/i.test(trimmed) ? videoIdFromUrl(trimmed) : null
+      const ytRoute =
+        gameId === null ? parseYouTubeUrl(trimmed) ?? (ytVideoId ? { view: "watch" as const, id: ytVideoId } : null) : null
       if (gameId !== null || ytRoute) {
         controllersRef.current.get(tabId)?.abort()
         controllersRef.current.delete(tabId)
