@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { CHUNK_SIZE, VIDEO_ID_RE, YTError, streamSlice } from "@/lib/youtube-server"
+import { CHUNK_SIZE, VIDEO_ID_RE, YTError, browserCookieFrom, streamSlice } from "@/lib/youtube-server"
 
 export const runtime = "nodejs"
 export const maxDuration = 60
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const slice = await streamSlice(id, itag, start, end, client, request.signal)
+    const slice = await streamSlice(id, itag, start, end, client, request.signal, browserCookieFrom(request.headers.get("cookie")))
     const headers = new Headers({
       "content-type": slice.mime,
       "content-length": String(slice.end - slice.start + 1),

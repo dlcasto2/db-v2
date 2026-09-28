@@ -10,6 +10,7 @@ import {
   Download,
   ExternalLink,
   Film,
+  KeyRound,
   Loader2,
   RotateCw,
   Search,
@@ -17,9 +18,11 @@ import {
   X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { formatBytes } from "@/lib/media"
 import { saveBlob } from "@/lib/page-archiver"
 import {
+  type CookieStatus,
   type DownloadOption,
   type Progress,
   type YTSearchItem,
@@ -27,11 +30,16 @@ import {
   type YouTubeRoute,
   downloadOptions,
   formatDuration,
+  getCookieStatus,
   getVideo,
+  previewFormat,
+  removeCookie,
   runDownload,
   safeFileName,
+  saveCookie,
   searchYouTube,
   searchYouTubeMore,
+  streamUrl,
   thumbnailUrl,
   videoIdFromUrl,
   youTubeSuggestions,
@@ -47,10 +55,6 @@ interface YouTubePageProps {
 
 /** Devon's YouTube page: search YouTube, watch in Devon and download video or audio */
 export function YouTubePage({ route, onNavigate, onTitle }: YouTubePageProps) {
-  useEffect(() => {
-    // Remove cookies saved by older versions; this version never sends them upstream.
-    fetch("/api/youtube/cookie", { method: "DELETE" }).catch(() => {})
-  }, [])
   return route.view === "watch" ? (
     <WatchView key={route.id} id={route.id} onNavigate={onNavigate} onTitle={onTitle} />
   ) : (
@@ -231,7 +235,13 @@ function SearchView({ query, onNavigate }: { query: string; onNavigate: (route: 
             <h1 className="text-2xl font-semibold tracking-tight">YouTube</h1>
             <p className="text-sm text-muted-foreground">Search, watch and download videos or audio.</p>
           </div>
+          {query && <CookieButton className="ml-auto" />}
         </div>
+        {!query && (
+          <div className="-mt-5 mb-6 flex justify-center">
+            <CookieButton />
+          </div>
+        )}
 
         <SearchBox initial={query} onNavigate={onNavigate} big={!query} />
 
@@ -462,6 +472,7 @@ function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void 
 }
 
 function DownloadUnavailableCard({ message, onRetry }: { message: string; onRetry: () => void }) {
+  const [open, setOpen] = useState(false)
   return (
     <div className="mt-4 rounded-2xl bg-toolbar p-5 text-sm ring-1 ring-border">
       <div className="flex items-start gap-3">
@@ -470,14 +481,22 @@ function DownloadUnavailableCard({ message, onRetry }: { message: string; onRetr
           <p className="font-medium">Downloads are unavailable from this server</p>
           <p className="mt-1 break-words text-muted-foreground">{message}</p>
           <p className="mt-2 text-muted-foreground">
-            You can still watch above using the youtube-nocookie.com player. This player does not provide downloadable
-            video files to Devon.
+            You can still try watching above: “Through Devon” loads the youtube-nocookie.com player through Devon&apos;s
+            proxy, and “Direct” loads it from your own connection. Neither gives Devon a file to download.
+          </p>
+          <p className="mt-2 text-muted-foreground">
+            To download, add the cookie from a signed-in YouTube account (ideally a spare one). It&apos;s saved only in
+            this browser.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
+            <Button size="sm" className="rounded-full" onClick={() => setOpen(true)}>
+              <KeyRound /> Add YouTube cookie
+            </Button>
             <Button size="sm" variant="secondary" className="rounded-full" onClick={onRetry}>
               <RotateCw /> Try again
             </Button>
           </div>
+          <CookieDialog open={open} onOpenChange={setOpen} onChange={onRetry} />
         </div>
       </div>
     </div>
@@ -485,8 +504,277 @@ function DownloadUnavailableCard({ message, onRetry }: { message: string; onRetr
 }
 
 // ---------------------------------------------------------------------------
+// Cookie box
+// ---------------------------------------------------------------------------
+
+/** Shared so every button shows the same state after a save */
+let cookieState: CookieStatus | null = null
+const cookieListeners = new Set<() => void>()
+const setCookieState = (s: CookieStatus) => {
+  cookieState = s
+  cookieListeners.forEach((l) => l())
+}
+function useCookieState() {
+  const state = useSyncExternalStore(
+    (l) => {
+      cookieListeners.add(l)
+      return () => cookieListeners.delete(l)
+    },
+    () => cookieState,
+    () => null,
+  )
+  useEffect(() => {
+    if (cookieState === null) getCookieStatus().then(setCookieState).catch(() => {})
+  }, [])
+  return state
+}
+
+function CookieButton({ className, onChange }: { className?: string; onChange?: () => void }) {
+  const [open, setOpen] = useState(false)
+  const state = useCookieState()
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="ghost"
+        className={cn("h-8 rounded-full px-3 text-muted-foreground", className)}
+        onClick={() => setOpen(true)}
+        title="YouTube cookie for downloads"
+      >
+        <KeyRound className={state?.set ? "text-emerald-400" : undefined} />
+        <span className="hidden sm:inline">{state?.set ? "Cookie saved" : "Add cookie"}</span>
+      </Button>
+      <CookieDialog open={open} onOpenChange={setOpen} onChange={onChange} />
+    </>
+  )
+}
+
+function CookieDialog({
+  open,
+  onOpenChange,
+  onChange,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onChange?: () => void
+}) {
+  const state = useCookieState()
+  const [value, setValue] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+
+  useEffect(() => {
+    if (open) {
+      setValue("")
+      setError("")
+    }
+  }, [open])
+
+  const save = async () => {
+    setBusy(true)
+    setError("")
+    try {
+      setCookieState(await saveCookie(value))
+      setValue("")
+      onOpenChange(false)
+      onChange?.()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const remove = async () => {
+    setBusy(true)
+    await removeCookie().catch(() => {})
+    setCookieState({ set: false })
+    setBusy(false)
+    onChange?.()
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg rounded-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <KeyRound className="size-5 text-primary" /> YouTube cookie
+          </DialogTitle>
+          <DialogDescription>
+            YouTube blocks downloads from cloud servers unless they come from a signed-in account. Paste that account&apos;s
+            cookie here. It&apos;s stored only in this browser, can&apos;t be read by web pages, and is sent only to this
+            Devon server&apos;s YouTube downloader.
+          </DialogDescription>
+        </DialogHeader>
+
+        {state?.set && (
+          <div className="flex items-center gap-3 rounded-xl bg-emerald-500/10 px-3 py-2.5 text-sm ring-1 ring-emerald-500/25">
+            <Check className="size-4 flex-shrink-0 text-emerald-400" />
+            <span className="min-w-0 flex-1">
+              Cookie saved ({state.cookies} cookies{state.hasSID ? ", signed in" : ", but no sign-in cookie"}).
+            </span>
+            <Button size="sm" variant="ghost" className="h-7 rounded-full" onClick={remove} disabled={busy}>
+              Remove
+            </Button>
+          </div>
+        )}
+        {state?.set && !state.hasSID && (
+          <p className="text-xs text-amber-400">
+            This cookie has no sign-in part (SID), so YouTube will probably still block it. Copy it again while signed in.
+          </p>
+        )}
+
+        <ol className="list-decimal space-y-1 pl-5 text-xs leading-relaxed text-muted-foreground">
+          <li>Open a private/incognito window and sign in to YouTube, ideally with a spare account.</li>
+          <li>
+            Go to <span className="font-mono text-foreground">youtube.com/robots.txt</span>, press F12, open{" "}
+            <b>Network</b>, and reload.
+          </li>
+          <li>
+            Click <b>robots.txt</b> → <b>Headers</b> → <b>Request Headers</b>, right-click the <b>cookie</b> value →{" "}
+            <b>Copy value</b>.
+          </li>
+          <li>Paste it below, then close the private window without signing out.</li>
+        </ol>
+
+        <textarea
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder={state?.set ? "Paste a new cookie to replace the saved one" : "VISITOR_INFO1_LIVE=…; SID=…; HSID=…; …"}
+          spellCheck={false}
+          autoComplete="off"
+          rows={4}
+          className="w-full resize-none rounded-xl bg-omnibox p-3 font-mono text-xs text-foreground outline-none ring-1 ring-border placeholder:text-muted-foreground focus:ring-2 focus:ring-primary/60"
+        />
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" className="rounded-full" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button className="rounded-full" onClick={save} disabled={busy || !value.trim()}>
+            {busy ? <Loader2 className="animate-spin" /> : <KeyRound />} Save cookie
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Watch + download
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Devon's player
+// ---------------------------------------------------------------------------
+
+type PlayerMode = "devon" | "direct"
+const PLAYER_KEY = "devon.youtube.player"
+
+function readPlayerMode(): PlayerMode {
+  try {
+    return localStorage.getItem(PLAYER_KEY) === "direct" ? "direct" : "devon"
+  } catch {
+    return "devon"
+  }
+}
+
+const embedUrl = (id: string) => `https://www.youtube-nocookie.com/embed/${id}?autoplay=0&rel=0&playsinline=1`
+
+/**
+ * Devon mode never makes the viewer's browser talk to YouTube:
+ *  - if the download server can stream the video, it plays in a <video> fed by
+ *    /api/youtube/stream;
+ *  - otherwise the youtube-nocookie.com player itself is loaded through Devon's
+ *    proxy (/api/proxy), so its page, scripts and video requests all go through
+ *    this server.
+ * Direct mode loads youtube-nocookie.com straight from the viewer's connection.
+ */
+function DevonPlayer({ id, video }: { id: string; video: YTVideo | null }) {
+  const [mode, setModeState] = useState<PlayerMode>("devon")
+  const [nativeFailed, setNativeFailed] = useState(false)
+  useEffect(() => setModeState(readPlayerMode()), [])
+  useEffect(() => setNativeFailed(false), [id])
+
+  const setMode = (m: PlayerMode) => {
+    setModeState(m)
+    try {
+      localStorage.setItem(PLAYER_KEY, m)
+    } catch {
+      // storage blocked
+    }
+  }
+
+  const preview = video ? previewFormat(video) : undefined
+  const native = mode === "devon" && video && preview && !nativeFailed
+  // YouTube's embed refuses to start without knowing which site embeds it
+  // (Error 153 "Video player configuration error"). Through the proxy, the
+  // upstream Referer only exists if we pass one as ref=, so name this Devon site.
+  const site = typeof window !== "undefined" ? `${window.location.origin}/` : ""
+  const proxiedEmbed = `${embedUrl(id)}${site ? `&origin=${encodeURIComponent(site.slice(0, -1))}&widget_referrer=${encodeURIComponent(site)}` : ""}`
+  const src =
+    mode === "direct"
+      ? embedUrl(id)
+      : `/api/proxy?url=${encodeURIComponent(proxiedEmbed)}${site ? `&ref=${encodeURIComponent(site)}` : ""}`
+
+  return (
+    <div>
+      <div className="relative aspect-video overflow-hidden rounded-2xl bg-black ring-1 ring-border">
+        {native ? (
+          <video
+            key={`${id}:${preview!.itag}`}
+            src={streamUrl(video!, preview!.itag)}
+            poster={thumbnailUrl(id, "hq")}
+            controls
+            playsInline
+            preload="metadata"
+            className="size-full"
+            onError={() => setNativeFailed(true)}
+          />
+        ) : (
+          <iframe
+            key={src}
+            src={src}
+            title="YouTube player"
+            allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+            allowFullScreen
+            referrerPolicy="strict-origin-when-cross-origin"
+            className="size-full border-0"
+          />
+        )}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <span>Player:</span>
+        <div className="flex rounded-full bg-white/[0.05] p-0.5 ring-1 ring-border">
+          {(
+            [
+              ["devon", "Through Devon"],
+              ["direct", "Direct"],
+            ] as const
+          ).map(([m, label]) => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              className={cn(
+                "rounded-full px-2.5 py-0.5 font-medium transition",
+                mode === m ? "bg-primary text-primary-foreground" : "hover:text-foreground",
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <span className="min-w-0 truncate">
+          {mode === "direct"
+            ? "youtube-nocookie.com from your own connection"
+            : native
+              ? "Streaming from this Devon server"
+              : "youtube-nocookie.com loaded through Devon's proxy"}
+        </span>
+      </div>
+    </div>
+  )
+}
 
 function WatchView({
   id,
@@ -532,20 +820,12 @@ function WatchView({
           <ArrowLeft /> {lastSearch?.q ? "Results" : "YouTube"}
         </Button>
         <span className="min-w-0 flex-1 truncate text-sm font-medium">{video?.title}</span>
+        <CookieButton onChange={() => setAttempt((n) => n + 1)} />
       </div>
 
       <div className="mx-auto grid w-full max-w-6xl gap-6 p-4 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="min-w-0">
-          <div className="relative aspect-video overflow-hidden rounded-2xl bg-black ring-1 ring-border">
-            <iframe
-              src={`https://www.youtube-nocookie.com/embed/${id}?autoplay=0&rel=0`}
-              title="YouTube player"
-              allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-              allowFullScreen
-              referrerPolicy="strict-origin-when-cross-origin"
-              className="size-full border-0"
-            />
-          </div>
+          <DevonPlayer id={id} video={video} />
 
           {error && (errorCode === "bot-check" || errorCode === "stream-unavailable") ? (
             <DownloadUnavailableCard message={error} onRetry={() => setAttempt((n) => n + 1)} />

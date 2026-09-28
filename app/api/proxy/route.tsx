@@ -6,7 +6,6 @@ import https from "node:https"
 import { Readable } from "node:stream"
 import { brotliCompressSync, constants as zlibConstants, gzipSync } from "node:zlib"
 import { CookieJar, JAR_PATH, JAR_PREFIX, jarSetCookieHeaders } from "@/lib/cookie-jar"
-import { DOCUMENT_TYPE_RE, PERMISSIONS_POLICY, SANDBOX_CSP } from "@/lib/sandbox-policy"
 
 // DNS lookups need the Node.js runtime (not Edge)
 export const runtime = "nodejs"
@@ -923,212 +922,6 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
     window[name] = Wrapped;
   });
 
-  // ---- Per-site storage (ported from WebKit's WebContent sandbox, which only lets a
-  // page reach its own website-data container). Every proxied site shares Devon's
-  // origin, so without this any site could read or clear Devon's saved tabs,
-  // history and settings, and every other site's localStorage, IndexedDB, caches
-  // and JS cookies. Each site now gets its own namespace: keys, database names,
-  // cache names and cookie names carry a site tag the page never sees.
-  var STORE_PREFIX = 'dvs:' + TARGET_ORIGIN + ':';
-  var COOKIE_TAG = (function () {
-    var site = TARGET_HOST.replace(new RegExp('^www[.]'), '');
-    var b64 = btoa(site).split('=').join('').split('+').join('-').split('/').join('_');
-    return 'dsc.' + b64 + '.';
-  })();
-
-  function partitionedStorage(native, proto) {
-    function ownKeys() {
-      var keys = [];
-      for (var i = 0; i < native.length; i++) {
-        var k = native.key(i);
-        if (k !== null && k.indexOf(STORE_PREFIX) === 0) keys.push(k.slice(STORE_PREFIX.length));
-      }
-      return keys;
-    }
-    var api = {
-      getItem: function (k) { return native.getItem(STORE_PREFIX + String(k)); },
-      setItem: function (k, v) { native.setItem(STORE_PREFIX + String(k), String(v)); },
-      removeItem: function (k) { native.removeItem(STORE_PREFIX + String(k)); },
-      clear: function () { ownKeys().forEach(function (k) { native.removeItem(STORE_PREFIX + k); }); },
-      key: function (i) { var keys = ownKeys(); i = Number(i) || 0; return i >= 0 && i < keys.length ? keys[i] : null; }
-    };
-    var has = Object.prototype.hasOwnProperty;
-    // Named access (localStorage.foo, localStorage['foo'] = 1, delete, Object.keys,
-    // JSON.stringify) behaves like a real Storage object
-    return new Proxy(Object.create(proto), {
-      get: function (t, p) {
-        if (p === 'length') return ownKeys().length;
-        if (typeof p === 'symbol') return t[p];
-        if (has.call(api, p)) return api[p];
-        if (p in t) return t[p];
-        var v = api.getItem(p);
-        return v === null ? undefined : v;
-      },
-      set: function (t, p, v) {
-        if (typeof p === 'symbol') { t[p] = v; return true; }
-        api.setItem(p, v);
-        return true;
-      },
-      defineProperty: function (t, p, desc) {
-        if (typeof p === 'symbol') return Reflect.defineProperty(t, p, desc);
-        api.setItem(p, desc.value);
-        return true;
-      },
-      has: function (t, p) {
-        if (typeof p === 'symbol' || has.call(api, p) || p in t || p === 'length') return true;
-        return api.getItem(p) !== null;
-      },
-      deleteProperty: function (t, p) {
-        if (typeof p !== 'symbol') api.removeItem(p);
-        return true;
-      },
-      ownKeys: function () { return ownKeys(); },
-      getOwnPropertyDescriptor: function (t, p) {
-        if (typeof p === 'symbol') return undefined;
-        var v = api.getItem(p);
-        return v === null ? undefined : { value: v, writable: true, enumerable: true, configurable: true };
-      }
-    });
-  }
-
-  function partitionRealm(w) {
-    ['localStorage', 'sessionStorage'].forEach(function (name) {
-      var native;
-      try { native = w[name]; } catch (e) { return; } // storage disabled
-      if (!native) return;
-      var wrapped = partitionedStorage(native, (w.Storage || Storage).prototype);
-      try { Object.defineProperty(w, name, { configurable: true, enumerable: true, get: function () { return wrapped; } }); } catch (e) {}
-    });
-
-    // Storage events from other tabs: only this site's keys, without the tag
-    try {
-      var SE = w.StorageEvent && w.StorageEvent.prototype;
-      var keyDesc = SE && Object.getOwnPropertyDescriptor(SE, 'key');
-      if (keyDesc && keyDesc.get && !SE.__devonPartitioned) {
-        SE.__devonPartitioned = true;
-        Object.defineProperty(SE, 'key', {
-          configurable: true,
-          enumerable: keyDesc.enumerable,
-          get: function () {
-            var k = keyDesc.get.call(this);
-            return k && k.indexOf(STORE_PREFIX) === 0 ? k.slice(STORE_PREFIX.length) : k;
-          }
-        });
-        var ETP = w.EventTarget.prototype;
-        var nativeAdd = ETP.addEventListener, nativeRemove = ETP.removeEventListener;
-        var storageWrappers = new WeakMap();
-        ETP.addEventListener = function (type, fn, opts) {
-          if (type === 'storage' && this === w && fn && (typeof fn === 'function' || typeof fn === 'object')) {
-            var inner = fn;
-            if (!storageWrappers.has(inner)) {
-              storageWrappers.set(inner, function (ev) {
-                var k = keyDesc.get.call(ev);
-                if (k !== null && k.indexOf(STORE_PREFIX) !== 0) return; // another site's (or Devon's) key
-                return typeof inner === 'function' ? inner.call(this, ev) : inner.handleEvent(ev);
-              });
-            }
-            fn = storageWrappers.get(inner);
-          }
-          return nativeAdd.call(this, type, fn, opts);
-        };
-        ETP.removeEventListener = function (type, fn, opts) {
-          if (type === 'storage' && this === w && fn && storageWrappers.has(fn)) fn = storageWrappers.get(fn);
-          return nativeRemove.call(this, type, fn, opts);
-        };
-      }
-    } catch (e) {}
-
-    // IndexedDB: database names carry the site prefix
-    try {
-      var idb = w.indexedDB;
-      if (idb && !idb.__devonPartitioned) {
-        idb.__devonPartitioned = true;
-        var nativeOpen = idb.open, nativeDelete = idb.deleteDatabase, nativeList = idb.databases;
-        idb.open = function (name) {
-          var args = Array.prototype.slice.call(arguments);
-          args[0] = STORE_PREFIX + String(name);
-          return nativeOpen.apply(idb, args);
-        };
-        idb.deleteDatabase = function (name) { return nativeDelete.call(idb, STORE_PREFIX + String(name)); };
-        if (typeof nativeList === 'function') {
-          idb.databases = function () {
-            return nativeList.call(idb).then(function (list) {
-              return list
-                .filter(function (d) { return d.name && d.name.indexOf(STORE_PREFIX) === 0; })
-                .map(function (d) { return { name: d.name.slice(STORE_PREFIX.length), version: d.version }; });
-            });
-          };
-        }
-      }
-    } catch (e) {}
-
-    // Cache Storage: cache names carry the site prefix
-    try {
-      var cs = w.caches;
-      if (cs && !cs.__devonPartitioned) {
-        cs.__devonPartitioned = true;
-        var n = { open: cs.open, has: cs.has, del: cs['delete'], keys: cs.keys };
-        cs.open = function (name) { return n.open.call(cs, STORE_PREFIX + String(name)); };
-        cs.has = function (name) { return n.has.call(cs, STORE_PREFIX + String(name)); };
-        cs['delete'] = function (name) { return n.del.call(cs, STORE_PREFIX + String(name)); };
-        cs.keys = function () {
-          return n.keys.call(cs).then(function (names) {
-            return names
-              .filter(function (x) { return x.indexOf(STORE_PREFIX) === 0; })
-              .map(function (x) { return x.slice(STORE_PREFIX.length); });
-          });
-        };
-        // caches.match() searches every cache: only this site's
-        cs.match = function (req, opts) {
-          if (opts && opts.cacheName) return n.open.call(cs, STORE_PREFIX + opts.cacheName).then(function (c) { return c.match(req, opts); });
-          return cs.keys().then(function (names) {
-            var i = 0;
-            function next() {
-              if (i >= names.length) return undefined;
-              return n.open.call(cs, STORE_PREFIX + names[i++]).then(function (c) { return c.match(req, opts); }).then(function (r) { return r || next(); });
-            }
-            return next();
-          });
-        };
-      }
-    } catch (e) {}
-
-    // document.cookie: names carry the site tag (so a site can't read another's
-    // cookies or plant cookies in Devon's HttpOnly cookie jar). Domain= is dropped:
-    // the page really lives on Devon's host, so the browser would reject it anyway.
-    try {
-      var doc = w.document;
-      var cd = w.Document && Object.getOwnPropertyDescriptor(w.Document.prototype, 'cookie');
-      if (doc && cd && cd.get && cd.set && !doc.__devonPartitioned) {
-        doc.__devonPartitioned = true;
-        Object.defineProperty(doc, 'cookie', {
-          configurable: true,
-          enumerable: cd.enumerable,
-          get: function () {
-            var all = cd.get.call(this);
-            if (!all) return '';
-            return all.split('; ')
-              .filter(function (c) { return c.indexOf(COOKIE_TAG) === 0; })
-              .map(function (c) { c = c.slice(COOKIE_TAG.length); return c.charAt(0) === '=' ? c.slice(1) : c; })
-              .join('; ');
-          },
-          set: function (value) {
-            var parts = String(value).split(';');
-            var first = parts.shift();
-            var eq = first.indexOf('=');
-            var name = eq === -1 ? '' : first.slice(0, eq).trim();
-            var val = eq === -1 ? first.trim() : first.slice(eq + 1);
-            var attrs = parts.filter(function (a) { return a.split('=')[0].trim().toLowerCase() !== 'domain'; });
-            cd.set.call(this, COOKIE_TAG + name + '=' + val + (attrs.length ? ';' + attrs.join(';') : ''));
-          }
-        });
-      }
-      // The async cookie API would bypass the tags: sites fall back to document.cookie
-      if ('cookieStore' in w) Object.defineProperty(w, 'cookieStore', { configurable: true, value: undefined });
-    } catch (e) {}
-  }
-  partitionRealm(window);
-
   // ---- Pristine functions from blank frames. Some sites (YouTube included) create an
   // empty <iframe> and take untouched built-ins from it (history.pushState, fetch,
   // XMLHttpRequest, element setters) to avoid patched ones. Those would skip the
@@ -1144,9 +937,6 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
         if (!w || w === window || w.__devonRealmPatched || w.__devonProxied) return;
         w.__devonRealmPatched = true;
       } catch (e) { return; } // cross-origin: nothing to do
-
-      // A blank frame's own storage, IndexedDB and cookies are Devon's origin's too
-      partitionRealm(w);
 
       var WH = w.History && w.History.prototype;
       if (WH) ['pushState', 'replaceState'].forEach(function (name) {
@@ -1728,8 +1518,6 @@ async function buildProxyResponse(
     }
     const disposition = upstream.headers.get("content-disposition")
     if (disposition) headers["Content-Disposition"] = disposition
-    // Raw responses are for the page's fetch/XHR: if one is opened as a document, no script runs
-    if (DOCUMENT_TYPE_RE.test(contentType)) headers["Content-Security-Policy"] = SANDBOX_CSP
     // Streamed, so long-lived responses (EventSource, chunked APIs) keep working
     return new NextResponse(isHead ? null : upstream.body, { status, headers })
   }
@@ -1744,7 +1532,6 @@ async function buildProxyResponse(
         ...encoded.headers,
         "Content-Type": "text/html; charset=utf-8",
         "Cache-Control": "no-store",
-        "Permissions-Policy": PERMISSIONS_POLICY,
       },
     })
   }
@@ -1789,8 +1576,6 @@ async function buildProxyResponse(
   if (etag) headers.ETag = etag
   const disposition = upstream.headers.get("content-disposition")
   if (disposition) headers["Content-Disposition"] = disposition
-  // SVG/XML files are shown, not run: opened directly, their scripts stay off
-  if (DOCUMENT_TYPE_RE.test(contentType)) headers["Content-Security-Policy"] = SANDBOX_CSP
 
   const data = await upstream.arrayBuffer()
   headers["Content-Length"] = String(data.byteLength) // lets an oversized file fail cleanly (413) instead of being cut off
@@ -2067,8 +1852,6 @@ async function handleSlice(request: NextRequest, targetUrl: string, index: numbe
         "X-Devon-More": more ? "1" : "0",
         "X-Proxy-Final-Url": finalUrl,
         "Cache-Control": "public, max-age=3600",
-        // Slices are only ever fetched; never let one run as a document
-        "Content-Security-Policy": SANDBOX_CSP,
       },
     })
   } catch (error) {

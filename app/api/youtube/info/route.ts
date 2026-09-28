@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { YTError, videoInfo } from "@/lib/youtube-server"
+import { YTError, browserCookieFrom, videoInfo } from "@/lib/youtube-server"
 
 export const runtime = "nodejs"
 export const maxDuration = 60
@@ -8,7 +8,7 @@ export const maxDuration = 60
 export async function GET(request: NextRequest) {
   const id = request.nextUrl.searchParams.get("id")?.trim() ?? ""
   try {
-    return NextResponse.json(await videoInfo(id), { headers: { "cache-control": "private, max-age=600" } })
+    return NextResponse.json(await videoInfo(id, browserCookieFrom(request.headers.get("cookie"))), { headers: { "cache-control": "private, max-age=600" } })
   } catch (error) {
     if (!(error instanceof YTError) || error.status >= 500) console.error("[youtube/info]", id, error)
     const status = error instanceof YTError ? error.status : 502
