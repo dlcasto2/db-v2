@@ -766,7 +766,7 @@ function DevonPlayer({ id, video }: { id: string; video: YTVideo | null }) {
         </div>
         <span className="min-w-0 truncate">
           {mode === "direct"
-            ? "youtube-nocookie.com from your own connection"
+            ? "youtube-nocookie.com from your own connection (if it shows a 403, your network blocks it: use Through Devon)"
             : native
               ? "Streaming from this Devon server"
               : "youtube-nocookie.com loaded through Devon's proxy"}

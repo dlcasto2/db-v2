@@ -10,6 +10,7 @@
     "postinstall": "node scripts/copy-vendor.mjs"
   },
   "dependencies": {
+    "@ffmpeg/core": "0.12.9",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@hookform/resolvers": "^3.10.0",
     "@radix-ui/react-accordion": "1.2.2",

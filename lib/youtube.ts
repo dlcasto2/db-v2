@@ -307,7 +307,12 @@ async function fetchChunk(url: string, start: number, signal: AbortSignal) {
       await new Promise((r) => setTimeout(r, 600 * (attempt + 1)))
     }
   }
-  throw lastError instanceof Error ? lastError : new Error("Download failed")
+  const message = lastError instanceof Error ? lastError.message : String(lastError)
+  // Safari says "Load failed" and Chrome "Failed to fetch" when the connection drops
+  if (/load failed|failed to fetch|networkerror/i.test(message)) {
+    throw new Error("Lost the connection to the Devon server while downloading. Try again.")
+  }
+  throw new Error(message || "Download failed")
 }
 
 /** Downloads one format slice by slice (a few at a time), reporting bytes as they arrive */
@@ -473,8 +478,13 @@ export async function runDownload(
 // ffmpeg.wasm
 // ---------------------------------------------------------------------------
 
-/** The ffmpeg core (~31 MB) comes from a CDN; the small wrapper is served from /vendor/ffmpeg */
-const CORE_BASE = process.env.NEXT_PUBLIC_FFMPEG_CORE_URL || "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.9/dist/esm"
+/**
+ * The ffmpeg core (~31 MB) is served by Devon itself from /vendor/ffmpeg-core
+ * (gzipped, in ~3 MB parts; see scripts/copy-vendor.mjs), so it loads on
+ * networks that block CDNs. If those files are missing it falls back to a CDN.
+ */
+const LOCAL_CORE = "/vendor/ffmpeg-core"
+const CDN_CORE = process.env.NEXT_PUBLIC_FFMPEG_CORE_URL || "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.9/dist/esm"
 
 interface FFmpegLike {
   load(config: { coreURL: string; wasmURL: string }): Promise<boolean>
@@ -491,8 +501,37 @@ let ffmpegInstance: Promise<FFmpegLike> | null = null
 
 async function blobURL(url: string, type: string) {
   const res = await fetch(url)
-  if (!res.ok) throw new Error(`Couldn't download the converter (HTTP ${res.status})`)
+  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`)
   return URL.createObjectURL(new Blob([await res.arrayBuffer()], { type }))
+}
+
+/** Loads Devon's own copy: joins the gzipped parts and unzips them */
+async function localCore(): Promise<{ coreURL: string; wasmURL: string }> {
+  const manifest = await fetch(`${LOCAL_CORE}/manifest.json`).then((r) => {
+    if (!r.ok) throw new Error(`HTTP ${r.status}`)
+    return r.json() as Promise<{ parts: number }>
+  })
+  if (typeof DecompressionStream === "undefined") throw new Error("This browser can't unzip files")
+  const parts = await Promise.all(
+    Array.from({ length: manifest.parts }, (_, i) =>
+      fetch(`${LOCAL_CORE}/ffmpeg-core.wasm.gz.part${String(i).padStart(2, "0")}`).then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.blob()
+      }),
+    ),
+  )
+  const unzipped = new Blob(parts).stream().pipeThrough(new DecompressionStream("gzip"))
+  const wasm = await new Response(unzipped).blob()
+  const coreURL = await blobURL(`${LOCAL_CORE}/ffmpeg-core.js`, "text/javascript")
+  return { coreURL, wasmURL: URL.createObjectURL(new Blob([wasm], { type: "application/wasm" })) }
+}
+
+async function cdnCore(): Promise<{ coreURL: string; wasmURL: string }> {
+  const [coreURL, wasmURL] = await Promise.all([
+    blobURL(`${CDN_CORE}/ffmpeg-core.js`, "text/javascript"),
+    blobURL(`${CDN_CORE}/ffmpeg-core.wasm`, "application/wasm"),
+  ])
+  return { coreURL, wasmURL }
 }
 
 export function loadFFmpeg(): Promise<FFmpegLike> {
@@ -501,11 +540,19 @@ export function loadFFmpeg(): Promise<FFmpegLike> {
       const path = "/vendor/ffmpeg/index.js"
       const mod = await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ path)
       const ffmpeg = new mod.FFmpeg() as FFmpegLike
-      const [coreURL, wasmURL] = await Promise.all([
-        blobURL(`${CORE_BASE}/ffmpeg-core.js`, "text/javascript"),
-        blobURL(`${CORE_BASE}/ffmpeg-core.wasm`, "application/wasm"),
-      ])
-      await ffmpeg.load({ coreURL, wasmURL })
+      let urls: { coreURL: string; wasmURL: string }
+      try {
+        urls = await localCore()
+      } catch (localError) {
+        try {
+          urls = await cdnCore()
+        } catch (cdnError) {
+          throw new Error(
+            `Couldn't load the converter for HD and MP3 (Devon: ${(localError as Error).message}; CDN: ${(cdnError as Error).message}). 360p and M4A downloads don't need it.`,
+          )
+        }
+      }
+      await ffmpeg.load(urls)
       return ffmpeg
     })().catch((error) => {
       ffmpegInstance = null

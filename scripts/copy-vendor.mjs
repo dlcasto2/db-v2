@@ -31,3 +31,29 @@ try {
 } catch (error) {
   console.warn("copy-vendor: @ffmpeg/ffmpeg not installed, skipping", error.message)
 }
+
+// ffmpeg.wasm's core (~31 MB), served from Devon itself so HD merging and MP3
+// work on networks that block CDNs. The .wasm is gzipped and split into ~3 MB
+// parts to stay under static-hosting file limits; lib/youtube.ts joins and
+// unzips them in the browser (DecompressionStream).
+try {
+  const { readFileSync, writeFileSync, rmSync } = await import("node:fs")
+  const { gzipSync } = await import("node:zlib")
+  const src = join(dirname(require.resolve("@ffmpeg/core")), "..", "esm")
+  const dest = join(out, "ffmpeg-core")
+  rmSync(dest, { recursive: true, force: true })
+  mkdirSync(dest, { recursive: true })
+  copyFileSync(join(src, "ffmpeg-core.js"), join(dest, "ffmpeg-core.js"))
+  const wasm = readFileSync(join(src, "ffmpeg-core.wasm"))
+  const gz = gzipSync(wasm, { level: 9 })
+  const PART = 3 * 1024 * 1024
+  let parts = 0
+  for (let i = 0; i < gz.length; i += PART) {
+    writeFileSync(join(dest, `ffmpeg-core.wasm.gz.part${String(parts).padStart(2, "0")}`), gz.subarray(i, i + PART))
+    parts++
+  }
+  writeFileSync(join(dest, "manifest.json"), JSON.stringify({ parts, size: wasm.length, gzipSize: gz.length }))
+  console.log(`copy-vendor: @ffmpeg/core -> public/vendor/ffmpeg-core/ (${parts} parts)`)
+} catch (error) {
+  console.warn("copy-vendor: @ffmpeg/core not installed, skipping", error.message)
+}
