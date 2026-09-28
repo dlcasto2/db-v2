@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   AudioLines,
   Check,
+  Copy,
   Download,
   ExternalLink,
   Film,
@@ -562,13 +563,35 @@ function CookieDialog({
   const [value, setValue] = useState("")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
+  const [envValue, setEnvValue] = useState("")
+  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     if (open) {
       setValue("")
       setError("")
+      setEnvValue("")
+      setCopied(false)
     }
   }, [open])
+
+  // The cookie as DEVON_YT_COOKIE_B64: URL-safe base64 (letters, digits, - and _),
+  // for hosting settings forms that refuse spaces, ";" or "=". Made in this
+  // browser only; nothing is sent anywhere.
+  const makeEnvValue = async () => {
+    const text = value.trim().replace(/^cookie:\s*/i, "").replace(/[\r\n]+/g, "")
+    const bytes = new TextEncoder().encode(text)
+    let bin = ""
+    for (const b of bytes) bin += String.fromCharCode(b)
+    const encoded = btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+    setEnvValue(encoded)
+    try {
+      await navigator.clipboard.writeText(encoded)
+      setCopied(true)
+    } catch {
+      setCopied(false)
+    }
+  }
 
   const save = async () => {
     setBusy(true)
@@ -647,9 +670,42 @@ function CookieDialog({
           className="w-full resize-none rounded-xl bg-omnibox p-3 font-mono text-xs text-foreground outline-none ring-1 ring-border placeholder:text-muted-foreground focus:ring-2 focus:ring-primary/60"
         />
         {error && <p className="text-sm text-destructive">{error}</p>}
-        <div className="flex justify-end gap-2">
+        {envValue && (
+          <div className="space-y-1.5">
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {copied ? "Copied. " : "Select all of this and copy it. "}
+              In your host&apos;s environment variables, name it{" "}
+              <span className="font-mono text-foreground">DEVON_YT_COOKIE_B64</span> and paste this as the value
+              {envValue.length > 4000 ? (
+                <>
+                  {" "}
+                  (if it&apos;s too long, split it anywhere into <span className="font-mono">DEVON_YT_COOKIE_B64_1</span>,{" "}
+                  <span className="font-mono">_2</span>, …)
+                </>
+              ) : null}
+              , then redeploy. {envValue.length.toLocaleString()} characters, no spaces or symbols.
+            </p>
+            <textarea
+              readOnly
+              value={envValue}
+              onFocus={(e) => e.currentTarget.select()}
+              rows={3}
+              className="w-full resize-none rounded-xl bg-omnibox p-3 font-mono text-xs text-foreground outline-none ring-1 ring-border"
+            />
+          </div>
+        )}
+        <div className="flex flex-wrap justify-end gap-2">
           <Button variant="ghost" className="rounded-full" onClick={() => onOpenChange(false)}>
             Cancel
+          </Button>
+          <Button
+            variant="secondary"
+            className="rounded-full"
+            onClick={makeEnvValue}
+            disabled={!value.trim()}
+            title="Encode the cookie for a hosting environment variable (DEVON_YT_COOKIE_B64)"
+          >
+            {copied ? <Check /> : <Copy />} Copy for env variable
           </Button>
           <Button className="rounded-full" onClick={save} disabled={busy || !value.trim()}>
             {busy ? <Loader2 className="animate-spin" /> : <KeyRound />} Save cookie

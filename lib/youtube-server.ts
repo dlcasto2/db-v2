@@ -62,7 +62,8 @@ function unwrap(value: string): string {
 /**
  * The server-wide cookie, from any of:
  *   DEVON_YT_COOKIE      the cookie as pasted (Cookie header or cookies.txt)
- *   DEVON_YT_COOKIE_B64  the same, base64-encoded (survives forms that mangle ; or =)
+ *   DEVON_YT_COOKIE_B64  the same, base64-encoded (for settings forms that refuse
+ *                        spaces, ; or =); DEVON_YT_COOKIE_B64_1…20 for it in pieces
  *   DEVON_YT_COOKIE_1…20 pieces joined in order (for hosts that limit value length)
  */
 function readCookieSetting() {
@@ -73,11 +74,27 @@ function readCookieSetting() {
     raw = unwrap(setting("DEVON_YT_COOKIE")!)
     form = "DEVON_YT_COOKIE"
     source = settingSource("DEVON_YT_COOKIE")
-  } else if (setting("DEVON_YT_COOKIE_B64")) {
-    form = "DEVON_YT_COOKIE_B64"
-    source = settingSource("DEVON_YT_COOKIE_B64")
+  } else if (setting("DEVON_YT_COOKIE_B64") || setting("DEVON_YT_COOKIE_B64_1")) {
+    // One value, or pieces DEVON_YT_COOKIE_B64_1…20 joined in order. Standard
+    // or URL-safe base64 (letters, digits, - and _ only), padding optional.
+    let encoded = ""
+    if (setting("DEVON_YT_COOKIE_B64")) {
+      form = "DEVON_YT_COOKIE_B64"
+      source = settingSource("DEVON_YT_COOKIE_B64")
+      encoded = unwrap(setting("DEVON_YT_COOKIE_B64")!)
+    } else {
+      const parts: string[] = []
+      for (let i = 1; i <= 20; i++) {
+        const part = setting(`DEVON_YT_COOKIE_B64_${i}`)
+        if (!part) break
+        parts.push(unwrap(part))
+      }
+      encoded = parts.join("")
+      form = `DEVON_YT_COOKIE_B64_1…${parts.length}`
+      source = settingSource("DEVON_YT_COOKIE_B64_1")
+    }
     try {
-      raw = Buffer.from(unwrap(setting("DEVON_YT_COOKIE_B64")!), "base64").toString("utf8")
+      raw = Buffer.from(encoded.replace(/\s+/g, ""), "base64").toString("utf8")
     } catch {
       raw = ""
     }
