@@ -4,7 +4,9 @@ const nextConfig = {
   // hosts that only give environment variables to the build (they're only used by
   // lib/youtube-server.ts, which never reaches the browser)
   env: {
+    DEVON_YT_COOKIE: process.env.DEVON_YT_COOKIE || "",
     DEVON_YT_PROXY: process.env.DEVON_YT_PROXY || "",
+    DEVON_INVIDIOUS: process.env.DEVON_INVIDIOUS || "",
     DEVON_YT_CLIENTS: process.env.DEVON_YT_CLIENTS || "",
     DEVON_BUILD_TIME: new Date().toISOString(),
   },

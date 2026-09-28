@@ -514,3 +514,30 @@ export function loadFFmpeg(): Promise<FFmpegLike> {
   }
   return ffmpegInstance
 }
+
+// ---------------------------------------------------------------------------
+// Cookie box (a YouTube cookie saved in this browser, sent only to /api/youtube)
+// ---------------------------------------------------------------------------
+
+export interface CookieStatus {
+  set: boolean
+  cookies?: number
+  hasSID?: boolean
+}
+
+export const getCookieStatus = () => getJSON<CookieStatus>("/api/youtube/cookie")
+
+export async function saveCookie(cookie: string): Promise<CookieStatus> {
+  const res = await fetch("/api/youtube/cookie", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ cookie }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data?.error || `Couldn't save it (${res.status})`)
+  return data as CookieStatus
+}
+
+export async function removeCookie(): Promise<void> {
+  await fetch("/api/youtube/cookie", { method: "DELETE" })
+}

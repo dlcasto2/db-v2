@@ -89,7 +89,7 @@ Devon runs anywhere Next.js runs, and it is currently deployed on **EdgeOne Page
 `devon://youtube` searches YouTube, plays videos inside Devon and downloads them.
 
 - **Search:** type a search or paste any YouTube link (watch, youtu.be, Shorts, embed). Results load more as you scroll.
-- **Watch:** embeds the video from `www.youtube-nocookie.com` immediately, without asking for a YouTube account cookie. Some videos disallow embedding.
+- **Watch:** the **Through Devon** player (default) never connects the viewer to YouTube. If the download server can stream the video, it plays in Devon's own `<video>` player from `/api/youtube/stream`; otherwise the `youtube-nocookie.com` player is loaded through Devon's proxy (`/api/proxy`). **Direct** loads `youtube-nocookie.com` from the viewer's own connection. The choice is remembered per browser.
 - **Download video:** every resolution YouTube offers, up to 4K. 360p already has sound and downloads directly. HD streams come without sound, so Devon downloads the video and audio and joins them in the browser with [ffmpeg.wasm](https://github.com/ffmpegwasm/ffmpeg.wasm) (no re-encoding).
 - **Download audio:** MP3 (converted in the browser, 192 kbps), or the original M4A / Opus.
 - **On youtube.com:** on a video page, the download button (⤓) in the toolbar shows **Download this YouTube video**.
@@ -98,16 +98,26 @@ How it works:
 
 - Watching runs inside the `youtube-nocookie.com` embed. Downloads are a separate anonymous server request: `lib/youtube-server.ts` uses [youtubei.js](https://github.com/LuanRT/YouTube.js) to get a stream URL, and `/api/youtube/stream` fetches the bytes from the same server IP. The embed does not expose downloadable files.
 - `/api/youtube/stream` never sends more than 3 MB per response. That keeps it under EdgeOne's ~4 MB limit. The downloader fetches 3 slices at a time and joins them.
-- Devon tries several YouTube clients in turn (`TV_EMBEDDED, WEB_EMBEDDED, TV_SIMPLY, ANDROID_VR, TV, IOS, MWEB, WEB`). It checks that both video and audio bytes stream before showing download options. A bot check from one client does not stop the others. Set `DEVON_YT_CLIENTS` to change the order when YouTube changes what works.
+- Devon tries several YouTube clients in turn (`TV_EMBEDDED, WEB_EMBEDDED, TV_SIMPLY, ANDROID_VR, TV, IOS, MWEB, WEB`). It checks that both video and audio bytes stream before showing download options. A bot check or "video unavailable" response from one client does not stop the others. If every client fails, Devon reports a download-server problem without claiming the video itself is unavailable. Set `DEVON_YT_CLIENTS` to change the order when YouTube changes what works.
 - ffmpeg.wasm's small wrapper is copied to `public/vendor/ffmpeg/` by `postinstall`. The 31 MB core loads from jsDelivr the first time it's needed. Set `NEXT_PUBLIC_FFMPEG_CORE_URL` to host it elsewhere.
 
 ### Bot check ("Sign in to confirm you're not a bot")
 
-YouTube sometimes blocks anonymous download requests from cloud and datacenter IPs, including all available download clients. Watching through the `youtube-nocookie.com` embed still uses the viewer's connection and does not depend on Devon's download server. If every client is denied, downloads need a server or proxy IP allowed to fetch the video; the embed cannot provide downloadable files. The cookie box and `DEVON_YT_COOKIE` setting have been removed. Cookies saved by older builds are cleared when the YouTube page opens.
+YouTube often refuses download requests from cloud and datacenter IPs, including EdgeOne's. When every YouTube client is refused, Devon tries these, in order:
 
-An optional `DEVON_YT_PROXY` environment variable can route the separate search and download requests through an HTTP(S) proxy, e.g. `http://user:pass@host:port`. This may help when the server IP is blocked; it cannot make the embed provide downloadable files. `/api/youtube/status` reports whether a proxy is configured and when the build was made without revealing the proxy value.
+1. **A cookie saved in the browser.** On the YouTube page, click **Add cookie** (or **Add YouTube cookie** on the "Downloads are unavailable" message) and paste the `cookie:` request header from a signed-in youtube.com tab (the box shows the steps). It's stored as HttpOnly cookies that only `/api/youtube` receives, so pages can't read it and it never goes into the repo. It only applies in the browser where it was pasted. Use a spare account.
+2. **Invidious relays.** If YouTube still refuses, Devon asks public [Invidious](https://docs.invidious.io/instances/) instances (all at once) for the video with `local=true`, so the instance fetches it from YouTube with its own IP and relays the bytes. Public instances come and go and are often rate-limited or blocked themselves, so this may or may not work on a given day. Set `DEVON_INVIDIOUS` to a comma-separated list of instance URLs (for example your own instance), or to `off`.
 
-Limits: live streams, members-only, private and age-restricted videos can't be downloaded. A very long HD video can use more memory than a phone has, so pick a smaller size if one fails.
+Server-wide settings (environment variables, baked in at build time, so redeploy after changing them):
+
+| Variable | What it does |
+| --- | --- |
+| `DEVON_YT_COOKIE` | A signed-in YouTube cookie for everyone who uses the server (a `Cookie` header value or a Netscape `cookies.txt`). |
+| `DEVON_YT_PROXY` | An HTTP(S) proxy (`http://user:pass@host:port`) for all YouTube traffic. A residential proxy works best. |
+| `DEVON_INVIDIOUS` | Invidious instances to relay through, comma-separated, or `off`. |
+| `DEVON_YT_CLIENTS` | The order of YouTube clients to try. |
+
+`/api/youtube/status` shows which of these are set (never the values), whether this browser has a saved cookie, and when the build was made.
 
 ## Games
 

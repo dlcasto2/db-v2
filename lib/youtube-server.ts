@@ -9,6 +9,7 @@
  * (about 4 MB on EdgeOne) and lets <video> seek with ordinary Range requests.
  */
 import vm from "node:vm"
+import { createHash } from "node:crypto"
 import { Innertube, Platform, YTNodes, type Types } from "youtubei.js"
 
 export const CHUNK_SIZE = 3 * 1024 * 1024
@@ -24,23 +25,136 @@ export const CHUNK_SIZE = 3 * 1024 * 1024
  */
 const PROXY = (process.env.DEVON_YT_PROXY || "").trim()
 
-/** What the server can see of its settings (never the proxy value) */
-export function settingsStatus() {
+/**
+ * DEVON_YT_COOKIE: cookies from a signed-in YouTube account, for everyone who
+ * uses this server. (The YouTube page's cookie box does the same per browser.)
+ * Either a Cookie header ("SID=…; HSID=…; …") or a Netscape cookies.txt file.
+ */
+const COOKIE = parseCookies(process.env.DEVON_YT_COOKIE || "")
+
+/**
+ * DEVON_INVIDIOUS: Invidious instances to fall back on when YouTube refuses this
+ * server. They fetch the video from their own IPs and relay it (local=true).
+ * Comma-separated URLs; "off" disables the fallback.
+ */
+const DEFAULT_INVIDIOUS = [
+  "https://inv.nadeko.net",
+  "https://invidious.nerdvpn.de",
+  "https://yt.chocolatemoo53.com",
+  "https://invidious.tiekoetter.com",
+  "https://invidious.f5.si",
+  "https://inv.zoomerville.com",
+]
+const INVIDIOUS: string[] = (() => {
+  const env = (process.env.DEVON_INVIDIOUS || "").trim()
+  if (/^(off|none|false|0)$/i.test(env)) return []
+  const list = env ? env.split(",") : DEFAULT_INVIDIOUS
+  return list
+    .map((u) => u.trim().replace(/\/+$/, ""))
+    .filter((u) => /^https?:\/\/[^/]+$/i.test(u))
+})()
+
+function parseCookies(raw: string): string {
+  const text = raw.trim()
+  if (!text) return ""
+  // Netscape cookies.txt: domain, flag, path, secure, expiry, name, value (tab separated)
+  if (text.includes("\t")) {
+    const pairs: string[] = []
+    for (const line of text.split(/\r?\n/)) {
+      const clean = line.replace(/^#HttpOnly_/, "")
+      if (!clean || clean.startsWith("#")) continue
+      const cols = clean.split("\t")
+      if (cols.length >= 7 && /youtube\.com$/.test(cols[0])) pairs.push(`${cols[5]}=${cols[6]}`)
+    }
+    return pairs.join("; ")
+  }
+  return text.replace(/^cookie:\s*/i, "").replace(/[\r\n]+/g, "")
+}
+
+/** Summary of a cookie string (never the values) */
+export function describeCookie(cookie: string) {
+  return cookie
+    ? { set: true, cookies: cookie.split(";").filter((c) => c.includes("=")).length, hasSID: /(^|;\s*)(__Secure-3PSID|SID)=/.test(cookie) }
+    : { set: false }
+}
+
+/** What the server can see of its settings (never the values themselves) */
+export function settingsStatus(browserCookie = "") {
   return {
     player: "https://www.youtube-nocookie.com",
+    cookie: describeCookie(COOKIE),
+    browserCookie: describeCookie(browserCookie),
     proxy: { set: Boolean(PROXY) },
-    clients: clientsFor(),
+    invidious: INVIDIOUS,
+    clients: clientsFor(browserCookie || COOKIE),
     built: process.env.DEVON_BUILD_TIME || null,
   }
 }
 
+// ---------------------------------------------------------------------------
+// Cookie saved in the viewer's browser (the YouTube page's cookie box)
+// ---------------------------------------------------------------------------
+
+/**
+ * /api/youtube/cookie stores the account cookie in the viewer's browser as
+ * HttpOnly cookies scoped to /api/youtube: page scripts (including proxied
+ * sites) can't read it, and the browser only sends it back to this API.
+ */
+export const BROWSER_COOKIE_PREFIX = "devon_ytc_"
+export const BROWSER_COOKIE_PATH = "/api/youtube"
+const BROWSER_COOKIE_PART = 3500
+const BROWSER_COOKIE_MAX_PARTS = 6
+
+/** Reads the viewer's saved YouTube cookie from a request's Cookie header */
+export function browserCookieFrom(header: string | null): string {
+  if (!header) return ""
+  const parts: [number, string][] = []
+  for (const piece of header.split(";")) {
+    const m = piece.trim().match(new RegExp(`^${BROWSER_COOKIE_PREFIX}(\\d+)=(.*)$`))
+    if (m && m[2]) parts.push([Number(m[1]), m[2]])
+  }
+  if (!parts.length) return ""
+  parts.sort((a, b) => a[0] - b[0])
+  try {
+    return parseCookies(Buffer.from(parts.map((p) => p[1]).join(""), "base64url").toString("utf8"))
+  } catch {
+    return ""
+  }
+}
+
+/** Set-Cookie headers that save (or, with "", remove) the viewer's YouTube cookie */
+export function browserCookieHeaders(value: string): string[] {
+  const attrs = `Path=${BROWSER_COOKIE_PATH}; HttpOnly; Secure; SameSite=Strict`
+  const encoded = value ? Buffer.from(value, "utf8").toString("base64url") : ""
+  const chunks = encoded.match(new RegExp(`.{1,${BROWSER_COOKIE_PART}}`, "g")) ?? []
+  if (chunks.length > BROWSER_COOKIE_MAX_PARTS) throw new YTError("That cookie is too long.", 413)
+  const out: string[] = []
+  for (let i = 0; i < BROWSER_COOKIE_MAX_PARTS; i++) {
+    out.push(
+      chunks[i]
+        ? `${BROWSER_COOKIE_PREFIX}${i}=${chunks[i]}; ${attrs}; Max-Age=31536000`
+        : `${BROWSER_COOKIE_PREFIX}${i}=; ${attrs}; Max-Age=0`,
+    )
+  }
+  return out
+}
+
+/** Cleans up pasted cookie text: a Cookie header value or a cookies.txt file */
+export function normalizeCookie(raw: string): string {
+  return parseCookies(raw)
+}
+
 /** Clients tried in order until one returns streams that actually download */
-function clientsFor(): Types.InnerTubeClient[] {
+function clientsFor(cookie = ""): Types.InnerTubeClient[] {
   const env = process.env.DEVON_YT_CLIENTS?.split(",").map((c) => c.trim().toUpperCase()).filter(Boolean)
   if (env?.length) return env as Types.InnerTubeClient[]
+  // With a cookie, clients that send the account's cookies go first
+  if (cookie) return ["TV", "WEB", "MWEB", "WEB_EMBEDDED", "TV_EMBEDDED", "TV_SIMPLY", "ANDROID_VR", "IOS"]
   // Some YouTube clients can stream a public video when others get a bot check.
   return ["TV_EMBEDDED", "WEB_EMBEDDED", "TV_SIMPLY", "ANDROID_VR", "TV", "IOS", "MWEB", "WEB"]
 }
+
+const keyOf = (cookie: string) => (cookie ? createHash("sha256").update(cookie).digest("hex").slice(0, 16) : "anonymous")
 
 /** YouTube's bot check. It's about the server's IP, so every client gets it. */
 export const BOT_CHECK_RE = /not a bot|sign in to confirm|confirm you.re not|unusual traffic|LOGIN_REQUIRED/i
@@ -100,12 +214,12 @@ Platform.shim.eval = (data, env) => {
   return vm.runInNewContext(code, sandbox, { timeout: 5000 })
 }
 
-/** One anonymous YouTube session per server instance */
+/** One YouTube session per cookie (none, the server's, or a viewer's) */
 const sessions = new Map<string, { promise: Promise<Innertube>; born: number }>()
 const SESSION_TTL = 6 * 60 * 60 * 1000
 
-function yt(): Promise<Innertube> {
-  const key = "anonymous"
+function yt(cookie = ""): Promise<Innertube> {
+  const key = keyOf(cookie)
   const hit = sessions.get(key)
   if (hit && Date.now() - hit.born < SESSION_TTL) return hit.promise
   const promise = ytFetch()
@@ -115,6 +229,7 @@ function yt(): Promise<Innertube> {
         lang: "en",
         location: "US",
         fetch: f,
+        ...(cookie ? { cookie } : {}),
       }),
     )
     .catch((error) => {
@@ -127,8 +242,8 @@ function yt(): Promise<Innertube> {
 }
 
 /** Throws away a session, e.g. after YouTube rotated its player script */
-function resetSession() {
-  sessions.delete("anonymous")
+function resetSession(cookie = "") {
+  sessions.delete(keyOf(cookie))
 }
 
 // ---------------------------------------------------------------------------
@@ -284,7 +399,11 @@ export interface YTVideo {
 }
 
 interface Resolved {
-  client: Types.InnerTubeClient
+  client: string
+  /** Cookie used to unlock it ("" when anonymous) */
+  cookie: string
+  /** "youtube" (this server asked YouTube) or "invidious" (relayed by an instance) */
+  source: "youtube" | "invidious"
   info: YTVideo
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   raw: Map<number, any>
@@ -343,9 +462,10 @@ function cpn(): string {
 async function decipher(r: Resolved, itag: number): Promise<string> {
   const hit = r.urls.get(itag)
   if (hit) return hit
+  if (r.source === "invidious") throw new YTError("That format isn't available for this video.", 404)
   const f = r.raw.get(itag)
   if (!f) throw new YTError("That format isn't available for this video.", 404)
-  const client = await yt()
+  const client = await yt(r.cookie)
   const url = await f.decipher(client.session.player)
   if (!url) throw new YTError("Couldn't unlock this format.", 502)
   const full = `${url}${url.includes("?") ? "&" : "?"}cpn=${cpn()}`
@@ -353,14 +473,109 @@ async function decipher(r: Resolved, itag: number): Promise<string> {
   return full
 }
 
-/** Asks googlevideo for a byte range */
-async function fetchRange(url: string, start: number, end: number, signal?: AbortSignal) {
+/** Asks googlevideo (or an Invidious relay) for a byte range */
+async function fetchRange(r: Resolved, url: string, start: number, end: number, signal?: AbortSignal) {
+  if (r.source === "invidious") {
+    return fetch(url, { headers: { accept: "*/*", range: `bytes=${start}-${end}` }, signal, redirect: "follow" })
+  }
   const f = await ytFetch()
   return f(`${url}&range=${start}-${end}`, { headers: STREAM_HEADERS, signal, redirect: "follow" })
 }
 
-async function resolveWith(id: string, clientName: Types.InnerTubeClient): Promise<Resolved | string> {
-  const client = await yt()
+// ---------------------------------------------------------------------------
+// Invidious fallback
+// ---------------------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function invidiousFormat(f: any, muxed: boolean): YTFormat | null {
+  const itag = Number(f.itag)
+  const mime = String(f.type || "")
+  if (!itag || !f.url || !mime) return null
+  const container = (mime.match(/^\w+\/([\w-]+)/)?.[1] || f.container || "").toLowerCase()
+  const codec = mime.match(/codecs="([^"]+)"/)?.[1] || f.encoding || ""
+  const isVideo = mime.startsWith("video/")
+  const label = String(f.qualityLabel || f.resolution || "")
+  const height = Number(label.match(/(\d{3,4})p/)?.[1]) || Number(String(f.size || "").split("x")[1]) || 0
+  return {
+    itag,
+    mime,
+    container,
+    codec,
+    hasVideo: isVideo,
+    hasAudio: muxed || mime.startsWith("audio/"),
+    quality: isVideo ? label || (height ? `${height}p` : "") : "",
+    height: isVideo ? height : 0,
+    fps: Number(f.fps) || 0,
+    bitrate: Number(f.bitrate) || 0,
+    size: f.clen ? Number(f.clen) : null,
+    audioQuality: String(f.audioQuality || ""),
+    language: "",
+    drc: /drc/i.test(String(f.audioTrack?.id || "")),
+  }
+}
+
+async function tryInvidious(base: string, id: string): Promise<Resolved> {
+  const res = await fetch(`${base}/api/v1/videos/${id}?local=true`, {
+    headers: { accept: "application/json" },
+    signal: AbortSignal.timeout(9000),
+  })
+  if (!res.ok) throw new Error(`${base}: HTTP ${res.status}`)
+  const d = await res.json()
+  if (d?.error) throw new Error(`${base}: ${d.error}`)
+  const formats: YTFormat[] = []
+  const urls = new Map<number, string>()
+  for (const [list, muxed] of [
+    [d.formatStreams, true],
+    [d.adaptiveFormats, false],
+  ] as const) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const f of (list as any[]) ?? []) {
+      const format = invidiousFormat(f, muxed)
+      if (!format || urls.has(format.itag)) continue
+      formats.push(format)
+      urls.set(format.itag, new URL(String(f.url), base).href)
+    }
+  }
+  if (!formats.some((f) => f.hasAudio) || !formats.some((f) => f.hasVideo)) throw new Error(`${base}: no streams`)
+  const r: Resolved = {
+    client: "INVIDIOUS",
+    cookie: "",
+    source: "invidious",
+    info: {
+      id,
+      title: d.title || "YouTube video",
+      channel: d.author || "",
+      duration: Number(d.lengthSeconds) || 0,
+      views: typeof d.viewCount === "number" ? d.viewCount : null,
+      description: String(d.description || "").slice(0, 2000),
+      live: Boolean(d.liveNow),
+      client: "INVIDIOUS",
+      formats,
+    },
+    raw: new Map(),
+    urls,
+    expires: Date.now() + CACHE_TTL,
+  }
+  // The relay has to actually serve bytes from here
+  const audio = formats.find((f) => f.hasAudio && !f.hasVideo) ?? formats.find((f) => f.hasAudio)!
+  const probe = await fetchRange(r, urls.get(audio.itag)!, 0, 1023, AbortSignal.timeout(9000))
+  await probe.body?.cancel().catch(() => {})
+  if (!probe.ok) throw new Error(`${base}: stream HTTP ${probe.status}`)
+  return r
+}
+
+/** Asks every Invidious instance at once and takes the first that works */
+async function resolveInvidious(id: string): Promise<Resolved | string> {
+  if (!INVIDIOUS.length) return "Invidious fallback is off."
+  try {
+    return await Promise.any(INVIDIOUS.map((base) => tryInvidious(base, id)))
+  } catch {
+    return "No Invidious instance could relay this video."
+  }
+}
+
+async function resolveWith(id: string, clientName: Types.InnerTubeClient, cookie: string): Promise<Resolved | string> {
+  const client = await yt(cookie)
   const info = await client.getBasicInfo(id, { client: clientName })
   const status = info.playability_status
   if (status?.status && status.status !== "OK") {
@@ -381,6 +596,8 @@ async function resolveWith(id: string, clientName: Types.InnerTubeClient): Promi
   const b = info.basic_info
   const r: Resolved = {
     client: clientName,
+    cookie,
+    source: "youtube",
     info: {
       id,
       title: b.title || "YouTube video",
@@ -401,7 +618,7 @@ async function resolveWith(id: string, clientName: Types.InnerTubeClient): Promi
   const audio = r.info.formats.find((f) => f.hasAudio && !f.hasVideo) ?? r.info.formats.find((f) => f.hasAudio)!
   const video = r.info.formats.find((f) => f.hasVideo && !f.hasAudio) ?? r.info.formats.find((f) => f.hasVideo)!
   for (const format of new Map([audio, video].map((f) => [f.itag, f])).values()) {
-    const res = await fetchRange(await decipher(r, format.itag), 0, 1023)
+    const res = await fetchRange(r, await decipher(r, format.itag), 0, 1023)
     await res.body?.cancel().catch(() => {})
     if (!res.ok) return `Streams were refused (HTTP ${res.status}).`
   }
@@ -409,28 +626,37 @@ async function resolveWith(id: string, clientName: Types.InnerTubeClient): Promi
 }
 
 /** Finds a client whose streams work for this video. Cached per server instance. */
-export async function resolve(id: string, preferred?: string): Promise<Resolved> {
+export async function resolve(id: string, preferred?: string, userCookie = ""): Promise<Resolved> {
   if (!VIDEO_ID_RE.test(id)) throw new YTError("That isn't a YouTube video ID.", 400)
-  const cacheKey = id
+  // A viewer's own cookie (from the cookie box) wins over the server's
+  const cookie = userCookie || COOKIE
+  const cacheKey = `${id}|${keyOf(cookie)}`
   const hit = cache.get(cacheKey)
   if (hit && hit.expires > Date.now()) return hit
   const inflight = pending.get(cacheKey)
   if (inflight) return inflight
 
+  const remember = (out: Resolved) => {
+    cache.set(cacheKey, out)
+    if (cache.size > 200) cache.delete(cache.keys().next().value as string)
+    return out
+  }
+
   const job = (async () => {
-    const order = clientsFor()
+    // A stream request for a video that an Invidious relay unlocked (e.g. on another server instance)
+    if (preferred?.toUpperCase() === "INVIDIOUS") {
+      const relayed = await resolveInvidious(id)
+      if (typeof relayed !== "string") return remember(relayed)
+    }
+    const order = clientsFor(cookie)
     const pref = preferred?.toUpperCase() as Types.InnerTubeClient | undefined
     if (pref && order.includes(pref)) order.unshift(...order.splice(order.indexOf(pref), 1))
     const reasons: string[] = []
     let retried = false
     for (let i = 0; i < order.length; i++) {
       try {
-        const out = await resolveWith(id, order[i])
-        if (typeof out !== "string") {
-          cache.set(cacheKey, out)
-          if (cache.size > 200) cache.delete(cache.keys().next().value as string)
-          return out
-        }
+        const out = await resolveWith(id, order[i], cookie)
+        if (typeof out !== "string") return remember(out)
         reasons.push(out)
         // A client can say "unavailable" even while another client (or the embed) plays it.
         // Try every client before deciding that the download server cannot access it.
@@ -439,14 +665,21 @@ export async function resolve(id: string, preferred?: string): Promise<Resolved>
         // A stale player script breaks deciphering; start a fresh session once
         if (!retried && /decipher|player|signature|n param|nsig/i.test(reasons[reasons.length - 1])) {
           retried = true
-          resetSession()
+          resetSession(cookie)
           i--
         }
       }
     }
+    // YouTube refused this server: let an Invidious instance fetch and relay it
+    const relayed = await resolveInvidious(id)
+    if (typeof relayed !== "string") return remember(relayed)
+    reasons.push(relayed)
+
     if (reasons.some((r) => BOT_CHECK_RE.test(r) || /HTTP 403/.test(r))) {
       throw new YTError(
-        PROXY
+        userCookie
+          ? "YouTube still refused this server with the cookie saved in this browser, and no Invidious relay worked. The cookie may be expired or signed out; copy a fresh one."
+          : PROXY
           ? "YouTube refused all available download clients through this server's proxy. The server needs an IP that YouTube allows to fetch video files."
           : "YouTube refused all available download clients from this server. The server needs an IP that YouTube allows to fetch video files.",
         503,
@@ -467,8 +700,8 @@ export async function resolve(id: string, preferred?: string): Promise<Resolved>
   }
 }
 
-export async function videoInfo(id: string): Promise<YTVideo> {
-  return (await resolve(id)).info
+export async function videoInfo(id: string, userCookie = ""): Promise<YTVideo> {
+  return (await resolve(id, undefined, userCookie)).info
 }
 
 // ---------------------------------------------------------------------------
@@ -491,8 +724,9 @@ export async function streamSlice(
   endWanted: number | null,
   client?: string,
   signal?: AbortSignal,
+  userCookie = "",
 ): Promise<Slice> {
-  let r = await resolve(id, client)
+  let r = await resolve(id, client, userCookie)
   let format = r.info.formats.find((f) => f.itag === itag)
   if (!format) throw new YTError("That format isn't available for this video.", 404)
 
@@ -502,30 +736,72 @@ export async function streamSlice(
   if (endWanted !== null && endWanted >= start) end = Math.min(end, endWanted)
   if (total !== null) end = Math.min(end, total - 1)
 
-  let res = await fetchRange(await decipher(r, itag), start, end, signal)
+  const urlFor = async (x: Resolved) => (x.source === "invidious" ? x.urls.get(itag)! : await decipher(x, itag))
+  let res = await fetchRange(r, await urlFor(r), start, end, signal)
   if (res.status === 403 || res.status === 410) {
     // Expired URL, or a different server instance: resolve again from scratch
     await res.body?.cancel().catch(() => {})
-    cache.delete(id)
-    r = await resolve(id)
+    cache.delete(`${id}|${keyOf(userCookie || COOKIE)}`)
+    r = await resolve(id, r.source === "invidious" ? "INVIDIOUS" : undefined, userCookie)
     format = r.info.formats.find((f) => f.itag === itag)
     if (!format) throw new YTError("That format isn't available anymore.", 404)
-    res = await fetchRange(await decipher(r, itag), start, end, signal)
+    res = await fetchRange(r, await urlFor(r), start, end, signal)
   }
   if (!res.ok) {
     await res.body?.cancel().catch(() => {})
     throw new YTError(`YouTube refused the stream (HTTP ${res.status}).`, 502)
   }
 
-  // googlevideo answers range= with 200 and just those bytes
-  const length = Number(res.headers.get("content-length"))
-  if (length > 0) end = start + length - 1
+  let body: ReadableStream<Uint8Array> | null = res.body
+  if (r.source === "invidious" && res.status === 200) {
+    // The relay ignored the Range header and sent the whole file
+    if (start > 0) {
+      await res.body?.cancel().catch(() => {})
+      throw new YTError("The relay doesn't support partial downloads.", 502)
+    }
+    const whole = Number(res.headers.get("content-length"))
+    if (whole > 0) end = Math.min(end, whole - 1)
+    body = body ? limitStream(body, end - start + 1) : body
+  } else {
+    // googlevideo answers range= with 200 and just those bytes; relays answer 206
+    const length = Number(res.headers.get("content-length"))
+    if (length > 0) end = start + Math.min(length, end - start + 1) - 1
+  }
   const range = res.headers.get("content-range")?.match(/\/(\d+)$/)
+  const whole = r.source === "invidious" && res.status === 200 ? Number(res.headers.get("content-length")) || null : null
   return {
-    body: res.body,
+    body,
     start,
     end,
-    total: total ?? (range ? Number(range[1]) : null),
+    total: total ?? (range ? Number(range[1]) : whole),
     mime: format.mime.split(";")[0] || "application/octet-stream",
   }
+}
+
+/** Passes on at most `max` bytes of a stream, then stops reading it */
+function limitStream(stream: ReadableStream<Uint8Array>, max: number): ReadableStream<Uint8Array> {
+  const reader = stream.getReader()
+  let sent = 0
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const { done, value } = await reader.read()
+      if (done || !value) {
+        controller.close()
+        return
+      }
+      const room = max - sent
+      if (value.length >= room) {
+        controller.enqueue(value.subarray(0, room))
+        sent = max
+        controller.close()
+        await reader.cancel().catch(() => {})
+        return
+      }
+      sent += value.length
+      controller.enqueue(value)
+    },
+    cancel(reason) {
+      return reader.cancel(reason)
+    },
+  })
 }
