@@ -108,16 +108,18 @@ YouTube often refuses download requests from cloud and datacenter IPs, including
 1. **A cookie saved in the browser.** On the YouTube page, click **Add cookie** (or **Add YouTube cookie** on the "Downloads are unavailable" message) and paste the `cookie:` request header from a signed-in youtube.com tab (the box shows the steps). It's stored as HttpOnly cookies that only `/api/youtube` receives, so pages can't read it and it never goes into the repo. It only applies in the browser where it was pasted. Use a spare account.
 2. **Invidious relays.** If YouTube still refuses, Devon asks public [Invidious](https://docs.invidious.io/instances/) instances (all at once) for the video with `local=true`, so the instance fetches it from YouTube with its own IP and relays the bytes. Public instances come and go and are often rate-limited or blocked themselves, so this may or may not work on a given day. Set `DEVON_INVIDIOUS` to a comma-separated list of instance URLs (for example your own instance), or to `off`.
 
-Server-wide settings (environment variables, baked in at build time, so redeploy after changing them):
+Server-wide settings (environment variables). Devon reads them from the running site first and falls back to the values the build saw, so they work on hosts that only give variables to one or the other. Redeploy after changing them:
 
 | Variable | What it does |
 | --- | --- |
-| `DEVON_YT_COOKIE` | A signed-in YouTube cookie for everyone who uses the server (a `Cookie` header value or a Netscape `cookies.txt`). |
+| `DEVON_YT_COOKIE` | A signed-in YouTube cookie for everyone who uses the server: a `Cookie` header value, a Netscape `cookies.txt`, or a cookie extension's JSON export. Surrounding quotes are ignored. |
+| `DEVON_YT_COOKIE_B64` | The same cookie, base64-encoded, for settings forms that mangle `;` or `=`. |
+| `DEVON_YT_COOKIE_1`, `_2`, … | The cookie split into pieces (joined in order), for hosts that limit how long a value can be. |
 | `DEVON_YT_PROXY` | An HTTP(S) proxy (`http://user:pass@host:port`) for all YouTube traffic. A residential proxy works best. |
 | `DEVON_INVIDIOUS` | Invidious instances to relay through, comma-separated, or `off`. |
 | `DEVON_YT_CLIENTS` | The order of YouTube clients to try. |
 
-`/api/youtube/status` shows which of these are set (never the values), whether this browser has a saved cookie, and when the build was made.
+`/api/youtube/status` shows which of these are set (never the values): for the cookie, which variable it came from, whether it was seen by the running site (`"source":"runtime"`) or the build (`"build"`), how many characters arrived and whether the sign-in cookie is there. `envSeen` lists every `DEVON_*` variable name the host passed in, which shows whether a variable reached Devon at all.
 
 ## Games
 
