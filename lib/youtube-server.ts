@@ -12,6 +12,18 @@ import vm from "node:vm"
 import { createHash } from "node:crypto"
 import { Innertube, Platform, YTNodes, type Types } from "youtubei.js"
 
+/**
+ * A stray error from a background timer or socket (a probe aborted after its
+ * answer, a stream cancelled mid-way) must not take the whole function down:
+ * the host then answers 545 for every request in flight. Log it instead.
+ */
+const guard = globalThis as { __devonYTGuard?: boolean }
+if (!guard.__devonYTGuard && typeof process !== "undefined" && typeof process.on === "function") {
+  guard.__devonYTGuard = true
+  process.on("uncaughtException", (error) => console.error("[devon/youtube] uncaught:", error))
+  process.on("unhandledRejection", (error) => console.error("[devon/youtube] unhandled rejection:", error))
+}
+
 export const CHUNK_SIZE = 3 * 1024 * 1024
 
 // ---------------------------------------------------------------------------
@@ -804,7 +816,7 @@ export async function resolve(id: string, preferred?: string, userCookie = ""): 
     const withinBudget = <T,>(p: Promise<T>, what: string): Promise<T> =>
       Promise.race([
         p,
-        new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${what}: timed out`)), Math.max(0, left())).unref?.()),
+        new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${what}: timed out`)), Math.max(0, left()))),
       ])
     const relay = withinBudget(resolveInvidious(id), "Invidious").catch((e) =>
       e instanceof Error ? e.message : String(e),
@@ -812,7 +824,9 @@ export async function resolve(id: string, preferred?: string, userCookie = ""): 
 
     let retried = false
     for (let i = 0; i < order.length && left() > 1500; ) {
-      const wave = order.slice(i, i + CLIENT_WAVE)
+      // With a signed-in cookie, one request at a time (parallel sign-ins look like a bot)
+      const size = cookie ? 1 : CLIENT_WAVE
+      const wave = order.slice(i, i + size)
       const results = await Promise.all(
         wave.map((name) =>
           withinBudget(resolveWith(id, name, cookie), name).catch((e) => (e instanceof Error ? e.message : String(e))),
@@ -828,7 +842,7 @@ export async function resolve(id: string, preferred?: string, userCookie = ""): 
         resetSession(cookie)
         continue
       }
-      i += CLIENT_WAVE
+      i += size
     }
 
     // YouTube refused this server: use an Invidious relay if one got through
