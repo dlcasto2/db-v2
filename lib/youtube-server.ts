@@ -64,6 +64,7 @@ function unwrap(value: string): string {
  *   DEVON_YT_COOKIE      the cookie as pasted (Cookie header or cookies.txt)
  *   DEVON_YT_COOKIE_B64  the same, base64-encoded (for settings forms that refuse
  *                        spaces, ; or =); DEVON_YT_COOKIE_B64_1…20 for it in pieces
+ *   DEVON_YT_COOKIE_HEX  the same as hex (0-9 a-f only); DEVON_YT_COOKIE_HEX_1…20
  *   DEVON_YT_COOKIE_1…20 pieces joined in order (for hosts that limit value length)
  */
 function readCookieSetting() {
@@ -74,6 +75,27 @@ function readCookieSetting() {
     raw = unwrap(setting("DEVON_YT_COOKIE")!)
     form = "DEVON_YT_COOKIE"
     source = settingSource("DEVON_YT_COOKIE")
+  } else if (setting("DEVON_YT_COOKIE_HEX") || setting("DEVON_YT_COOKIE_HEX_1")) {
+    // Hex (0-9, a-f only) for settings forms that refuse every symbol. One value,
+    // or pieces DEVON_YT_COOKIE_HEX_1…20 joined in order.
+    let encoded = ""
+    if (setting("DEVON_YT_COOKIE_HEX")) {
+      form = "DEVON_YT_COOKIE_HEX"
+      source = settingSource("DEVON_YT_COOKIE_HEX")
+      encoded = unwrap(setting("DEVON_YT_COOKIE_HEX")!)
+    } else {
+      const parts: string[] = []
+      for (let i = 1; i <= 20; i++) {
+        const part = setting(`DEVON_YT_COOKIE_HEX_${i}`)
+        if (!part) break
+        parts.push(unwrap(part))
+      }
+      encoded = parts.join("")
+      form = `DEVON_YT_COOKIE_HEX_1…${parts.length}`
+      source = settingSource("DEVON_YT_COOKIE_HEX_1")
+    }
+    const hex = encoded.replace(/[^0-9a-f]/gi, "")
+    raw = hex.length % 2 === 0 ? Buffer.from(hex, "hex").toString("utf8") : ""
   } else if (setting("DEVON_YT_COOKIE_B64") || setting("DEVON_YT_COOKIE_B64_1")) {
     // One value, or pieces DEVON_YT_COOKIE_B64_1…20 joined in order. Standard
     // or URL-safe base64 (letters, digits, - and _ only), padding optional.
@@ -532,6 +554,10 @@ interface Resolved {
 const cache = new Map<string, Resolved>()
 const pending = new Map<string, Promise<Resolved>>()
 const CACHE_TTL = 60 * 60 * 1000
+/** How long finding working streams may take; the host cuts requests off after that */
+const RESOLVE_BUDGET = Math.min(60_000, Math.max(5_000, Number(setting("DEVON_YT_BUDGET_MS")) || 24_000))
+/** YouTube clients tried at the same time */
+const CLIENT_WAVE = 3
 
 export class YTError extends Error {
   constructor(
@@ -735,7 +761,7 @@ async function resolveWith(id: string, clientName: Types.InnerTubeClient, cookie
   const audio = r.info.formats.find((f) => f.hasAudio && !f.hasVideo) ?? r.info.formats.find((f) => f.hasAudio)!
   const video = r.info.formats.find((f) => f.hasVideo && !f.hasAudio) ?? r.info.formats.find((f) => f.hasVideo)!
   for (const format of new Map([audio, video].map((f) => [f.itag, f])).values()) {
-    const res = await fetchRange(r, await decipher(r, format.itag), 0, 1023)
+    const res = await fetchRange(r, await decipher(r, format.itag), 0, 1023, AbortSignal.timeout(7000))
     await res.body?.cancel().catch(() => {})
     if (!res.ok) return `Streams were refused (HTTP ${res.status}).`
   }
@@ -769,28 +795,54 @@ export async function resolve(id: string, preferred?: string, userCookie = ""): 
     const pref = preferred?.toUpperCase() as Types.InnerTubeClient | undefined
     if (pref && order.includes(pref)) order.unshift(...order.splice(order.indexOf(pref), 1))
     const reasons: string[] = []
+
+    // The host cuts a request off after a while (EdgeOne answers 504), so the whole
+    // search has a time budget: clients are tried a few at a time, the Invidious
+    // relays are asked at the same time as YouTube, and nothing may hang.
+    const deadline = Date.now() + RESOLVE_BUDGET
+    const left = () => deadline - Date.now()
+    const withinBudget = <T,>(p: Promise<T>, what: string): Promise<T> =>
+      Promise.race([
+        p,
+        new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${what}: timed out`)), Math.max(0, left())).unref?.()),
+      ])
+    const relay = withinBudget(resolveInvidious(id), "Invidious").catch((e) =>
+      e instanceof Error ? e.message : String(e),
+    )
+
     let retried = false
-    for (let i = 0; i < order.length; i++) {
-      try {
-        const out = await resolveWith(id, order[i], cookie)
-        if (typeof out !== "string") return remember(out)
-        reasons.push(out)
-        // A client can say "unavailable" even while another client (or the embed) plays it.
-        // Try every client before deciding that the download server cannot access it.
-      } catch (error) {
-        reasons.push(error instanceof Error ? error.message : String(error))
-        // A stale player script breaks deciphering; start a fresh session once
-        if (!retried && /decipher|player|signature|n param|nsig/i.test(reasons[reasons.length - 1])) {
-          retried = true
-          resetSession(cookie)
-          i--
-        }
+    for (let i = 0; i < order.length && left() > 1500; ) {
+      const wave = order.slice(i, i + CLIENT_WAVE)
+      const results = await Promise.all(
+        wave.map((name) =>
+          withinBudget(resolveWith(id, name, cookie), name).catch((e) => (e instanceof Error ? e.message : String(e))),
+        ),
+      )
+      // Keep the preferred order: the first client in the wave that worked wins
+      const found = results.find((out): out is Resolved => typeof out !== "string")
+      if (found) return remember(found)
+      reasons.push(...(results as string[]))
+      // A stale player script breaks deciphering; start a fresh session once and redo this wave
+      if (!retried && results.some((m) => /decipher|player|signature|n param|nsig/i.test(m as string))) {
+        retried = true
+        resetSession(cookie)
+        continue
       }
+      i += CLIENT_WAVE
     }
-    // YouTube refused this server: let an Invidious instance fetch and relay it
-    const relayed = await resolveInvidious(id)
+
+    // YouTube refused this server: use an Invidious relay if one got through
+    const relayed = await relay
     if (typeof relayed !== "string") return remember(relayed)
     reasons.push(relayed)
+
+    if (left() <= 1500 && !reasons.some((r) => BOT_CHECK_RE.test(r) || /HTTP 403/.test(r))) {
+      throw new YTError(
+        "YouTube took too long to answer this server. Try again in a moment.",
+        503,
+        "stream-unavailable",
+      )
+    }
 
     if (reasons.some((r) => BOT_CHECK_RE.test(r) || /HTTP 403/.test(r))) {
       throw new YTError(

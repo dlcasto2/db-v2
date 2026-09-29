@@ -575,15 +575,12 @@ function CookieDialog({
     }
   }, [open])
 
-  // The cookie as DEVON_YT_COOKIE_B64: URL-safe base64 (letters, digits, - and _),
-  // for hosting settings forms that refuse spaces, ";" or "=". Made in this
-  // browser only; nothing is sent anywhere.
+  // The cookie as DEVON_YT_COOKIE_HEX: only 0-9 and a-f, for hosting settings
+  // forms that refuse spaces and symbols. Made in this browser; nothing is sent.
   const makeEnvValue = async () => {
     const text = value.trim().replace(/^cookie:\s*/i, "").replace(/[\r\n]+/g, "")
-    const bytes = new TextEncoder().encode(text)
-    let bin = ""
-    for (const b of bytes) bin += String.fromCharCode(b)
-    const encoded = btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+    let encoded = ""
+    for (const b of new TextEncoder().encode(text)) encoded += b.toString(16).padStart(2, "0")
     setEnvValue(encoded)
     try {
       await navigator.clipboard.writeText(encoded)
@@ -675,15 +672,15 @@ function CookieDialog({
             <p className="text-xs leading-relaxed text-muted-foreground">
               {copied ? "Copied. " : "Select all of this and copy it. "}
               In your host&apos;s environment variables, name it{" "}
-              <span className="font-mono text-foreground">DEVON_YT_COOKIE_B64</span> and paste this as the value
+              <span className="font-mono text-foreground">DEVON_YT_COOKIE_HEX</span> and paste this as the value
               {envValue.length > 4000 ? (
                 <>
                   {" "}
-                  (if it&apos;s too long, split it anywhere into <span className="font-mono">DEVON_YT_COOKIE_B64_1</span>,{" "}
+                  (if it&apos;s too long, split it anywhere into <span className="font-mono">DEVON_YT_COOKIE_HEX_1</span>,{" "}
                   <span className="font-mono">_2</span>, …)
                 </>
               ) : null}
-              , then redeploy. {envValue.length.toLocaleString()} characters, no spaces or symbols.
+              , then redeploy. {envValue.length.toLocaleString()} characters, only letters and digits.
             </p>
             <textarea
               readOnly
@@ -703,7 +700,7 @@ function CookieDialog({
             className="rounded-full"
             onClick={makeEnvValue}
             disabled={!value.trim()}
-            title="Encode the cookie for a hosting environment variable (DEVON_YT_COOKIE_B64)"
+            title="Encode the cookie for a hosting environment variable (DEVON_YT_COOKIE_HEX: letters and digits only)"
           >
             {copied ? <Check /> : <Copy />} Copy for env variable
           </Button>
