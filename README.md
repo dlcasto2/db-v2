@@ -3,7 +3,7 @@
 A web proxy browser that runs in a browser tab. Devon has tabs, an address bar, bookmarks, history, Chrome extensions, developer tools and a built-in Games page. Pages load through Devon's own proxy.
 
 **Official links**
-- https://arcasto.911411.xyz/
+- https://db-v5.edgeone.dev
 
 Built with Next.js 16 (App Router), TypeScript, Tailwind CSS v4 and shadcn/ui.
 
