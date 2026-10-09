@@ -34,6 +34,7 @@ import {
   RotateCw,
   Search,
   ShieldAlert,
+  ShieldCheck,
   Star,
   Trash2,
   TvMinimalPlay,
@@ -54,6 +55,8 @@ import { SavePageDialog, type SaveTarget } from "@/components/save-page-dialog"
 import { saveBlob } from "@/lib/page-archiver"
 import { MediaDownloads, mediaItemForTab } from "@/components/media-downloads"
 import { type MediaItem, findMedia } from "@/lib/media"
+import { PageCheckBanner, PageCheckButton, type PageCheckState } from "@/components/page-check"
+import { checkPage, pageCheckAvailable, readPageCheckPref, shouldCheck, snapshotFromHtml, writePageCheckPref } from "@/lib/page-check"
 import { OPEN_REPORT_EVENT, PageProblems } from "@/components/page-problems"
 import type { PageActivity, PageError } from "@/lib/diagnostics"
 import { ExtensionsDialog, installFromLink } from "@/components/extensions-dialog"
@@ -259,6 +262,11 @@ export function ProxyBrowser() {
     commands: [],
   })
   const [experimentalRecaptcha, setExperimentalRecaptcha] = useState(false)
+  /** Jev page check: available = the server has a key; on = the visitor's toggle */
+  const [pageCheckReady, setPageCheckReady] = useState(false)
+  const [pageCheckOn, setPageCheckOn] = useState(true)
+  /** Keyed by tab id; loadId ties a result to one page load */
+  const [pageChecks, setPageChecks] = useState<Record<string, { loadId: string; state: PageCheckState; dismissed?: boolean }>>({})
 
   const controllersRef = useRef(new Map<string, AbortController>())
   const blobUrlsRef = useRef(new Map<string, string>())
@@ -288,6 +296,8 @@ export function ProxyBrowser() {
     setBookmarks(session.bookmarks)
     setHistory(session.history)
     setExperimentalRecaptcha(readExperimentalCookie())
+    setPageCheckOn(readPageCheckPref())
+    pageCheckAvailable().then(setPageCheckReady)
     if (readDevtoolsPref()) {
       devtoolsOnRef.current = true
       setDevtoolsOn(true)
@@ -845,6 +855,37 @@ export function ProxyBrowser() {
     }
   }
 
+  // Jev page check: once per page load, for the tab that's showing
+  useEffect(() => {
+    const tab = activeTab
+    if (!pageCheckReady || !pageCheckOn || !tab || tab.isLoading || tab.content === undefined || !tab.loadId) return
+    if (!shouldCheck(tab.url)) return
+    if (pageChecks[tab.id]?.loadId === tab.loadId) return
+
+    const { id: tabId, loadId } = tab
+    setPageChecks((prev) => ({ ...prev, [tabId]: { loadId, state: { status: "checking" } } }))
+    const controller = new AbortController()
+    const finish = (state: PageCheckState) =>
+      setPageChecks((prev) => (prev[tabId]?.loadId === loadId ? { ...prev, [tabId]: { loadId, state } } : prev))
+
+    Promise.resolve()
+      .then(() => checkPage(snapshotFromHtml(tab.content!, tab.url, tab.title), controller.signal))
+      .then((result) => finish({ status: "done", result }))
+      .catch((err) => {
+        if (controller.signal.aborted) return
+        finish({ status: "error", message: err instanceof Error ? err.message : "Check failed" })
+      })
+    return () => controller.abort()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab?.id, activeTab?.loadId, activeTab?.isLoading, pageCheckReady, pageCheckOn])
+
+  const togglePageCheck = () => {
+    const next = !pageCheckOn
+    writePageCheckPref(next)
+    setPageCheckOn(next)
+    if (!next) setPageChecks({})
+  }
+
   const toggleExperimentalRecaptcha = () => {
     const next = !experimentalRecaptcha
     writeExperimentalCookie(next)
@@ -1224,6 +1265,12 @@ export function ProxyBrowser() {
         </div>
 
         <div className="flex items-center">
+          {activeTab &&
+            activeTab.content !== undefined &&
+            pageCheckOn &&
+            pageChecks[activeTab.id]?.loadId === activeTab.loadId && (
+              <PageCheckButton state={pageChecks[activeTab.id].state} pageUrl={activeTab.url} />
+            )}
           {activeTab && activeTab.content !== undefined && (
             <PageProblems
               errors={pageErrors[activeTab.id] ?? []}
@@ -1428,6 +1475,19 @@ export function ProxyBrowser() {
               <DropdownMenuLabel className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Experimental
               </DropdownMenuLabel>
+              {pageCheckReady && (
+                <DropdownMenuItem
+                  onSelect={(e) => {
+                    e.preventDefault()
+                    togglePageCheck()
+                  }}
+                  title="Sends each page's address and visible text to TypeSafe Jev to spot phishing and scams."
+                >
+                  <ShieldCheck />
+                  <span className="flex-1">Page safety check</span>
+                  <Switch checked={pageCheckOn} className="pointer-events-none scale-90" />
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem
                 onSelect={(e) => {
                   e.preventDefault()
@@ -1500,6 +1560,21 @@ export function ProxyBrowser() {
                   </Button>
                 )}
               </div>
+            )
+          })()}
+          {(() => {
+            const check = activeTab ? pageChecks[activeTab.id] : undefined
+            if (!activeTab || !check || check.dismissed || check.loadId !== activeTab.loadId) return null
+            if (check.state.status !== "done") return null
+            const tabId = activeTab.id
+            return (
+              <PageCheckBanner
+                result={check.state.result}
+                onDismiss={() =>
+                  setPageChecks((prev) => (prev[tabId] ? { ...prev, [tabId]: { ...prev[tabId], dismissed: true } } : prev))
+                }
+                onLeave={() => (activeTab.historyIndex > 0 ? goBack() : goHome())}
+              />
             )
           })()}
           {activeTab &&

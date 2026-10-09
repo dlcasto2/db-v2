@@ -20,6 +20,7 @@ Built with Next.js 16 (App Router), TypeScript, Tailwind CSS v4 and shadcn/ui.
   - Content scripts, popups, options pages and background scripts or service workers all run.
 - **Save page offline:** saves the current page and its assets as a ZIP.
 - **Media downloads:** downloads MP3, MP4, WAV and FLAC files found on the page to any device.
+- **Page safety check (Jev):** after a page loads, its address and visible text go to [TypeSafe Jev](https://docs.typesafe.ai) in one call, which returns the page category plus phishing, scam, brand-match and trust probabilities. A shield in the toolbar shows the verdict, and a red banner appears on dangerous pages. Toggle it in ⋮ → Experimental → Page safety check. See [Page safety check](#page-safety-check).
 - **Developer tools:** built-in [Eruda](https://github.com/liriliri/eruda) console, elements, network and sources panels.
 - **Page report:** the ⚠ button, or ⋮ → Page report. It lists script errors, failed requests and media on the page, and can be copied for debugging.
 - **Experimental reCAPTCHA support:** a toggle in the ⋮ menu.
@@ -171,3 +172,17 @@ OUT_DIR=<path to Devon>/public/games/eaglercraft node build-devon.mjs
 - **WebSockets:** WebSockets aren't proxied. Sites that need them for real-time features, such as some multiplayer games, may not work.
 - **Anti-bot protection:** sites using it (for example HUMAN/PerimeterX) may block proxied requests.
 - **Extensions:** Chrome APIs that need browser internals, such as `webRequest`, `declarativeNetRequest` and `debugger`, aren't available to extensions.
+
+
+## Page safety check
+
+Uses Jev, TypeSafe AI's decision model (no text generation; it returns typed probabilities in ~70–500 ms). The key stays on the server in `app/api/jev`.
+
+| Variable | Meaning |
+| --- | --- |
+| `DEVON_JEV_API_KEY` | TypeSafe API key (or an OpenRouter key with the setting below). Without it the feature is hidden. |
+| `DEVON_JEV_BACKEND` | `typesafe` (default) or `openrouter` (no TypeSafe waitlist needed) |
+| `DEVON_JEV_MODEL` | Defaults to `jev-latest` (`typesafe/jev-1.13` on OpenRouter) |
+| `DEVON_JEV_BASE_URL` | Optional endpoint override |
+
+Each page check asks five questions in one request: page category (Choice), phishing, scam and domain-matches-brand (Noul), and site trust (Score, 4 levels). `decide()` in `app/api/jev/route.ts` turns those into safe / caution / danger, so thresholds are easy to tune. Results are cached for 15 minutes per URL and limited to 30 checks per visitor per minute.
