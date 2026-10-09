@@ -14,7 +14,7 @@ const nextConfig = {
     DEVON_BUILD_TIME: new Date().toISOString(),
   },
   typescript: {
-    ignoreBuildErrors: true,
+    ignoreBuildErrors: false,
   },
   images: {
     unoptimized: true,
