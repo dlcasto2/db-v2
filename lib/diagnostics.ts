@@ -58,7 +58,7 @@ function describePlayers(win: Window | null | undefined): string[] {
       const buffered: string[] = []
       for (let j = 0; j < m.buffered.length; j++) buffered.push(`${m.buffered.start(j).toFixed(1)}-${m.buffered.end(j).toFixed(1)}`)
       out.push(
-        `${i + 1}. <${m.tagName.toLowerCase()}> src=${(m.currentSrc || m.getAttribute("src") || "(none)").slice(0, 90)}`,
+        `${i + 1}. <${m.tagName.toLowerCase()}> src=${(m.currentSrc || m.getAttribute("src") || "(none)").slice(0, 160)}`,
       )
       out.push(
         `   ready=${READY[m.readyState] ?? m.readyState} network=${NETWORK[m.networkState] ?? m.networkState} paused=${m.paused} time=${m.currentTime.toFixed(1)}/${Number.isFinite(m.duration) ? m.duration.toFixed(1) : m.duration} buffered=[${buffered.join(", ")}]`,
@@ -69,11 +69,22 @@ function describePlayers(win: Window | null | undefined): string[] {
     const imgs = Array.from(win.document.images).filter((im) => im.currentSrc || im.getAttribute("src"))
     const loaded = imgs.filter((im) => im.complete && im.naturalWidth > 0)
     const broken = imgs.filter((im) => im.complete && im.naturalWidth === 0)
-    const pending = imgs.length - loaded.length - broken.length
-    out.push(`Images: ${imgs.length} with a source, ${loaded.length} loaded, ${broken.length} broken, ${pending} still loading`)
+    // loading="lazy" images far from the screen (or hidden) don't load until
+    // they're scrolled near, so they aren't stuck
+    const waiting = imgs.filter((im) => !im.complete)
+    const lazy = waiting.filter((im) => {
+      if (im.loading !== "lazy") return false
+      const r = im.getBoundingClientRect()
+      return (r.width === 0 && r.height === 0) || r.top > win.innerHeight + 1250 || r.bottom < -1250
+    })
+    const pending = waiting.length - lazy.length
+    out.push(
+      `Images: ${imgs.length} with a source, ${loaded.length} loaded, ${broken.length} broken, ${pending} still loading` +
+        (lazy.length ? `, ${lazy.length} lazy (load when scrolled to)` : ""),
+    )
     broken.slice(0, 3).forEach((im) => out.push(`   broken: ${(im.currentSrc || im.getAttribute("src") || "").slice(0, 140)}`))
-    const lazy = win.document.querySelectorAll("img:not([src]), img[src='']").length
-    if (lazy) out.push(`   ${lazy} images have no source yet (waiting for data or scrolling)`)
+    const noSource = win.document.querySelectorAll("img:not([src]), img[src='']").length
+    if (noSource) out.push(`   ${noSource} images have no source yet (waiting for data or scrolling)`)
     const w = win as Window & { MediaSource?: { isTypeSupported?: (t: string) => boolean }; ManagedMediaSource?: unknown }
     out.push(
       `MediaSource: ${w.MediaSource ? "yes" : "no"}, ManagedMediaSource: ${w.ManagedMediaSource ? "yes" : "no"}, H.264 MSE: ${
@@ -174,7 +185,12 @@ export async function buildReport(
   // Re-download the failing proxied files to see if they arrive intact
   // Only scripts are re-downloaded: a failed request may be a POST (API call)
   const files = [
-    ...new Set(errors.filter((e) => e.kind !== "network").map((e) => e.proxied).filter((u) => u && u.includes("/api/proxy?"))),
+    ...new Set(
+      errors
+        .filter((e) => e.kind !== "network")
+        .map((e) => e.proxied)
+        .filter((u) => u && (u.includes("/api/proxy?") || u.includes("/api/proxy/m/"))),
+    ),
   ].slice(0, 6)
   if (files.length) {
     lines.push("")

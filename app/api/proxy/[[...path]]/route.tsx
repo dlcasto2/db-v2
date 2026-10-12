@@ -16,6 +16,18 @@ export const maxDuration = 60
 const PROXY_PATH = "/api/proxy?url="
 
 /**
+ * JavaScript modules are served at addresses that keep the real URL's folder
+ * layout: https://cdn.site/assets/app.js becomes
+ * <devon>/api/proxy/m/https/cdn.site/assets/app.js. A module's import.meta.url
+ * is the address it was loaded from, and bundlers (webpack, rspack, Vite) work
+ * out their asset folder from it. With /api/proxy?url=… that folder came out
+ * as <devon>/api/, so every chunk, model, video and image they built pointed
+ * at <devon>/api/<file> (shown as site.com/api/<file>) and failed. Relative
+ * dynamic imports and new URL("./x", import.meta.url) resolve correctly here.
+ */
+const MIRROR_PATH = "/api/proxy/m/"
+
+/**
  * Google's hidden "are you signed in?" check: YouTube (and other Google sites)
  * load it in an invisible frame, e.g. youtube.com/signin?...feature=passive,
  * which redirects to accounts.google.com/...&passive=true. It can't work
@@ -303,6 +315,80 @@ function proxied(proxyOrigin: string, absoluteUrl: string): string {
 }
 
 /**
+ * The module address for an absolute http(s) URL (see MIRROR_PATH), or the
+ * usual proxied one if it can't be mirrored. The hash is dropped (it never
+ * reaches a server). Quotes are escaped so the address is safe in attributes.
+ */
+function mirrored(proxyOrigin: string, absoluteUrl: string): string {
+  try {
+    const u = new URL(absoluteUrl)
+    if (u.protocol !== "http:" && u.protocol !== "https:") return proxied(proxyOrigin, absoluteUrl)
+    const rest = `${u.host}${u.pathname}${u.search}`.replace(/'/g, "%27").replace(/"/g, "%22")
+    return `${proxyOrigin}${MIRROR_PATH}${u.protocol.slice(0, -1)}/${rest}`
+  } catch {
+    return proxied(proxyOrigin, absoluteUrl)
+  }
+}
+
+/** The real URL behind a module address path (+ query), or null if it isn't one */
+function mirrorTarget(pathname: string, search: string): string | null {
+  if (!pathname.startsWith(MIRROR_PATH)) return null
+  const match = /^(https?)\/([^/?#]+)(\/.*)?$/.exec(pathname.slice(MIRROR_PATH.length))
+  if (!match) return null
+  return `${match[1]}://${match[2]}${match[3] || "/"}${search}`
+}
+
+/** A module script/preload tag's proxied address, moved to its module address */
+function mirrorTag(tag: string, proxyOrigin: string): string {
+  return tag.replace(/(["'])([^"']*\/api\/proxy\?url=)([^"'&\s>]+)[^"']*\1/g, (match, q: string, _p: string, enc: string) => {
+    try {
+      return `${q}${mirrored(proxyOrigin, decodeURIComponent(enc))}${q}`
+    } catch {
+      return match
+    }
+  })
+}
+
+const IMPORTMAP_RE = /(<script\b[^>]*\btype=["']?importmap["']?[^>]*>)([\s\S]*?)(<\/script\s*>)/gi
+
+/**
+ * Import map addresses (bare names like "react" mapped to the site's files)
+ * point at their module addresses, so they load through Devon and resolve to
+ * the very same modules as relative imports do. Scope prefixes become module
+ * addresses too, since that's what importing modules' URLs now look like.
+ * Integrity hashes can't match rewritten files, so they're dropped.
+ */
+function rewriteImportMap(json: string, pageUrl: string, proxyOrigin: string): string {
+  let map: { imports?: Record<string, unknown>; scopes?: Record<string, unknown>; integrity?: unknown }
+  try {
+    map = JSON.parse(json)
+  } catch {
+    return json
+  }
+  if (!map || typeof map !== "object") return json
+  const address = (value: unknown) => {
+    if (typeof value !== "string") return value
+    // Specifiers that aren't URLs ("react") stay; only addresses are mapped
+    if (!/^(https?:|\/|\.\.?\/)/i.test(value.trim())) return value
+    const abs = proxiable(value, pageUrl)
+    return abs ? mirrored(proxyOrigin, abs) : value
+  }
+  const mapAll = (entries: unknown) =>
+    entries && typeof entries === "object"
+      ? Object.fromEntries(Object.entries(entries as Record<string, unknown>).map(([k, v]) => [k, address(v)]))
+      : entries
+  const out: Record<string, unknown> = { ...map }
+  delete out.integrity
+  if (map.imports) out.imports = mapAll(map.imports)
+  if (map.scopes && typeof map.scopes === "object") {
+    out.scopes = Object.fromEntries(
+      Object.entries(map.scopes).map(([prefix, entries]) => [String(address(prefix)), mapAll(entries)]),
+    )
+  }
+  return JSON.stringify(out).replace(/</g, "\\u003c")
+}
+
+/**
  * Absolute http(s) URL for a reference that should load through the proxy, or
  * null to leave it alone (data:, blob:, #fragments, other schemes, and URLs
  * that are already proxied). Absolute URLs are proxied too: on a filtered
@@ -327,9 +413,11 @@ function rawMediaUrls(tag: string): string {
 
 function processJavaScript(content: string, baseUrl: string, proxyOrigin: string, experimental = false): string {
   if (experimental) content = rewritePostMessageCalls(content)
+  // Imports go to module addresses (see MIRROR_PATH): the same address the page's
+  // <script type="module"> tags and import map use, so each module loads once
   return content.replace(IMPORT_FROM_RE, (match, prefix: string, quote: string, modulePath: string) => {
     try {
-      return `${prefix}${quote}${proxied(proxyOrigin, new URL(modulePath, baseUrl).href)}${quote}`
+      return `${prefix}${quote}${mirrored(proxyOrigin, new URL(modulePath, baseUrl).href)}${quote}`
     } catch {
       return match
     }
@@ -364,6 +452,7 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
   var TARGET_HOST = new URL(PAGE_URL).hostname;
   var PROXY_HOST = new URL(PROXY_ORIGIN).hostname;
   var MARK = ${jsString(PROXY_PATH)};
+  var MIRROR = ${jsString(MIRROR_PATH)}; // module addresses: MIRROR + scheme/host/path
   var EXPERIMENTAL = ${experimental ? "true" : "false"};
 
   // The page shown in a Devon tab, as opposed to a proxied frame inside it
@@ -390,6 +479,11 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
     try { abs = new URL(ref, PAGE_URL); } catch (e) { return null; }
     // blob:, data: etc. are not on any site (a blob: URL's origin is the app's)
     if (abs.protocol !== 'http:' && abs.protocol !== 'https:') return abs.href;
+    // A module address, or a file next to one (bundlers build those from import.meta.url)
+    if (abs.origin === PROXY_ORIGIN && abs.pathname.indexOf(MIRROR) === 0) {
+      var m = new RegExp('^(https?)/([^/]+)(/.*)?$').exec(abs.pathname.slice(MIRROR.length));
+      if (m) return m[1] + '://' + m[2] + (m[3] || '/') + abs.search + abs.hash;
+    }
     if (abs.origin === PROXY_ORIGIN && !APP_PATH.test(abs.pathname)) {
       return TARGET_ORIGIN + abs.pathname + abs.search + abs.hash;
     }
@@ -429,6 +523,13 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
   } catch (e) {}
 
   function proxyPageUrl(url) { return PROXY_ORIGIN + MARK + encodeURIComponent(url); }
+  // Same as the server's mirrored(): where a module at this real URL loads from
+  function moduleUrl(url) {
+    var u = new URL(url);
+    var rest = (u.host + u.pathname + u.search).replace(new RegExp("'", 'g'), '%27').replace(new RegExp('"', 'g'), '%22');
+    return PROXY_ORIGIN + MIRROR + u.protocol.slice(0, -1) + '/' + rest;
+  }
+  function isProxyAddress(s) { return s.indexOf(MARK) !== -1 || s.indexOf(PROXY_ORIGIN + MIRROR) === 0; }
 
   // Messages for the app. Only the tab's page reports to it.
   function post(type, msg) {
@@ -797,9 +898,16 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
     var url = realUrl(s);
     if (!isHttp(url)) return null;
     var tag = el.tagName;
-    // Classic scripts stream through raw mode (see processHTML); module scripts and
-    // experimental mode need the rewriting proxy
-    if (tag === 'SCRIPT' && !EXPERIMENTAL && String(el.type || '').toLowerCase() !== 'module') {
+    // Modules load from module addresses, so import.meta.url keeps the real folder
+    // layout (and a module preloaded, imported or added as a tag loads once)
+    var isModule = tag === 'SCRIPT' && String(el.type || '').toLowerCase() === 'module';
+    if (isModule || (tag === 'LINK' && (el.getAttribute('rel') || '').toLowerCase() === 'modulepreload')) {
+      el.removeAttribute('integrity');
+      return moduleUrl(url);
+    }
+    // Classic scripts stream through raw mode (see processHTML); experimental mode
+    // needs the rewriting proxy
+    if (tag === 'SCRIPT' && !EXPERIMENTAL) {
       el.removeAttribute('integrity');
       return PROXY_ORIGIN + MARK + encodeURIComponent(url) + '&raw=1';
     }
@@ -835,7 +943,7 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
   }
   // Reading the property gives the site back the real URL, so its own checks still work
   function unproxied(v) {
-    return typeof v === 'string' && v.indexOf(MARK) !== -1 ? (realUrl(v) || v) : v;
+    return typeof v === 'string' && isProxyAddress(v) ? (realUrl(v) || v) : v;
   }
 
   var URL_PROPS = [
@@ -913,7 +1021,8 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
         var s = String(u);
         if (!SKIP_SCHEME.test(s) && s.indexOf(MARK) === -1) {
           var real = realUrl(s);
-          if (isHttp(real)) target = proxyPageUrl(real);
+          // Module workers get a module address, like module scripts
+          if (isHttp(real)) target = opts && opts.type === 'module' ? moduleUrl(real) : proxyPageUrl(real);
         }
       } catch (e) {}
       return new NativeW(target || u, opts);
@@ -1325,6 +1434,11 @@ function processHTML(content: string, pageUrl: string, proxyOrigin: string, expe
   // Inline scripts and handlers need the same postMessage call-site rewrite as files
   if (experimental) content = rewritePostMessageCalls(content)
 
+  // Import maps are JSON inside a <script>, so they're rewritten on their own
+  content = content.replace(IMPORTMAP_RE, (_m, open: string, json: string, close: string) =>
+    open + rewriteImportMap(json, pageUrl, proxyOrigin) + close,
+  )
+
   // Markup is rewritten everywhere EXCEPT inside <script> elements: their code
   // may contain strings like '<style>…url('+x+')…' or 'src="'+u+'"' that the
   // attribute rewrites below would corrupt (breaking the whole script with
@@ -1364,11 +1478,10 @@ function processHTML(content: string, pageUrl: string, proxyOrigin: string, expe
     // Buffering multi-megabyte bundles (YouTube's are ~10 MB) can hit a host's
     // response size or time limits, which truncates them: "Unexpected end of
     // script". Module scripts still need their import paths rewritten.
-    if (!experimental) {
-      markup = markup.replace(/<script\b[^>]*>/gi, (tag) =>
-        /\btype=["']?module\b/i.test(tag) ? tag : rawMediaUrls(tag),
-      )
-    }
+    // Modules (and their preloads) load from module addresses, see MIRROR_PATH.
+    markup = markup.replace(/<script\b[^>]*>/gi, (tag) =>
+      /\btype=["']?module\b/i.test(tag) ? mirrorTag(tag, proxyOrigin) : experimental ? tag : rawMediaUrls(tag),
+    )
 
     // <style> blocks and style="" attributes
     markup = markup.replace(/(<style\b[^>]*>)([\s\S]*?)(<\/style>)/gi, (_m, open: string, css: string, close: string) =>
@@ -1385,12 +1498,14 @@ function processHTML(content: string, pageUrl: string, proxyOrigin: string, expe
       // Hints to connect to the real site are pointless (and leak) through a proxy
       if (/\brel=["']?(?:preconnect|dns-prefetch)/i.test(before + after)) return match
       const abs = proxiable(ref, pageUrl)
-      return abs ? `<link${before}href=${q}${proxied(proxyOrigin, abs)}${q}${after}>` : match
+      if (!abs) return match
+      const href = /\brel=["']?modulepreload\b/i.test(before + after) ? mirrored(proxyOrigin, abs) : proxied(proxyOrigin, abs)
+      return `<link${before}href=${q}${href}${q}${after}>`
     })
 
     // Subresource Integrity hashes can't match content the proxy rewrote
     markup = markup.replace(/<(script|link)\b[^>]*>/gi, (tag) =>
-      tag.includes(PROXY_PATH) ? tag.replace(/\sintegrity=(["'])[^"']*\1/i, "") : tag,
+      tag.includes(PROXY_PATH) || tag.includes(MIRROR_PATH) ? tag.replace(/\sintegrity=(["'])[^"']*\1/i, "") : tag,
     )
     return markup
   }
@@ -1861,7 +1976,26 @@ async function handleSlice(request: NextRequest, targetUrl: string, index: numbe
   }
 }
 
+/** Anything under /api/proxy/ (module addresses) only answers GET and HEAD */
+function isSubpath(request: NextRequest): boolean {
+  const { pathname } = request.nextUrl
+  return pathname !== "/api/proxy" && pathname !== "/api/proxy/"
+}
+
+/**
+ * Requests under /api/proxy/: the module at a module address, or a 404.
+ * Null for plain /api/proxy requests.
+ */
+function subpathResponse(request: NextRequest, method: "GET" | "HEAD"): Promise<NextResponse> | NextResponse | null {
+  if (!isSubpath(request)) return null
+  const moduleUrl = mirrorTarget(request.nextUrl.pathname, request.nextUrl.search)
+  if (!moduleUrl) return NextResponse.json({ error: "Not found" }, { status: 404 })
+  return handle(request, moduleUrl, { method })
+}
+
 export async function GET(request: NextRequest) {
+  const sub = subpathResponse(request, "GET")
+  if (sub) return sub
   if (request.nextUrl.searchParams.get("clearCookies") === "1") return clearJarCookies(request)
   const targetUrl = request.nextUrl.searchParams.get("url")
   if (!targetUrl) {
@@ -1905,6 +2039,8 @@ function attachmentHeader(name: string): string {
 }
 
 export async function HEAD(request: NextRequest) {
+  const sub = subpathResponse(request, "HEAD")
+  if (sub) return sub
   const targetUrl = request.nextUrl.searchParams.get("url")
   if (!targetUrl) return new NextResponse(null, { status: 400 })
   return handleRaw(request, targetUrl)
@@ -1918,6 +2054,7 @@ export async function HEAD(request: NextRequest) {
  *   (urlencoded); an object body is sent as JSON, for backwards compatibility.
  */
 export async function POST(request: NextRequest) {
+  if (isSubpath(request)) return NextResponse.json({ error: "Only GET is supported here" }, { status: 405 })
   const raw = rawTarget(request)
   if (raw) return handleRaw(request, raw)
 
@@ -1941,6 +2078,7 @@ export async function POST(request: NextRequest) {
 }
 
 async function rawOnly(request: NextRequest): Promise<NextResponse> {
+  if (isSubpath(request)) return NextResponse.json({ error: "Only GET is supported here" }, { status: 405 })
   const raw = rawTarget(request)
   if (!raw) return NextResponse.json({ error: "Only supported with raw=1" }, { status: 405 })
   return handleRaw(request, raw)

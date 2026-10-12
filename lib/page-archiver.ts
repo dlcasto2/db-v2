@@ -45,6 +45,7 @@ interface AssetEntry {
 }
 
 const PROXY_PATH = "/api/proxy"
+const MODULE_PATH = "/api/proxy/m/"
 const HTML_PATH = "index.html"
 
 /* ------------------------------------------------------------------- URLs */
@@ -56,6 +57,11 @@ export function unproxy(url: string): string {
     if (typeof location !== "undefined" && u.origin === location.origin && u.pathname === PROXY_PATH) {
       const target = u.searchParams.get("url")
       if (target) return target
+    }
+    // Module addresses: /api/proxy/m/<scheme>/<host>/<path> (see the proxy route)
+    if (typeof location !== "undefined" && u.origin === location.origin && u.pathname.startsWith(MODULE_PATH)) {
+      const m = /^(https?)\/([^/]+)(\/.*)?$/.exec(u.pathname.slice(MODULE_PATH.length))
+      if (m) return `${m[1]}://${m[2]}${m[3] || "/"}${u.search}`
     }
   } catch {
     // not a URL
