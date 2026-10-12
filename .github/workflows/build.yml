@@ -1,0 +1,57 @@
+# Checks that Devon still builds (type check + next build) on every push to
+# main and every pull request, so a broken change shows up here before it
+# reaches the EdgeOne deployment.
+#
+# This replaces GitHub's "Deploy Next.js site to Pages" template. GitHub Pages
+# only hosts static files, and Devon needs a server: the web proxy
+# (/api/proxy), the YouTube and page-check routes, and the Devon AI agents.
+# The template also uses npm, but this repo uses pnpm (pnpm-lock.yaml), which
+# is why it failed with "Dependencies lock file is not found".
+name: Build
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request replaces the older run
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Restore Next.js build cache
+        uses: actions/cache@v4
+        with:
+          path: .next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('app/**', 'components/**', 'lib/**', 'hooks/**') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('pnpm-lock.yaml') }}-
+
+      - name: Build
+        run: pnpm build
