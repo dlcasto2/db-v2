@@ -62,6 +62,15 @@ Devon runs anywhere Next.js runs, and it is currently deployed on **EdgeOne Page
 - EdgeOne caps a response at about 4 MB. The proxy works around this by compressing responses and splitting big scripts into slices.
 - Static files under `public/` are served by the CDN, not the function.
 
+### GitHub Pages address
+
+Devon also has an address at **https://dlcasto2.github.io/db-v2/**. GitHub Pages only serves static files, and Devon needs a server (the proxy and Devon AI), so that page (`github-pages/index.html`) shows Devon running on EdgeOne full-page. Every site still loads through EdgeOne.
+
+- `.github/workflows/github-pages.yml` publishes `github-pages/` when it changes on `main`. In the repo settings, Pages → Source must be **GitHub Actions**.
+- Devon tells the page when it has loaded (`components/embed-bridge.tsx`). If it doesn't load within 20 seconds, the page offers a direct link instead.
+- The EdgeOne address is `DEVON_URL` at the top of the page's script. To let another site embed Devon this way, add its origin to `NEXT_PUBLIC_DEVON_SHELL_ORIGINS` (comma-separated, read at build time).
+- Browsers keep an embedded site's storage separate from the same site opened directly. So the GitHub Pages address has its own tabs, bookmarks, history and Devon AI chats, apart from db-v5.edgeone.dev.
+
 ## Project layout
 
 | Path | What it is |
@@ -77,6 +86,7 @@ Devon runs anywhere Next.js runs, and it is currently deployed on **EdgeOne Page
 | `components/games-page.tsx` | Games grid and player |
 | `components/extensions-dialog.tsx`, `extension-page.tsx` | Extension manager, popups and options pages |
 | `components/library-panel.tsx` | Bookmarks and history side panel |
+| `github-pages/`, `components/embed-bridge.tsx` | The GitHub Pages address, which shows Devon full-page, and Devon's side of it |
 | `components/save-page-dialog.tsx`, `media-downloads.tsx`, `page-problems.tsx` | Save offline, media downloads, page report |
 | `lib/proxy-utils.ts` | URL formatting, search engine, proxy fetch helpers |
 | `lib/suggestions.ts` | Address bar suggestions |

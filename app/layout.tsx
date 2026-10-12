@@ -2,6 +2,7 @@ import type React from "react"
 import type { Metadata, Viewport } from "next"
 import { Geist, Geist_Mono } from "next/font/google"
 import "./globals.css"
+import { EmbedBridge } from "@/components/embed-bridge"
 
 export const metadata: Metadata = {
   title: "Devon Browser",
@@ -35,6 +36,7 @@ export default function RootLayout({
     <html lang="en" className="dark">
       <body className={`font-sans antialiased ${geistSans.variable} ${geistMono.variable}`}>
         {children}
+        <EmbedBridge />
       </body>
     </html>
   )

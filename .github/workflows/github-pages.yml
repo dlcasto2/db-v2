@@ -1,0 +1,47 @@
+# Publishes github-pages/ to Devon's GitHub Pages address
+# (https://dlcasto2.github.io/db-v2/). That page shows Devon running on
+# EdgeOne full-page: GitHub Pages only serves static files, and Devon needs a
+# server for its web proxy and Devon AI.
+#
+# Needs Settings → Pages → Build and deployment → Source set to "GitHub Actions".
+name: GitHub Pages
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "github-pages/**"
+      - ".github/workflows/github-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a running one is allowed to finish
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload the page
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: github-pages
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

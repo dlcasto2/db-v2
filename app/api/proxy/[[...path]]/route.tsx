@@ -462,6 +462,14 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
   })();
   window.__devonProxied = true; // lets the app tell our pages from ones that escaped the proxy
 
+  // Devon's own window: the topmost window on this origin. Not window.top, since
+  // Devon itself may be embedded in another site (e.g. its GitHub Pages address).
+  var APP_WINDOW = (function () {
+    var w = window;
+    try { while (w.parent !== w && w.parent.location.origin === location.origin) w = w.parent; } catch (e) {}
+    return w;
+  })();
+
   // Paths on the proxy origin that really belong to the app, not the proxied site
   var APP_PATH = new RegExp('^/(api/proxy|_next/)');
 
@@ -543,7 +551,7 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
     // Nested proxied frame: new tabs go to the app, everything else loads in this frame
     if (msg.newTab) {
       msg.type = 'proxy-navigate';
-      try { window.top.postMessage(msg, '*'); } catch (e) {}
+      try { APP_WINDOW.postMessage(msg, '*'); } catch (e) {}
       return;
     }
     var target = msg.reload ? PAGE_URL : msg.url;
@@ -1149,7 +1157,7 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
 
     // Shared by all proxied frames (same origin): who is calling postMessage right now
     var shared;
-    try { shared = window.top.__devonShared || (window.top.__devonShared = {}); } catch (e) { shared = {}; }
+    try { shared = APP_WINDOW.__devonShared || (APP_WINDOW.__devonShared = {}); } catch (e) { shared = {}; }
     var clearScheduled = false;
     window.__devonPM = function (caller, name) {
       shared.caller = caller;
