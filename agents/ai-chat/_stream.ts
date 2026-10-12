@@ -5,6 +5,8 @@
  * Agent SDK query and turns its messages into the events Devon's chat reads:
  *
  *   quota       { used, limit, resetAt }        sent first
+ *   session     { session }                     this chat's session state (first, and after each change)
+ *   page_action { callId, tool, args }          run a page tool in the visitor's Devon tab (see _mailbox.ts)
  *   text_delta  { delta }                       assistant text, token by token
  *   tool_called { tool }                        a sandbox tool started
  *   skill_loaded { name }                       a project skill was loaded
@@ -22,6 +24,8 @@ import { query } from "@anthropic-ai/claude-agent-sdk"
 import type { AgentMemory } from "@edgeone/types"
 import { redactBase64Deep } from "../_redact"
 import type { QuotaStatus } from "../_quota"
+import type { SessionState } from "../_session"
+import type { StreamChannel } from "./_devon-tools"
 
 interface Logger {
   log(...args: unknown[]): void
@@ -38,6 +42,9 @@ interface CreateChatStreamOptions {
   botMsgId?: string
   userId?: string
   quota: QuotaStatus
+  session: SessionState
+  /** Filled in when the stream starts, so tools can send events down it */
+  channel: StreamChannel
 }
 
 type SdkBlock = { type?: string; text?: string; name?: string; id?: string; input?: unknown; source?: { type?: string; media_type?: string; data?: string } }
@@ -97,6 +104,8 @@ export function createChatStream({
   botMsgId,
   userId,
   quota,
+  session,
+  channel,
 }: CreateChatStreamOptions): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder()
   let stopped = false
@@ -117,6 +126,7 @@ export function createChatStream({
           closed = true
         }
       }
+      channel.send = send
       const heartbeat = setInterval(() => send("ping", {}), HEARTBEAT_MS)
 
       const emitToolResults = (msg: SdkMessage) => {
@@ -221,6 +231,7 @@ export function createChatStream({
 
       try {
         send("quota", { used: quota.used, limit: quota.limit, resetAt: quota.resetAt })
+        send("session", { session })
 
         const abortController = new AbortController()
         if (signal?.aborted) abortController.abort()

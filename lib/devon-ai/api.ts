@@ -7,9 +7,20 @@
  *   cloud-functions/ai-history              → POST /ai-history
  *   cloud-functions/ai-conversations        → POST /ai-conversations
  *   cloud-functions/ai-delete-conversation  → POST /ai-delete-conversation
+ *   cloud-functions/ai-page-result          → POST /ai-page-result   (page tool results)
+ *   cloud-functions/ai-session              → POST /ai-session       (session state)
  */
 
-import type { ImageSsePayload, ListConversationsResponse, Message, PageContext, Quota } from "@/lib/devon-ai/types"
+import type {
+  BrowserSession,
+  ImageSsePayload,
+  ListConversationsResponse,
+  Message,
+  PageContext,
+  Quota,
+  SessionState,
+} from "@/lib/devon-ai/types"
+import type { PageActionOutcome, PageActionRequest } from "@/lib/devon-ai/page-executor"
 
 export const AI_API = {
   chat: "/ai-chat",
@@ -17,6 +28,8 @@ export const AI_API = {
   history: "/ai-history",
   conversations: "/ai-conversations",
   deleteConversation: "/ai-delete-conversation",
+  pageResult: "/ai-page-result",
+  session: "/ai-session",
 } as const
 
 /** Why a message couldn't be sent */
@@ -34,6 +47,8 @@ export interface StreamCallbacks {
   onSkillLoaded?: (name: string) => void
   onImage: (payload: ImageSsePayload) => void
   onNotice?: (code: string, message: string) => void
+  onSession?: (session: SessionState) => void
+  onPageAction?: (request: PageActionRequest) => void
   onDone: (stopped: boolean) => void
   onFail: (failure: ChatFailure) => void
 }
@@ -71,6 +86,7 @@ export function sendMessageStream(
     userMsgId: string
     botMsgId: string
     page?: PageContext
+    browser?: BrowserSession
   },
   cb: StreamCallbacks,
 ): AbortController {
@@ -89,6 +105,7 @@ export function sendMessageStream(
           userMsgId: args.userMsgId,
           botMsgId: args.botMsgId,
           ...(args.page ? { page: args.page } : {}),
+          ...(args.browser ? { browser: args.browser } : {}),
         }),
         signal: ctrl.signal,
       })
@@ -164,6 +181,18 @@ function dispatchSseChunk(part: string, cb: StreamCallbacks): "done" | "error" |
           base64: parsed.base64,
           mimeType: typeof parsed.mimeType === "string" ? parsed.mimeType : "image/png",
           size: Number(parsed.size) || 0,
+        })
+      }
+      break
+    case "session":
+      if (parsed.session && typeof parsed.session === "object") cb.onSession?.(parsed.session as SessionState)
+      break
+    case "page_action":
+      if (typeof parsed.callId === "string" && typeof parsed.tool === "string") {
+        cb.onPageAction?.({
+          callId: parsed.callId,
+          tool: parsed.tool,
+          args: parsed.args && typeof parsed.args === "object" ? (parsed.args as Record<string, unknown>) : {},
         })
       }
       break
@@ -245,6 +274,54 @@ export async function deleteConversation(conversationId: string, userId: string)
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ conversation_id: conversationId, user_id: userId }),
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
+/** Hand a page action's result back to the waiting agent (retries a few times) */
+export async function postPageResult(conversationId: string, callId: string, outcome: PageActionOutcome): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(AI_API.pageResult, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "makers-conversation-id": conversationId },
+        body: JSON.stringify({ conversation_id: conversationId, call_id: callId, ok: outcome.ok, text: outcome.text, tab: outcome.tab }),
+      })
+      if (res.ok) return true
+      if (res.status < 500) return false
+    } catch {
+      // network blip: try again
+    }
+    await new Promise((r) => setTimeout(r, 400 * (attempt + 1)))
+  }
+  return false
+}
+
+/** A chat's session state from the server (null if none, or the runtime can't say) */
+export async function fetchSession(conversationId: string): Promise<{ session: SessionState | null; available: boolean }> {
+  try {
+    const res = await fetch(AI_API.session, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "makers-conversation-id": conversationId },
+      body: JSON.stringify({ action: "get" }),
+    })
+    if (!res.ok || !(res.headers.get("content-type") || "").includes("json")) return { session: null, available: false }
+    const data = (await res.json().catch(() => null)) as { session?: SessionState | null; available?: boolean } | null
+    return { session: data?.session ?? null, available: Boolean(data?.available) }
+  } catch {
+    return { session: null, available: false }
+  }
+}
+
+export async function clearSessionApi(conversationId: string): Promise<boolean> {
+  try {
+    const res = await fetch(AI_API.session, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "makers-conversation-id": conversationId },
+      body: JSON.stringify({ action: "clear" }),
     })
     return res.ok
   } catch {

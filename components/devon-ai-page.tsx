@@ -9,11 +9,17 @@ import {
   ArrowLeft,
   ArrowUp,
   Check,
+  CircleCheck,
+  CircleSlash,
+  ClipboardList,
   Copy,
   Globe,
+  Hand,
   Loader2,
+  Maximize2,
   MessagesSquare,
   Plus,
+  ShieldCheck,
   Sparkles,
   Square,
   Trash2,
@@ -23,24 +29,32 @@ import { Button } from "@/components/ui/button"
 import {
   type ChatState,
   attachPageToDevonAi,
+  clearDevonAiSession,
   deleteDevonAiChat,
   dismissDevonAiBanner,
   limitMessage,
   loadMoreDevonAiChats,
   newDevonAiChat,
+  removeAllowedSite,
+  respondDevonAiApproval,
   selectDevonAiChat,
   sendDevonAi,
   startDevonAi,
   stopDevonAi,
   useDevonAi,
 } from "@/lib/devon-ai/store"
-import type { ConversationSummary, Message } from "@/lib/devon-ai/types"
+import type { ActionStep, ConversationSummary, Message } from "@/lib/devon-ai/types"
 import { cn } from "@/lib/utils"
 
 interface DevonAiPageProps {
   /** Open a link from a reply in a new Devon tab */
   onOpenLink: (url: string) => void
-  onOpenApps: () => void
+  onOpenApps?: () => void
+  /** "page" = the full devon://apps/ai tab; "panel" = docked next to a website */
+  variant?: "page" | "panel"
+  /** Panel only: close it, or open the full Devon AI tab */
+  onClose?: () => void
+  onOpenFull?: () => void
 }
 
 const STARTERS = [
@@ -51,6 +65,9 @@ const STARTERS = [
 ]
 
 const PAGE_STARTERS = ["Summarize this page", "What are the key points?", "Explain this page in simple words"]
+
+/** In the side panel, next to a site: things that use the page tools */
+const PANEL_STARTERS = ["Summarize this page", "What can I do on this page?", "Find the search box and search for “news”", "Make a to-do list from this page"]
 
 function shorten(text: string, max = 70) {
   return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text
@@ -64,9 +81,11 @@ function hostOf(url: string) {
   }
 }
 
-export function DevonAiPage({ onOpenLink, onOpenApps }: DevonAiPageProps) {
+export function DevonAiPage({ onOpenLink, onOpenApps, variant = "page", onClose, onOpenFull }: DevonAiPageProps) {
   const chat = useDevonAi()
   const [chatsOpen, setChatsOpen] = useState(false)
+  const [sessionOpen, setSessionOpen] = useState(false)
+  const panel = variant === "panel"
 
   useEffect(() => {
     startDevonAi()
@@ -74,38 +93,41 @@ export function DevonAiPage({ onOpenLink, onOpenApps }: DevonAiPageProps) {
 
   const quotaLeft = chat.quota && chat.quota.limit > 0 ? Math.max(0, chat.quota.limit - chat.quota.used) : null
   const outOfMessages = chat.quota !== null && quotaLeft === 0 && chat.quota.resetAt > Date.now()
+  const sessionCount = (chat.session?.task ? 1 : 0) + (chat.session?.notes.length ?? 0) + chat.allowedSites.length
 
   return (
-    <div className="relative flex h-full w-full bg-background">
-      <ChatList chat={chat} className="hidden w-64 flex-shrink-0 border-r border-border md:flex" />
+    <div className={cn("relative flex h-full w-full bg-background", panel && "bg-toolbar")}>
+      {!panel && <ChatList chat={chat} className="hidden w-64 flex-shrink-0 border-r border-border md:flex" />}
 
-      {/* Mobile chat list */}
+      {/* Chat list as an overlay (phones, and the side panel) */}
       {chatsOpen && (
-        <div className="absolute inset-0 z-30 flex md:hidden">
+        <div className={cn("absolute inset-0 z-30 flex", !panel && "md:hidden")}>
           <ChatList chat={chat} className="w-72 max-w-[85%] border-r border-border shadow-2xl" onPicked={() => setChatsOpen(false)} />
           <button aria-label="Close chats" className="flex-1 bg-black/50" onClick={() => setChatsOpen(false)} />
         </div>
       )}
 
       <div className="relative flex min-w-0 flex-1 flex-col">
-        <div className="flex h-11 flex-shrink-0 items-center gap-2 border-b border-border px-3">
-          <Button size="sm" variant="ghost" className="h-8 rounded-full px-3" onClick={onOpenApps}>
-            <ArrowLeft /> Apps
-          </Button>
+        <div className="flex h-11 flex-shrink-0 items-center gap-1.5 border-b border-border px-2 sm:px-3">
+          {!panel && onOpenApps && (
+            <Button size="sm" variant="ghost" className="h-8 rounded-full px-3" onClick={onOpenApps}>
+              <ArrowLeft /> Apps
+            </Button>
+          )}
           <Button
             size="sm"
             variant="ghost"
-            className="h-8 rounded-full md:hidden"
+            className={cn("h-8 rounded-full", !panel && "md:hidden")}
             onClick={() => setChatsOpen(true)}
             title="Chats"
           >
             <MessagesSquare />
           </Button>
-          <span className="ml-1 grid size-6 place-items-center rounded-lg bg-primary/15 text-primary ring-1 ring-primary/30">
+          <span className="ml-1 grid size-6 flex-shrink-0 place-items-center rounded-lg bg-primary/15 text-primary ring-1 ring-primary/30">
             <Sparkles className="size-3.5" />
           </span>
           <span className="min-w-0 flex-1 truncate text-sm font-medium">Devon AI</span>
-          {quotaLeft !== null && (
+          {quotaLeft !== null && !panel && (
             <span
               className={cn(
                 "hidden rounded-full px-2.5 py-1 text-[11px] ring-1 sm:inline",
@@ -119,24 +141,182 @@ export function DevonAiPage({ onOpenLink, onOpenApps }: DevonAiPageProps) {
           <Button
             size="sm"
             variant="ghost"
-            className="h-8 rounded-full"
-            onClick={newDevonAiChat}
-            disabled={chat.loading}
-            title="New chat"
+            className={cn("relative h-8 rounded-full", sessionOpen && "bg-white/[0.08]")}
+            onClick={() => setSessionOpen((v) => !v)}
+            title="Session: what Devon AI is working on in this chat"
+            aria-expanded={sessionOpen}
           >
+            <ClipboardList />
+            {!panel && <span className="hidden lg:inline">Session</span>}
+            {sessionCount > 0 && (
+              <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
+                {sessionCount}
+              </span>
+            )}
+          </Button>
+          <Button size="sm" variant="ghost" className="h-8 rounded-full" onClick={newDevonAiChat} disabled={chat.loading} title="New chat">
             <Plus />
           </Button>
+          {panel && onOpenFull && (
+            <Button size="sm" variant="ghost" className="h-8 rounded-full" onClick={onOpenFull} title="Open Devon AI in a tab">
+              <Maximize2 />
+            </Button>
+          )}
+          {panel && onClose && (
+            <Button size="sm" variant="ghost" className="h-8 rounded-full" onClick={onClose} title="Close Devon AI">
+              <X />
+            </Button>
+          )}
         </div>
 
-        <ChatMessages chat={chat} onOpenLink={onOpenLink} />
+        {sessionOpen && <SessionPanel chat={chat} onOpenLink={onOpenLink} onClose={() => setSessionOpen(false)} />}
 
-        <div className="flex-shrink-0 px-3 pb-3 sm:px-6">
+        <ChatMessages chat={chat} onOpenLink={onOpenLink} panel={panel} />
+
+        <div className={cn("flex-shrink-0 pb-3", panel ? "px-3" : "px-3 sm:px-6")}>
           <div className="mx-auto w-full max-w-3xl">
+            {chat.approval && <ApprovalCard approval={chat.approval} />}
             {chat.banner && <Banner kind={chat.banner.kind} message={chat.banner.message} />}
             {!chat.banner && outOfMessages && chat.quota && <Banner kind="rate_limited" message={limitMessage(chat.quota)} />}
-            <Composer chat={chat} disabled={outOfMessages} quotaLeft={quotaLeft} />
+            <Composer chat={chat} disabled={outOfMessages} quotaLeft={quotaLeft} panel={panel} />
           </div>
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Session state
+// ---------------------------------------------------------------------------
+
+function SessionPanel({ chat, onOpenLink, onClose }: { chat: ChatState; onOpenLink: (url: string) => void; onClose: () => void }) {
+  const s = chat.session
+  const empty = !s?.task && !s?.steps.length && !s?.notes.length && !s?.pages.length && !chat.allowedSites.length
+  return (
+    <div className="relative z-20 max-h-[55%] flex-shrink-0 overflow-y-auto scrollbar-thin border-b border-border bg-toolbar px-4 py-3 text-[13px] shadow-lg">
+      <div className="mb-2 flex items-center gap-2">
+        <ClipboardList className="size-4 text-primary" />
+        <span className="flex-1 font-medium">Session</span>
+        {!empty && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 rounded-full px-2.5 text-xs text-muted-foreground"
+            disabled={chat.loading}
+            onClick={() => {
+              if (confirm("Clear this chat's session? Devon AI forgets its task, steps and notes, and the sites you allowed.")) clearDevonAiSession()
+            }}
+          >
+            <Trash2 /> Clear
+          </Button>
+        )}
+        <button onClick={onClose} title="Close" className="grid size-6 place-items-center rounded-full text-muted-foreground hover:bg-white/[0.08] hover:text-foreground">
+          <X className="size-3.5" />
+        </button>
+      </div>
+      {empty ? (
+        <p className="text-muted-foreground">
+          Nothing yet. When Devon AI works on something with several steps, it keeps its task, steps and notes here, along with the pages it used and
+          the sites you let it act on.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          {s?.task && (
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Task</p>
+              <p className="mt-0.5">{s.task}</p>
+            </div>
+          )}
+          {!!s?.steps.length && (
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Steps · {s.steps.filter((x) => x.done).length}/{s.steps.length}
+              </p>
+              <ol className="mt-1 space-y-1">
+                {s.steps.map((step, i) => (
+                  <li key={i} className="flex gap-2">
+                    {step.done ? (
+                      <CircleCheck className="mt-0.5 size-3.5 flex-shrink-0 text-emerald-400" />
+                    ) : (
+                      <span className="mt-0.5 size-3.5 flex-shrink-0 rounded-full ring-1 ring-muted-foreground/60" />
+                    )}
+                    <span className={cn(step.done && "text-muted-foreground line-through")}>{step.text}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+          {!!s?.notes.length && (
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Notes</p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                {s.notes.map((n, i) => (
+                  <li key={i}>{n}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {!!s?.pages.length && (
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Pages used</p>
+              <ul className="mt-1 space-y-0.5">
+                {s.pages.map((p) => (
+                  <li key={p.url} className="truncate">
+                    <button onClick={() => onOpenLink(p.url)} className="text-primary hover:underline" title={p.url}>
+                      {p.title || hostOf(p.url)}
+                    </button>
+                    <span className="text-muted-foreground"> · {hostOf(p.url)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {!!chat.allowedSites.length && (
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Can click and type on</p>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {chat.allowedSites.map((site) => (
+                  <span key={site} className="flex items-center gap-1 rounded-full bg-white/[0.05] py-0.5 pl-2.5 pr-1 ring-1 ring-border">
+                    {site}
+                    <button
+                      onClick={() => removeAllowedSite(site)}
+                      title={`Ask again before acting on ${site}`}
+                      className="grid size-4 place-items-center rounded-full text-muted-foreground hover:bg-white/[0.1] hover:text-foreground"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ApprovalCard({ approval }: { approval: NonNullable<ChatState["approval"]> }) {
+  return (
+    <div role="alertdialog" aria-label="Devon AI wants to act on a page" className="mb-2 rounded-xl bg-primary/10 px-3 py-3 ring-1 ring-primary/35">
+      <div className="flex items-start gap-2.5">
+        <Hand className="mt-0.5 size-4 flex-shrink-0 text-primary" />
+        <p className="flex-1 text-[13px]">
+          Devon AI wants to <span className="font-medium text-foreground">{approval.description}</span> on{" "}
+          <span className="font-medium text-foreground">{approval.site}</span>.
+        </p>
+      </div>
+      <div className="mt-2.5 flex flex-wrap gap-1.5 pl-6">
+        <Button size="sm" className="h-7 rounded-full px-3 text-xs" onClick={() => respondDevonAiApproval("once")}>
+          Allow
+        </Button>
+        <Button size="sm" variant="secondary" className="h-7 rounded-full px-3 text-xs" onClick={() => respondDevonAiApproval("site")}>
+          <ShieldCheck /> Allow on {approval.site} for this chat
+        </Button>
+        <Button size="sm" variant="ghost" className="h-7 rounded-full px-3 text-xs" onClick={() => respondDevonAiApproval("deny")}>
+          Deny
+        </Button>
       </div>
     </div>
   )
@@ -237,7 +417,7 @@ function ChatList({ chat, className, onPicked }: { chat: ChatState; className?: 
 // Messages
 // ---------------------------------------------------------------------------
 
-function ChatMessages({ chat, onOpenLink }: { chat: ChatState; onOpenLink: (url: string) => void }) {
+function ChatMessages({ chat, onOpenLink, panel }: { chat: ChatState; onOpenLink: (url: string) => void; panel: boolean }) {
   const ref = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
 
@@ -260,7 +440,7 @@ function ChatMessages({ chat, onOpenLink }: { chat: ChatState; onOpenLink: (url:
         const el = e.currentTarget
         stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
       }}
-      className="relative min-h-0 flex-1 overflow-y-auto scrollbar-thin px-3 sm:px-6"
+      className={cn("relative min-h-0 flex-1 overflow-y-auto scrollbar-thin", panel ? "px-3" : "px-3 sm:px-6")}
     >
       {chat.messages.length === 0 ? (
         chat.historyLoading ? (
@@ -268,7 +448,7 @@ function ChatMessages({ chat, onOpenLink }: { chat: ChatState; onOpenLink: (url:
             <Loader2 className="size-5 animate-spin text-muted-foreground" />
           </div>
         ) : (
-          <EmptyState chat={chat} />
+          <EmptyState chat={chat} panel={panel} />
         )
       ) : (
         <div className="mx-auto w-full max-w-3xl space-y-5 py-6">
@@ -281,8 +461,8 @@ function ChatMessages({ chat, onOpenLink }: { chat: ChatState; onOpenLink: (url:
   )
 }
 
-function EmptyState({ chat }: { chat: ChatState }) {
-  const starters = chat.pendingPage ? PAGE_STARTERS : STARTERS
+function EmptyState({ chat, panel }: { chat: ChatState; panel: boolean }) {
+  const starters = chat.pendingPage ? PAGE_STARTERS : panel ? PANEL_STARTERS : STARTERS
   return (
     <div className="relative flex min-h-full flex-col items-center justify-center py-10">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-[320px] bg-[radial-gradient(ellipse_60%_60%_at_50%_0%,oklch(0.7_0.15_272/0.16),transparent)]" />
@@ -295,9 +475,11 @@ function EmptyState({ chat }: { chat: ChatState }) {
       <p className="relative mt-1 max-w-md text-center text-sm text-muted-foreground">
         {chat.pendingPage
           ? `Devon AI will read “${shorten(chat.pendingPage.title || hostOf(chat.pendingPage.url))}” to answer.`
-          : "Devon AI can answer questions, write and run code in a sandbox, and read the pages you open — use ⋮ → Ask Devon AI about this page."}
+          : panel
+            ? "Devon AI can read this page and click, type and scroll on it for you — it asks before acting on a site."
+            : "Devon AI can answer questions, run code in a sandbox, and read and use the pages you open. Open it next to a site with the ✦ button."}
       </p>
-      <div className="relative mt-6 grid w-full max-w-xl grid-cols-1 gap-2 sm:grid-cols-2">
+      <div className={cn("relative mt-6 grid w-full max-w-xl grid-cols-1 gap-2", !panel && "sm:grid-cols-2")}>
         {starters.map((s) => (
           <button
             key={s}
@@ -337,35 +519,14 @@ function Bubble({ message, onOpenLink }: { message: Message; onOpenLink: (url: s
     )
   }
 
-  const waiting = message.streaming && !message.content && !message.activity && !message.images?.length
+  const waiting = message.streaming && !message.content && !message.actions?.some((a) => a.status === "active") && !message.images?.length
   return (
     <div className="group flex gap-3">
       <span className="mt-0.5 grid size-7 flex-shrink-0 place-items-center rounded-lg bg-primary/15 text-primary ring-1 ring-primary/30">
         <Sparkles className="size-3.5" />
       </span>
       <div className="min-w-0 flex-1">
-        {message.activity && (
-          <div
-            role="status"
-            className={cn(
-              "mb-2 inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[11px] ring-1",
-              message.activity.status === "error"
-                ? "bg-amber-400/10 text-amber-200 ring-amber-400/25"
-                : message.activity.status === "active"
-                  ? "bg-primary/10 text-primary ring-primary/25"
-                  : "text-muted-foreground ring-border",
-            )}
-          >
-            {message.activity.status === "active" ? (
-              <Loader2 className="size-3 animate-spin" />
-            ) : message.activity.status === "error" ? (
-              <AlertTriangle className="size-3" />
-            ) : (
-              <Check className="size-3" />
-            )}
-            {message.activity.label}
-          </div>
-        )}
+        {!!message.actions?.length && <ActionSteps steps={message.actions} />}
         {waiting && (
           <div className="flex h-6 items-center gap-1" aria-label="Devon AI is thinking">
             {[0, 1, 2].map((i) => (
@@ -439,6 +600,28 @@ function Bubble({ message, onOpenLink }: { message: Message; onOpenLink: (url: s
   )
 }
 
+function ActionSteps({ steps }: { steps: ActionStep[] }) {
+  return (
+    <ul className="mb-2 space-y-1">
+      {steps.map((step) => (
+        <li key={step.id} role="status" className="flex items-start gap-2 text-[12px]">
+          {step.status === "active" ? (
+            <Loader2 className="mt-0.5 size-3.5 flex-shrink-0 animate-spin text-primary" />
+          ) : step.status === "error" ? (
+            <CircleSlash className="mt-0.5 size-3.5 flex-shrink-0 text-amber-400" />
+          ) : (
+            <Check className="mt-0.5 size-3.5 flex-shrink-0 text-muted-foreground" />
+          )}
+          <span className={cn("min-w-0", step.status === "active" ? "text-primary" : "text-muted-foreground")}>
+            {step.status === "done" ? step.doneLabel : step.label}
+            {step.note && <span className="block text-[11px] text-amber-200/80">{step.note}</span>}
+          </span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Banner + input
 // ---------------------------------------------------------------------------
@@ -462,7 +645,7 @@ function Banner({ kind, message }: { kind: string; message: string }) {
   )
 }
 
-function Composer({ chat, disabled, quotaLeft }: { chat: ChatState; disabled: boolean; quotaLeft: number | null }) {
+function Composer({ chat, disabled, quotaLeft, panel }: { chat: ChatState; disabled: boolean; quotaLeft: number | null; panel: boolean }) {
   const [value, setValue] = useState("")
   const ref = useRef<HTMLTextAreaElement>(null)
 
@@ -536,7 +719,7 @@ function Composer({ chat, disabled, quotaLeft }: { chat: ChatState; disabled: bo
             rows={1}
             maxLength={8000}
             disabled={disabled}
-            placeholder={chat.pendingPage ? "Ask about this page…" : "Message Devon AI…"}
+            placeholder={chat.pendingPage ? "Ask about this page…" : panel ? "Ask or tell Devon AI what to do…" : "Message Devon AI…"}
             className="max-h-[200px] min-h-[36px] flex-1 resize-none bg-transparent py-2 text-[14px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
           />
           {chat.loading ? (
@@ -559,7 +742,9 @@ function Composer({ chat, disabled, quotaLeft }: { chat: ChatState; disabled: bo
           )}
         </div>
       </div>
-      <p className="mt-1.5 hidden text-center text-[11px] text-muted-foreground/70 sm:block">{hint}</p>
+      <p className={cn("mt-1.5 hidden text-center text-[11px] text-muted-foreground/70", panel ? "block" : "sm:block")}>
+        {panel && quotaLeft !== null ? `${quotaLeft} message${quotaLeft === 1 ? "" : "s"} left today` : hint}
+      </p>
     </div>
   )
 }

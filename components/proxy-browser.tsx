@@ -54,7 +54,8 @@ import { AppsPage } from "@/components/apps-page"
 import { DevonAiPage } from "@/components/devon-ai-page"
 import { PromptGenPage } from "@/components/prompt-gen-page"
 import { AI_URL, APPS_URL, appPageInfo, parseAppsUrl } from "@/lib/apps"
-import { askDevonAiAboutPage, setDevonAiDraft } from "@/lib/devon-ai/store"
+import { askDevonAiAboutPage, registerPageHost, setDevonAiDraft, stopDevonAi, useDevonAiPageWork } from "@/lib/devon-ai/store"
+import type { PageHost, TabInfo } from "@/lib/devon-ai/page-executor"
 import { Favicon } from "@/components/favicon"
 import { cn } from "@/lib/utils"
 import { SavePageDialog, type SaveTarget } from "@/components/save-page-dialog"
@@ -166,6 +167,13 @@ function persistableTabs(tabs: Tab[]) {
 }
 
 /** Reload the current history entry, or push if the URL never made it into history (failed load) */
+/** What a tab shows, for Devon AI: a website, one of Devon's own pages, or nothing yet */
+function tabKind(tab: Tab): TabInfo["kind"] {
+  if (!tab.url) return "new"
+  if (/^devon:/i.test(tab.url) || parseGamesUrl(tab.url) !== null || parseAppsUrl(tab.url) !== null || parseYouTubeUrl(tab.url)) return "devon"
+  return "web"
+}
+
 function reloadMode(tab: Tab): HistoryMode {
   return tab.history[tab.historyIndex] === tab.url ? "reload" : "push"
 }
@@ -247,6 +255,8 @@ export function ProxyBrowser() {
   /** The user has typed in the address bar since focusing it (so show suggestions) */
   const [addressTyped, setAddressTyped] = useState(false)
   const [showSave, setShowSave] = useState(false)
+  /** Devon AI docked next to the page */
+  const [aiPanelOpen, setAiPanelOpen] = useState(false)
   const [devtoolsOn, setDevtoolsOn] = useState(false)
   /** Script errors reported by each tab's page, cleared on every navigation */
   const [pageErrors, setPageErrors] = useState<Record<string, PageError[]>>({})
@@ -280,6 +290,8 @@ export function ProxyBrowser() {
   const addressBarRef = useRef<HTMLInputElement>(null)
   const activeTabIdRef = useRef<string | undefined>(undefined)
   const tabsRef = useRef<Tab[]>([])
+  /** The last tab showing a website: what Devon AI acts on while you're on one of Devon's own pages */
+  const lastWebTabIdRef = useRef<string | null>(null)
   const extHostRef = useRef<ExtensionHost | null>(null)
   const devtoolsOnRef = useRef(false)
   /** Resolves once Eruda's source is cached (when dev tools are on), so it can start at document_start */
@@ -289,11 +301,15 @@ export function ProxyBrowser() {
   const refreshExtensionsRef = useRef<(message?: string) => Promise<void>>(async () => {})
 
   const activeTab = tabs.find((tab) => tab.isActive)
+  /** The full Devon AI tab is showing (the side panel stays out of its way) */
+  const onAiTab = activeTab ? parseAppsUrl(activeTab.url) === "ai" : false
+  const aiWork = useDevonAiPageWork()
 
   useEffect(() => {
     activeTabIdRef.current = activeTab?.id
     tabsRef.current = tabs
-  }, [activeTab?.id, tabs])
+    if (activeTab && tabKind(activeTab) === "web") lastWebTabIdRef.current = activeTab.id
+  }, [activeTab, tabs])
 
   // Load session on mount
   useEffect(() => {
@@ -1006,6 +1022,74 @@ export function ProxyBrowser() {
     else navigateActive(AI_URL)
   }
 
+  // Devon AI's page tools reach the tabs through this host. The registered
+  // object stays the same; it calls the latest render's functions via a ref.
+  const pageHostImpl = useRef<PageHost | null>(null)
+  pageHostImpl.current = {
+    tabs: () =>
+      tabsRef.current.map((t) => ({ id: t.id, title: t.title, url: t.url, active: t.isActive, kind: tabKind(t) })),
+    defaultTarget: () => {
+      const list = tabsRef.current
+      const active = list.find((t) => t.isActive)
+      if (active && tabKind(active) === "web") return active.id
+      const last = list.find((t) => t.id === lastWebTabIdRef.current)
+      return last && tabKind(last) === "web" ? last.id : null
+    },
+    select: (tabId) => {
+      if (tabsRef.current.find((t) => t.isActive)?.id !== tabId) switchTab(tabId)
+    },
+    open: (url) => {
+      const id = createTab()
+      navigate(id, url, "push")
+      return id
+    },
+    navigate: (tabId, to) => {
+      const tab = tabsRef.current.find((t) => t.id === tabId)
+      if (!tab) return
+      if (to === "back" || to === "forward") {
+        const index = tab.historyIndex + (to === "back" ? -1 : 1)
+        if (index >= 0 && index < tab.history.length) navigate(tabId, tab.history[index], { index })
+      } else if (to === "reload") navigate(tabId, tab.url, reloadMode(tab))
+      else navigate(tabId, to, "push")
+    },
+    status: (tabId) => {
+      const tab = tabsRef.current.find((t) => t.id === tabId)
+      return tab
+        ? { url: tab.url, title: tab.title, loading: Boolean(tab.isLoading), loadId: tab.loadId, error: tab.error, page: tab.content !== undefined && !tab.leftProxy }
+        : null
+    },
+    document: (tabId) => {
+      const tab = tabsRef.current.find((t) => t.id === tabId)
+      const frame = iframeRef.current
+      if (!tab?.isActive || tab.content === undefined || !frame?.isConnected) return null
+      try {
+        const win = frame.contentWindow as (Window & { __devonProxied?: boolean }) | null
+        const doc = frame.contentDocument
+        return win?.__devonProxied && doc?.body ? doc : null
+      } catch {
+        return null // the page left the proxy
+      }
+    },
+    revealPanel: () => {
+      setLibraryView(null)
+      setAiPanelOpen(true)
+    },
+  }
+  useEffect(
+    () =>
+      registerPageHost({
+        tabs: () => pageHostImpl.current!.tabs(),
+        defaultTarget: () => pageHostImpl.current!.defaultTarget(),
+        select: (id) => pageHostImpl.current!.select(id),
+        open: (url) => pageHostImpl.current!.open(url),
+        navigate: (id, to) => pageHostImpl.current!.navigate(id, to),
+        status: (id) => pageHostImpl.current!.status(id),
+        document: (id) => pageHostImpl.current!.document(id),
+        revealPanel: () => pageHostImpl.current!.revealPanel(),
+      }),
+    [],
+  )
+
   /** "Ask Devon AI about this page": hand the page's address, title and visible text to Devon AI */
   const askAiAboutPage = () => {
     const tab = tabsRef.current.find((t) => t.isActive)
@@ -1021,7 +1105,8 @@ export function ProxyBrowser() {
     if (!text.trim()) text = snapshotFromHtml(tab.content, tab.url, tab.title).text
     text = text.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim().slice(0, 20000)
     askDevonAiAboutPage({ url: tab.url, title: target?.doc.title || tab.title, text })
-    showDevonAi("new-tab")
+    setLibraryView(null)
+    setAiPanelOpen(true)
   }
 
   const savePage = async () => {
@@ -1040,7 +1125,14 @@ export function ProxyBrowser() {
     setShowSave(true)
   }
 
-  const toggleLibrary = (view: LibraryView) => setLibraryView((prev) => (prev === view ? null : view))
+  const toggleLibrary = (view: LibraryView) => {
+    setAiPanelOpen(false)
+    setLibraryView((prev) => (prev === view ? null : view))
+  }
+  const toggleAiPanel = () => {
+    setLibraryView(null)
+    setAiPanelOpen((open) => !open)
+  }
 
   const suggestions = useSuggestions(currentUrl, addressFocused && addressTyped, history, bookmarks)
   const openSuggestion = (s: Suggestion | null) => {
@@ -1463,6 +1555,10 @@ export function ProxyBrowser() {
             </DropdownMenuContent>
           </DropdownMenu>
 
+          <ToolbarButton onClick={toggleAiPanel} title="Devon AI — chat, and let it use this page" active={aiPanelOpen && !onAiTab}>
+            <Sparkles className="size-4" />
+          </ToolbarButton>
+
           <ToolbarButton
             onClick={() => toggleLibrary("bookmarks")}
             title="Library (Ctrl+B)"
@@ -1648,6 +1744,17 @@ export function ProxyBrowser() {
                 </button>
               </div>
             )}
+          {aiWork && activeTab && aiWork.tabId === activeTab.id && (
+            <div className="flex items-center gap-3 border-b border-primary/25 bg-primary/10 px-3 py-2 text-[13px] text-foreground" role="status">
+              <Sparkles className="size-4 flex-shrink-0 animate-pulse text-primary" />
+              <span className="min-w-0 flex-1 truncate">
+                Devon AI is using this tab<span className="text-muted-foreground"> · {aiWork.label}</span>
+              </span>
+              <Button size="sm" variant="secondary" className="h-7 rounded-full text-xs" onClick={stopDevonAi}>
+                <X /> Stop
+              </Button>
+            </div>
+          )}
           {activeTab?.leftProxy && activeTab.content !== undefined && (
             <div className="flex items-center gap-3 border-b border-amber-400/20 bg-amber-400/10 px-3 py-2 text-[13px] text-amber-200">
               <ShieldAlert className="size-4 flex-shrink-0 text-amber-400" />
@@ -1780,6 +1887,20 @@ export function ProxyBrowser() {
             />
           )}
         </div>
+
+        {aiPanelOpen && !onAiTab && (
+          <div className="absolute inset-0 z-30 overflow-hidden sm:static sm:z-auto sm:w-[360px] sm:flex-shrink-0 sm:rounded-xl sm:ring-1 sm:ring-border lg:w-[400px]">
+            <DevonAiPage
+              variant="panel"
+              onOpenLink={(url) => openInNewTab(url)}
+              onClose={() => setAiPanelOpen(false)}
+              onOpenFull={() => {
+                setAiPanelOpen(false)
+                showDevonAi("new-tab")
+              }}
+            />
+          </div>
+        )}
 
         {libraryView && (
           <div className="absolute inset-0 z-30 sm:static sm:z-auto sm:w-80 sm:flex-shrink-0">
