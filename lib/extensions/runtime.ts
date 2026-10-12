@@ -2,7 +2,7 @@
  * Runs installed extensions inside proxied pages.
  *
  * The proxy's injected script calls window.__devonExtHost(pageWindow, url, isTop)
- * on the app window at document_start (see app/api/proxy/route.tsx). Pages are
+ * on the app window at document_start (see app/api/proxy/[[...path]]/route.tsx). Pages are
  * same-origin with the app, so the host can compile the scripts directly in the
  * page's realm (new pageWindow.Function) and hand them a chrome.* / GM_* API.
  *

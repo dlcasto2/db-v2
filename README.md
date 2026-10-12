@@ -71,7 +71,7 @@ Devon runs anywhere Next.js runs, and it is currently deployed on **EdgeOne Page
 | `app/youtube/page.tsx` | Standalone YouTube page (`/youtube`) |
 | `app/api/youtube/` | YouTube search, video info, chunked streaming and a settings check (`search`, `info`, `stream`, `status`); `cookie` only clears cookies from older builds |
 | `components/youtube-page.tsx`, `lib/youtube.ts`, `lib/youtube-server.ts` | YouTube page UI, downloader, and the server side (youtubei.js) |
-| `app/api/proxy/route.tsx` | The proxy: fetching, HTML/CSS/JS rewriting and the script injected into every page |
+| `app/api/proxy/[[...path]]/route.tsx` | The proxy: fetching, HTML/CSS/JS rewriting and the script injected into every page. JavaScript modules load from `/api/proxy/m/<scheme>/<host>/<path>`, which keeps the real folder layout so `import.meta.url` (and the asset paths bundlers build from it) resolve correctly |
 | `components/proxy-browser.tsx` | Browser UI: tabs, toolbar, menus, banners, extension host wiring |
 | `components/new-tab-page.tsx` | New tab page |
 | `components/games-page.tsx` | Games grid and player |
