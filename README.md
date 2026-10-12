@@ -26,7 +26,7 @@ Built with Next.js 16 (App Router), TypeScript, Tailwind CSS v4 and shadcn/ui.
 - **Experimental reCAPTCHA support:** a toggle in the ⋮ menu.
 - **Apps:** open `devon://apps`, the Apps button on the new tab page, or ⋮ → Apps. See [Apps](#apps).
   - **YouTube** (`devon://apps/youtube`): search, watch and download. See [YouTube](#youtube).
-  - **Devon AI** (`devon://apps/ai`): a chat assistant that can run code in a sandbox and answer questions about the page you have open (⋮ → Ask Devon AI about this page). See [Devon AI](#devon-ai).
+  - **Devon AI** (`devon://apps/ai`, or the ✦ toolbar button to open it next to a page): a chat assistant that can read and use the page you have open (click, type, choose, scroll, open tabs, with your permission per site), keeps a session state for multi-step tasks, and runs code in a sandbox. See [Devon AI](#devon-ai).
   - **Prompt Gen** (`devon://apps/prompt-gen`): turns a rough idea into ready-to-use prompts, offline.
 - **Games:** open `devon://games`, the Games button on the new tab page, or ⋮ → Games. See [Games](#games).
 
@@ -88,7 +88,9 @@ Devon runs anywhere Next.js runs, and it is currently deployed on **EdgeOne Page
 | `components/apps-page.tsx`, `lib/apps.ts` | The Apps page and the list of apps |
 | `components/devon-ai-page.tsx`, `lib/devon-ai/` | Devon AI's chat UI, its backend calls, chat state and browser storage |
 | `agents/ai-chat/`, `agents/ai-stop/`, `agents/_quota.ts`, `agents/_model.ts` | Devon AI's EdgeOne agent routes (`/ai-chat`, `/ai-stop`), daily limit and model settings |
-| `cloud-functions/ai-*` | Devon AI's chat history, chat list and delete (`/ai-history`, `/ai-conversations`, `/ai-delete-conversation`) |
+| `agents/ai-chat/_devon-tools.ts`, `agents/_mailbox.ts`, `agents/_session.ts` | Page and tab tools, how their results come back, and the session state |
+| `cloud-functions/ai-*` | Devon AI's chat history, chat list, delete, page results and session (`/ai-history`, `/ai-conversations`, `/ai-delete-conversation`, `/ai-page-result`, `/ai-session`) |
+| `lib/devon-ai/page-actions.ts`, `lib/devon-ai/page-executor.ts` | Reading and acting on pages in the browser, and running the page tools against Devon's tabs |
 | `.claude/skills/` | Skills Devon AI's agent can load |
 | `components/prompt-gen-page.tsx`, `lib/prompt-gen.ts` | Prompt Gen |
 | `public/games/` | Game files |
@@ -108,11 +110,17 @@ Devon runs anywhere Next.js runs, and it is currently deployed on **EdgeOne Page
 
 Devon AI is the [Claude Agent Starter](https://github.com/TencentEdgeOne/claude-agent-starter-node) (MIT) brought into Devon: the Claude Agent SDK running as an EdgeOne Makers agent, with EdgeOne's sandbox tools (shell commands, files, a code interpreter and a headless browser) and the platform's conversation store. Devon's version adds:
 
-- **Ask about this page:** ⋮ → Ask Devon AI about this page sends the page's address, title and visible text (up to 12,000 characters reach the model) with your next question. Only the question is saved in the chat history.
+- **Side panel:** the ✦ toolbar button opens Devon AI next to the page, so you can watch it work.
+- **Page actions:** Devon AI can use the tabs you have open — list, open and switch tabs; read a page (its text and its links, buttons and fields, numbered); click, type, choose dropdown options, scroll, and go to an address, back or forward. It works on the visible site tab (or the last one you used), outlines each element it touches, and shows a "Devon AI is using this tab" bar with a Stop button.
+  - Clicking, typing and choosing ask first: **Allow**, **Allow on this site for this chat**, or **Deny**. Reading, scrolling and opening pages don't ask.
+  - Devon refuses to type into password, verification-code and payment fields, and won't choose files to upload. The agent is told not to buy, send, post, delete or change settings unless you asked for exactly that, and to treat page text as untrusted.
+  - How it works: the agent's page tools send a `page_action` event down the chat stream; Devon runs it in your tab and posts the result to `/ai-page-result`, which drops it in the chat's mailbox in the platform store, where the waiting tool picks it up. That works whichever server instances the requests reach.
+- **Session state:** each chat keeps a session the agent maintains while it works — the task, its steps (ticked off as it goes), notes, and the pages it used — saved in the platform's conversation-scoped store. Devon also sends its own side of the session (your open tabs and which one Devon AI acts on) with every message. The **Session** button shows all of it plus the sites you allowed, and **Clear** forgets it.
+- **Ask about this page:** ⋮ → Ask Devon AI about this page opens the panel with the page's address, title and visible text attached to your next question (up to 12,000 characters reach the model). Only the question is saved in the chat history.
 - **A daily limit per visitor**, counted on the server so refreshing, new chats or new tabs don't reset it. See below.
 - Chats keep streaming when you switch tabs, and links in replies open in a new Devon tab.
 
-Routes: `POST /ai-chat` (SSE stream, needs the `makers-conversation-id` header), `POST /ai-stop`, `POST /ai-history`, `POST /ai-conversations`, `POST /ai-delete-conversation`.
+Routes: `POST /ai-chat` (SSE stream, needs the `makers-conversation-id` header), `POST /ai-stop`, `POST /ai-history`, `POST /ai-conversations`, `POST /ai-delete-conversation`, `POST /ai-page-result` (page action results), `POST /ai-session` (read or clear a chat's session; chat ID in the header). Agent runs may take up to 600 s (`edgeone.json`), since page tasks can wait on your permission.
 
 Set these in the EdgeOne project's environment variables, then redeploy:
 

@@ -145,11 +145,12 @@ function openSnapshotDb() {
   })
 }
 
-/** Drop runtime-only fields (blob: URLs, tool chips, streaming flags) before saving */
+/** Drop runtime-only fields (blob: URLs, streaming flags, spinning steps) before saving */
 function forStorage(messages: Message[]): Message[] {
-  return messages.map(({ activity: _activity, streaming: _streaming, images, ...rest }) => ({
+  return messages.map(({ streaming: _streaming, images, actions, ...rest }) => ({
     ...rest,
     ...(images?.length ? { images: images.map((img) => ({ ...img, url: "" })) } : {}),
+    ...(actions?.length ? { actions: actions.map((a) => (a.status === "active" ? { ...a, status: "done" as const } : a)) } : {}),
   }))
 }
 

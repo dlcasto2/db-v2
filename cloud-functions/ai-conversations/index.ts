@@ -313,8 +313,8 @@ export async function onRequestPost(context: CloudFunctionContext): Promise<Resp
     const seenIds = new Set<string>();
     const conversations: NormalizedConversation[] = [];
     for (const conv of normalized) {
-      // dq-* are Devon AI's daily-limit counters, not chats
-      if (conv.id.startsWith('dq-')) continue;
+      // dq-* (daily-limit counters) and dt-* (page-action mailboxes) aren't chats
+      if (/^d[qt]-/.test(conv.id)) continue;
       if (seenIds.has(conv.id)) continue;
       seenIds.add(conv.id);
       conversations.push(conv);

@@ -40,8 +40,8 @@ export interface Message {
   timestamp: number
   images?: ImageAttachment[]
   page?: PageRef
-  /** The tool the assistant is using right now (shown as a chip until text arrives) */
-  activity?: { label: string; doneLabel?: string; status: "active" | "done" | "error" }
+  /** Tools and page actions used in this reply, in order */
+  actions?: ActionStep[]
   /** True while this reply is still streaming */
   streaming?: boolean
   /** The reply failed; content holds the reason */
@@ -69,4 +69,37 @@ export interface Quota {
   /** 0 = unlimited */
   limit: number
   resetAt: number
+}
+
+/** One tool use or page action shown in a reply */
+export interface ActionStep {
+  /** The page action's call ID, or tool:<name> while only the tool name is known */
+  id: string
+  label: string
+  doneLabel: string
+  status: "active" | "done" | "error"
+  /** Why it failed or was declined */
+  note?: string
+}
+
+/** A chat's session state, kept by the agent (agents/_session.ts) */
+export interface SessionState {
+  task: string
+  steps: { text: string; done: boolean }[]
+  notes: string[]
+  pages: { url: string; title: string; at: number }[]
+  updatedAt: number
+}
+
+/** Devon's side of the session, sent with each message */
+export interface BrowserSession {
+  tabs: { id: string; title: string; url: string; active: boolean }[]
+  target: string | null
+}
+
+/** A page action waiting for the visitor's OK */
+export interface PendingApproval {
+  callId: string
+  site: string
+  description: string
 }
