@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Devon Browser</title>
+<meta name="description" content="Devon, a web proxy browser">
+<meta name="theme-color" content="#15161b">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-icon.png">
+<!--
+  Devon's GitHub Pages address. GitHub Pages only serves static files, and
+  Devon needs a server (its web proxy and Devon AI), so this page shows the
+  real Devon, running on EdgeOne, full-page. Every site you open still loads
+  through EdgeOne. Devon tells this page when it has loaded (see
+  components/embed-bridge.tsx); if it never does, this page offers a direct link.
+-->
+<style>
+  :root { --bg: #15161b; --fg: #e7e8ee; --muted: #9a9cab; --accent: #8f9bff; --line: #2a2c36; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden;
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  iframe { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: var(--bg); }
+  #status { position: fixed; inset: 0; display: grid; place-items: center; padding: 16px; background: var(--bg);
+    transition: opacity .25s ease; }
+  #status.hidden { opacity: 0; pointer-events: none; }
+  .card { display: grid; justify-items: center; gap: 14px; text-align: center; max-width: 360px; }
+  .card img { width: 56px; height: 56px; }
+  .card p { margin: 0; color: var(--muted); }
+  .card strong { color: var(--fg); font-weight: 600; }
+  .spinner { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent);
+    animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+  .button { display: inline-block; padding: 9px 18px; border-radius: 999px; background: var(--accent); color: #11131c;
+    font-weight: 600; text-decoration: none; }
+  .button:focus-visible { outline: 2px solid var(--fg); outline-offset: 3px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div id="status" role="status" aria-live="polite">
+  <div class="card" id="loading">
+    <img src="icon.svg" alt="">
+    <div class="spinner" aria-hidden="true"></div>
+    <p>Loading Devon…</p>
+  </div>
+  <div class="card" id="failed" hidden>
+    <img src="icon.svg" alt="">
+    <p><strong>Devon didn't load here.</strong><br>The network may be slow, or this page may not be allowed to show it.</p>
+    <a class="button" id="direct" target="_top" rel="noopener">Open Devon directly</a>
+  </div>
+</div>
+<script>
+(function () {
+  // Where Devon runs. Change this if Devon moves to another EdgeOne address.
+  var DEVON_URL = "https://db-v5.edgeone.dev/";
+  var GIVE_UP_MS = 20000;
+
+  var origin = new URL(DEVON_URL).origin;
+  var statusEl = document.getElementById("status");
+  var loading = document.getElementById("loading");
+  var failed = document.getElementById("failed");
+  var loaded = false;
+  document.getElementById("direct").href = DEVON_URL;
+
+  var frame = document.createElement("iframe");
+  frame.title = "Devon Browser";
+  frame.src = DEVON_URL;
+  // Let Devon (and the sites inside it) use what they'd have as a normal tab
+  frame.allow = [
+    "fullscreen", "clipboard-read", "clipboard-write", "autoplay", "encrypted-media", "picture-in-picture",
+    "camera", "microphone", "geolocation", "display-capture", "screen-wake-lock"
+  ].map(function (f) { return f + " " + origin; }).join("; ");
+  frame.referrerPolicy = "no-referrer";
+  document.body.insertBefore(frame, statusEl);
+
+  window.addEventListener("message", function (event) {
+    if (event.origin !== origin || event.source !== frame.contentWindow) return;
+    var data = event.data;
+    if (!data || data.source !== "devon") return;
+    if (data.type === "devon-ready") {
+      loaded = true;
+      statusEl.classList.add("hidden");
+      failed.hidden = true;
+      try { frame.focus(); } catch (e) {}
+    } else if (data.type === "devon-title" && typeof data.title === "string") {
+      document.title = data.title.slice(0, 200) || "Devon Browser";
+    }
+  });
+
+  setTimeout(function () {
+    if (loaded) return;
+    loading.hidden = true;
+    failed.hidden = false;
+  }, GIVE_UP_MS);
+})();
+</script>
+</body>
+</html>
