@@ -6,6 +6,7 @@ import {
   describeCookie,
   normalizeCookie,
 } from "@/lib/youtube-server"
+import { publicOrigin } from "@/lib/public-origin"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -25,7 +26,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   // Only the Devon page itself may save a cookie
   const origin = request.headers.get("origin")
-  if (origin && origin !== request.nextUrl.origin) {
+  if (origin && origin !== publicOrigin(request)) {
     return NextResponse.json({ error: "Not allowed." }, { status: 403 })
   }
   let raw = ""

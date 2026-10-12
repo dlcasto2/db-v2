@@ -13,6 +13,10 @@ const nextConfig = {
     ),
     DEVON_BUILD_TIME: new Date().toISOString(),
   },
+  // `DEVON_STANDALONE=1 pnpm build` also writes a self-contained server to
+  // .next/standalone, for running Devon on your own server (see the Dockerfile).
+  // EdgeOne and other hosts build without it.
+  ...(process.env.DEVON_STANDALONE === "1" ? { output: "standalone" } : {}),
   typescript: {
     ignoreBuildErrors: false,
   },
