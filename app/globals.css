@@ -124,3 +124,136 @@
 @utility animate-devon-progress {
   animation: devon-progress 1.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
+
+/* Devon AI replies (Markdown). Adapted from the Claude agent starter's chat styles. */
+.devon-md {
+  overflow-wrap: anywhere;
+}
+.devon-md > :first-child {
+  margin-top: 0;
+}
+.devon-md p {
+  margin: 0 0 0.65em;
+}
+.devon-md > :last-child,
+.devon-md p:last-child {
+  margin-bottom: 0;
+}
+.devon-md h1,
+.devon-md h2,
+.devon-md h3,
+.devon-md h4 {
+  margin: 1em 0 0.4em;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--foreground);
+}
+.devon-md h1 {
+  font-size: 1.2em;
+}
+.devon-md h2 {
+  font-size: 1.1em;
+}
+.devon-md h3,
+.devon-md h4 {
+  font-size: 1em;
+}
+.devon-md ul,
+.devon-md ol {
+  margin: 0.4em 0 0.65em;
+  padding-left: 1.5em;
+}
+.devon-md ul {
+  list-style: disc;
+}
+.devon-md ol {
+  list-style: decimal;
+}
+.devon-md li {
+  margin: 0.2em 0;
+}
+.devon-md code {
+  border-radius: 0.3rem;
+  background: oklch(1 0 0 / 0.07);
+  padding: 0.1em 0.35em;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.86em;
+}
+.devon-md pre {
+  margin: 0.6em 0;
+  overflow-x: auto;
+  border-radius: 0.75rem;
+  background: oklch(0 0 0 / 0.35);
+  padding: 0.8em 1em;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.devon-md pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.84em;
+  line-height: 1.55;
+}
+.devon-md blockquote {
+  margin: 0.6em 0;
+  border-left: 3px solid var(--primary);
+  padding: 0.1em 0 0.1em 0.8em;
+  color: var(--muted-foreground);
+}
+.devon-md table {
+  display: block;
+  margin: 0.6em 0;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 0.9em;
+}
+.devon-md th,
+.devon-md td {
+  border: 1px solid oklch(1 0 0 / 0.1);
+  padding: 0.35em 0.65em;
+  text-align: left;
+}
+.devon-md th {
+  background: oklch(1 0 0 / 0.04);
+  font-weight: 600;
+}
+.devon-md a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.devon-md hr {
+  margin: 0.9em 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+.devon-md strong {
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+/* Blinking caret at the end of a reply that's still streaming */
+.devon-md-streaming > :last-child::after {
+  content: "";
+  display: inline-block;
+  width: 0.45em;
+  height: 1.05em;
+  margin-left: 3px;
+  vertical-align: -0.18em;
+  border-radius: 1px;
+  background: var(--primary);
+  animation: devon-caret 0.6s ease-in-out infinite alternate;
+}
+@keyframes devon-caret {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.15;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .devon-md-streaming > :last-child::after {
+    animation: none;
+  }
+}

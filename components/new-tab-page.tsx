@@ -2,9 +2,9 @@
 
 import type React from "react"
 import { useMemo, useState } from "react"
-import { ArrowRight, Gamepad2, Search, TvMinimalPlay } from "lucide-react"
+import { ArrowRight, Gamepad2, LayoutGrid, Search } from "lucide-react"
 import { GAMES_URL } from "@/lib/games"
-import { YOUTUBE_URL } from "@/lib/youtube"
+import { APPS_URL } from "@/lib/apps"
 import type { BookmarkItem, HistoryItem } from "@/lib/session-manager"
 import { Favicon } from "@/components/favicon"
 import { DevonMark } from "@/components/devon-logo"
@@ -123,10 +123,11 @@ export function NewTabPage({ onNavigate, bookmarks, history }: NewTabPageProps) 
             <Gamepad2 className="size-4 text-primary" /> Games
           </button>
           <button
-            onClick={() => onNavigate(YOUTUBE_URL)}
+            onClick={() => onNavigate(APPS_URL)}
+            title="YouTube, Devon AI and Prompt Gen"
             className="flex items-center gap-2 rounded-full bg-white/[0.04] px-4 py-2 text-sm text-muted-foreground ring-1 ring-border transition hover:bg-white/[0.08] hover:text-foreground hover:ring-primary/40"
           >
-            <TvMinimalPlay className="size-4 text-primary" /> YouTube
+            <LayoutGrid className="size-4 text-primary" /> Apps
           </button>
         </div>
 

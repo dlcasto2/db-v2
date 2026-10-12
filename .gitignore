@@ -3,3 +3,5 @@ node_modules
 *.tsbuildinfo
 .env*
 next-env.d.ts
+.edgeone
+!.env.example
