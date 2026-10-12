@@ -3,6 +3,8 @@
 import { ArrowUpLeft, Clock, Gamepad2, Globe, Search, Star } from "lucide-react"
 import type { Suggestion } from "@/lib/suggestions"
 import { Favicon } from "@/components/favicon"
+import { appPageInfo, parseAppsUrl } from "@/lib/apps"
+import { YOUTUBE_ICON, parseYouTubeUrl } from "@/lib/youtube"
 import { cn } from "@/lib/utils"
 
 /** Site icon, loaded through the proxy like tab icons */
@@ -14,6 +16,13 @@ function siteIcon(url: string) {
     // keep
   }
   return `/api/proxy?url=${encodeURIComponent(`https://www.google.com/s2/favicons?domain=${host}&sz=32`)}&raw=1`
+}
+
+/** Icon for one of Devon's own pages (apps and YouTube); null for Games */
+function internalIcon(url: string): string | null {
+  if (parseYouTubeUrl(url)) return YOUTUBE_ICON
+  const app = parseAppsUrl(url)
+  return app === null ? null : appPageInfo(app).favicon
 }
 
 function displayUrl(url: string) {
@@ -85,7 +94,11 @@ export function SuggestionList({
             ) : s.kind === "bookmark" ? (
               <Star className="size-4 fill-primary/30 text-primary" />
             ) : s.url?.startsWith("devon://") ? (
-              <Gamepad2 className="size-4 text-primary" />
+              internalIcon(s.url) ? (
+                <Favicon src={internalIcon(s.url)!} className="size-4" />
+              ) : (
+                <Gamepad2 className="size-4 text-primary" />
+              )
             ) : s.kind === "site" && s.url ? (
               <Favicon src={siteIcon(s.url)} className="size-4" />
             ) : (

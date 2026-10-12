@@ -3,6 +3,7 @@
 import type React from "react"
 import { GAMES_URL } from "@/lib/games"
 import { YOUTUBE_URL } from "@/lib/youtube"
+import { AI_URL, APPS_URL, PROMPT_GEN_URL } from "@/lib/apps"
 import { useEffect, useMemo, useRef, useState } from "react"
 import type { BookmarkItem, HistoryItem } from "@/lib/session-manager"
 
@@ -91,8 +92,18 @@ function siteMatches(query: string): Suggestion[] {
   if ("games".startsWith(q) || "devon games".startsWith(q) || GAMES_URL.startsWith(q) || q.startsWith("game")) {
     out.push({ s: { kind: "site", text: "Devon Games", url: GAMES_URL }, score: 4 })
   }
+  // Devon's Apps page and the apps on it
+  if (q.length >= 2 && ("apps".startsWith(q) || "devon apps".startsWith(q) || APPS_URL.startsWith(q))) {
+    out.push({ s: { kind: "site", text: "Devon Apps", url: APPS_URL }, score: 3.5 })
+  }
+  if (q === "ai" || (q.length >= 3 && ("devon ai".startsWith(q) || "ai chat".startsWith(q) || "ask ai".startsWith(q) || AI_URL.startsWith(q)))) {
+    out.push({ s: { kind: "site", text: "Devon AI", url: AI_URL }, score: 3.5 })
+  }
+  if (q.length >= 3 && ("prompt gen".startsWith(q) || "prompt generator".startsWith(q) || PROMPT_GEN_URL.startsWith(q) || q.startsWith("prompt "))) {
+    out.push({ s: { kind: "site", text: "Prompt Gen", url: PROMPT_GEN_URL }, score: 3 })
+  }
   // Devon's YouTube search + downloader
-  if (q.length >= 2 && ("youtube downloader".startsWith(q) || "devon youtube".startsWith(q) || YOUTUBE_URL.startsWith(q) || /^(yt|youtube) ?(dl|down)/.test(q) || q.startsWith("download youtube"))) {
+  if (q.length >= 2 && ("youtube downloader".startsWith(q) || "devon youtube".startsWith(q) || YOUTUBE_URL.startsWith(q) || "devon://youtube".startsWith(q) || /^(yt|youtube) ?(dl|down)/.test(q) || q.startsWith("download youtube"))) {
     out.push({ s: { kind: "site", text: "Devon YouTube downloader", url: YOUTUBE_URL }, score: 2.5 })
   }
   return out.sort((a, b) => b.score - a.score).slice(0, 3).map((o) => o.s)

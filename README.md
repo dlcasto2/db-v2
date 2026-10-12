@@ -1,6 +1,6 @@
 # Devon Browser
 
-A web proxy browser that runs in a browser tab. Devon has tabs, an address bar, bookmarks, history, Chrome extensions, developer tools and a built-in Games page. Pages load through Devon's own proxy.
+A web proxy browser that runs in a browser tab. Devon has tabs, an address bar, bookmarks, history, Chrome extensions, developer tools, built-in Games and an Apps page (YouTube, Devon AI and Prompt Gen). Pages load through Devon's own proxy.
 
 **Official links**
 - https://db-v5.edgeone.dev
@@ -24,7 +24,10 @@ Built with Next.js 16 (App Router), TypeScript, Tailwind CSS v4 and shadcn/ui.
 - **Developer tools:** built-in [Eruda](https://github.com/liriliri/eruda) console, elements, network and sources panels.
 - **Page report:** the ⚠ button, or ⋮ → Page report. It lists script errors, failed requests and media on the page, and can be copied for debugging.
 - **Experimental reCAPTCHA support:** a toggle in the ⋮ menu.
-- **YouTube search & downloader:** open `devon://youtube`, the YouTube button on the new tab page, or ⋮ → YouTube downloader. See [YouTube](#youtube).
+- **Apps:** open `devon://apps`, the Apps button on the new tab page, or ⋮ → Apps. See [Apps](#apps).
+  - **YouTube** (`devon://apps/youtube`): search, watch and download. See [YouTube](#youtube).
+  - **Devon AI** (`devon://apps/ai`): a chat assistant that can run code in a sandbox and answer questions about the page you have open (⋮ → Ask Devon AI about this page). See [Devon AI](#devon-ai).
+  - **Prompt Gen** (`devon://apps/prompt-gen`): turns a rough idea into ready-to-use prompts, offline.
 - **Games:** open `devon://games`, the Games button on the new tab page, or ⋮ → Games. See [Games](#games).
 
 ### Keyboard shortcuts
@@ -53,7 +56,7 @@ pnpm start       # serve the production build
 
 ## Deploying
 
-Devon runs anywhere Next.js runs, and it is currently deployed on **EdgeOne Pages**.
+Devon runs anywhere Next.js runs, and it is currently deployed on **EdgeOne Pages**. Devon AI needs EdgeOne Makers agents (the `agents/` and `cloud-functions/` folders, configured in `edgeone.json`); on other hosts everything else works and Devon AI says it isn't deployed.
 
 - `app/api/proxy` is a serverless function with `maxDuration = 60`.
 - EdgeOne caps a response at about 4 MB. The proxy works around this by compressing responses and splitting big scripts into slices.
@@ -82,12 +85,54 @@ Devon runs anywhere Next.js runs, and it is currently deployed on **EdgeOne Page
 | `lib/devtools.ts`, `lib/diagnostics.ts`, `lib/media.ts` | Eruda, page report data, media detection |
 | `lib/session-manager.ts` | Tabs, bookmarks and history in local storage |
 | `lib/games.ts` | The list of games |
+| `components/apps-page.tsx`, `lib/apps.ts` | The Apps page and the list of apps |
+| `components/devon-ai-page.tsx`, `lib/devon-ai/` | Devon AI's chat UI, its backend calls, chat state and browser storage |
+| `agents/ai-chat/`, `agents/ai-stop/`, `agents/_quota.ts`, `agents/_model.ts` | Devon AI's EdgeOne agent routes (`/ai-chat`, `/ai-stop`), daily limit and model settings |
+| `cloud-functions/ai-*` | Devon AI's chat history, chat list and delete (`/ai-history`, `/ai-conversations`, `/ai-delete-conversation`) |
+| `.claude/skills/` | Skills Devon AI's agent can load |
+| `components/prompt-gen-page.tsx`, `lib/prompt-gen.ts` | Prompt Gen |
 | `public/games/` | Game files |
 | `public/devon-frame.html` | Blank same-origin page used for extension frames |
 
+## Apps
+
+`devon://apps` lists Devon's built-in apps, laid out like the Games page. Each opens in a tab like any site.
+
+| App | Address | What it does |
+| --- | --- | --- |
+| Devon AI | `devon://apps/ai` | Chat assistant with sandbox tools and page questions. Needs setup, see [Devon AI](#devon-ai). |
+| YouTube | `devon://apps/youtube` | Search, watch and download YouTube videos. The old `devon://youtube` addresses still open it. |
+| Prompt Gen | `devon://apps/prompt-gen` | Write an idea, pick a type (Ask, Write, Code, Image, Study, Plan), tone and detail, and get three prompts. **Remix** rewords them. Runs entirely in the browser. **Send to Devon AI** puts a prompt in Devon AI's message box. |
+
+## Devon AI
+
+Devon AI is the [Claude Agent Starter](https://github.com/TencentEdgeOne/claude-agent-starter-node) (MIT) brought into Devon: the Claude Agent SDK running as an EdgeOne Makers agent, with EdgeOne's sandbox tools (shell commands, files, a code interpreter and a headless browser) and the platform's conversation store. Devon's version adds:
+
+- **Ask about this page:** ⋮ → Ask Devon AI about this page sends the page's address, title and visible text (up to 12,000 characters reach the model) with your next question. Only the question is saved in the chat history.
+- **A daily limit per visitor**, counted on the server so refreshing, new chats or new tabs don't reset it. See below.
+- Chats keep streaming when you switch tabs, and links in replies open in a new Devon tab.
+
+Routes: `POST /ai-chat` (SSE stream, needs the `makers-conversation-id` header), `POST /ai-stop`, `POST /ai-history`, `POST /ai-conversations`, `POST /ai-delete-conversation`.
+
+Set these in the EdgeOne project's environment variables, then redeploy:
+
+| Variable | Meaning |
+| --- | --- |
+| `AI_GATEWAY_API_KEY` | Model gateway key: a Makers Models API key (Makers → Models → API Key) or another Anthropic-compatible gateway. Required unless `ANTHROPIC_API_KEY` is set. |
+| `AI_GATEWAY_BASE_URL` | Gateway URL, e.g. `https://ai-gateway.edgeone.link/v1` for Makers Models. |
+| `AI_GATEWAY_MODEL` | Model to use. Defaults to `@makers/deepseek-v4-flash`, the free built-in Makers model. |
+| `ANTHROPIC_API_KEY` | Instead of a gateway, call the Anthropic API directly (defaults to `claude-haiku-5-5`; set `CLAUDE_MODEL` to change it). |
+| `DEVON_AI_DAILY_LIMIT` | Messages each visitor can send per day (resets at midnight UTC). Default `30`; `0` turns the limit off. |
+| `DEVON_AI_IP_DAILY_LIMIT` | Optional shared cap per network address per day (default `0` = off). It stops people dodging the visitor limit with private windows, but everyone on one school or office network shares it, so set it well above the visitor limit. |
+| `WSA_API_KEY` | Only for the agent's web search tool ([how to get one](https://pages.edgeone.ai/document/sandbox-network-search-tool)). |
+
+Without a model key, Devon AI shows "isn't set up on this site yet". A visitor is identified by an ID kept in their browser's local storage; the counts themselves are stored on the server (as small hashed entries in the conversation store), so they can't be reset from the page. `DEVON_*` variables are never passed to the agent's Claude process.
+
+To run the agent locally, use the EdgeOne CLI: `npm i -g edgeone`, `edgeone makers link`, then `edgeone makers dev` (serves the site and the agent routes together). `pnpm dev` runs the site without the agent routes.
+
 ## YouTube
 
-`devon://youtube` searches YouTube, plays videos inside Devon and downloads them.
+`devon://apps/youtube` searches YouTube, plays videos inside Devon and downloads them.
 
 - **Search:** type a search or paste any YouTube link (watch, youtu.be, Shorts, embed). Results load more as you scroll.
 - **Watch:** the **Through Devon** player (default) never connects the viewer to YouTube. If the download server can stream the video, it plays in Devon's own `<video>` player from `/api/youtube/stream`; otherwise the `youtube-nocookie.com` player is loaded through Devon's proxy (`/api/proxy`). **Direct** loads `youtube-nocookie.com` from the viewer's own connection. The choice is remembered per browser.
@@ -168,7 +213,7 @@ OUT_DIR=<path to Devon>/public/games/eaglercraft node build-devon.mjs
 
 ## Known limitations
 
-- **YouTube:** videos won't play on youtube.com itself, because YouTube ties video URLs to the IP address that requested them. Use `devon://youtube` to watch and download instead.
+- **YouTube:** videos won't play on youtube.com itself, because YouTube ties video URLs to the IP address that requested them. Use `devon://apps/youtube` to watch and download instead.
 - **WebSockets:** WebSockets aren't proxied. Sites that need them for real-time features, such as some multiplayer games, may not work.
 - **Anti-bot protection:** sites using it (for example HUMAN/PerimeterX) may block proxied requests.
 - **Extensions:** Chrome APIs that need browser internals, such as `webRequest`, `declarativeNetRequest` and `debugger`, aren't available to extensions.

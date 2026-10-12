@@ -24,6 +24,7 @@ import {
   FlaskConical,
   Gamepad2,
   Home,
+  LayoutGrid,
   Library,
   Loader2,
   Lock,
@@ -35,9 +36,9 @@ import {
   Search,
   ShieldAlert,
   ShieldCheck,
+  Sparkles,
   Star,
   Trash2,
-  TvMinimalPlay,
   WifiOff,
   X,
 } from "lucide-react"
@@ -48,7 +49,12 @@ import { NewTabPage } from "@/components/new-tab-page"
 import { GamesPage } from "@/components/games-page"
 import { GAMES, GAMES_URL, parseGamesUrl } from "@/lib/games"
 import { YouTubePage } from "@/components/youtube-page"
-import { YOUTUBE_ICON, YOUTUBE_URL, parseYouTubeUrl, videoIdFromUrl, youTubePageUrl } from "@/lib/youtube"
+import { YOUTUBE_ICON, parseYouTubeUrl, videoIdFromUrl, youTubePageUrl } from "@/lib/youtube"
+import { AppsPage } from "@/components/apps-page"
+import { DevonAiPage } from "@/components/devon-ai-page"
+import { PromptGenPage } from "@/components/prompt-gen-page"
+import { AI_URL, APPS_URL, appPageInfo, parseAppsUrl } from "@/lib/apps"
+import { askDevonAiAboutPage, setDevonAiDraft } from "@/lib/devon-ai/store"
 import { Favicon } from "@/components/favicon"
 import { cn } from "@/lib/utils"
 import { SavePageDialog, type SaveTarget } from "@/components/save-page-dialog"
@@ -365,17 +371,22 @@ export function ProxyBrowser() {
       const trimmed = input.trim()
       if (!trimmed) return
 
-      // Devon's built-in pages: Games (devon://games, devon://games/<id>) and
-      // YouTube (devon://youtube, devon://youtube?q=…, devon://youtube/watch?v=…)
+      // Devon's built-in pages: Games (devon://games, devon://games/<id>), the
+      // Apps page (devon://apps) with Devon AI (devon://apps/ai) and Prompt Gen
+      // (devon://apps/prompt-gen), and YouTube (devon://apps/youtube, …?q=…,
+      // …/watch?v=…; the old devon://youtube addresses still work)
       const gameId = parseGamesUrl(trimmed)
+      const appPage = gameId === null ? parseAppsUrl(trimmed) : null
       // A real YouTube video link (youtube.com/watch, youtu.be, shorts, embed,
       // youtube-nocookie.com/embed…) opens in Devon's own player instead of
       // being proxied: YouTube's pages refuse proxies and school networks block
       // the direct embed, while Devon's player streams from the server.
       const ytVideoId = gameId === null && !/^devon:/i.test(trimmed) ? videoIdFromUrl(trimmed) : null
       const ytRoute =
-        gameId === null ? parseYouTubeUrl(trimmed) ?? (ytVideoId ? { view: "watch" as const, id: ytVideoId } : null) : null
-      if (gameId !== null || ytRoute) {
+        gameId === null && appPage === null
+          ? parseYouTubeUrl(trimmed) ?? (ytVideoId ? { view: "watch" as const, id: ytVideoId } : null)
+          : null
+      if (gameId !== null || appPage !== null || ytRoute) {
         controllersRef.current.get(tabId)?.abort()
         controllersRef.current.delete(tabId)
         releaseBlob(tabId)
@@ -383,7 +394,9 @@ export function ProxyBrowser() {
         let pageUrl = game ? `${GAMES_URL}/${game.id}` : GAMES_URL
         let title = game ? game.title : "Games"
         let favicon = game ? game.icon : "/icon.svg"
-        if (ytRoute) {
+        if (appPage !== null) {
+          ;({ url: pageUrl, title, favicon } = appPageInfo(appPage))
+        } else if (ytRoute) {
           pageUrl = youTubePageUrl(ytRoute)
           title = ytRoute.view === "watch" ? "YouTube video" : ytRoute.q ? `${ytRoute.q} - YouTube` : "YouTube"
           favicon = YOUTUBE_ICON
@@ -597,7 +610,17 @@ export function ProxyBrowser() {
   // Restored (or never-loaded) tabs have a URL but no content: load them when shown
   useEffect(() => {
     const tab = tabs.find((t) => t.isActive)
-    if (tab && tab.url && tab.content === undefined && !tab.frameSrc && !tab.isLoading && !tab.error && parseGamesUrl(tab.url) === null && !parseYouTubeUrl(tab.url)) {
+    if (
+      tab &&
+      tab.url &&
+      tab.content === undefined &&
+      !tab.frameSrc &&
+      !tab.isLoading &&
+      !tab.error &&
+      parseGamesUrl(tab.url) === null &&
+      parseAppsUrl(tab.url) === null &&
+      !parseYouTubeUrl(tab.url)
+    ) {
       navigate(tab.id, tab.url, reloadMode(tab))
     }
   }, [tabs, navigate])
@@ -973,6 +996,32 @@ export function ProxyBrowser() {
     } catch {
       return null // navigated off the proxy (cross-origin)
     }
+  }
+
+  /** Switch to an open Devon AI tab, or open Devon AI (in a new tab, or this one) */
+  const showDevonAi = (where: "new-tab" | "this-tab") => {
+    const aiTab = tabsRef.current.find((t) => parseAppsUrl(t.url) === "ai")
+    if (aiTab) switchTab(aiTab.id)
+    else if (where === "new-tab") openInNewTab(AI_URL)
+    else navigateActive(AI_URL)
+  }
+
+  /** "Ask Devon AI about this page": hand the page's address, title and visible text to Devon AI */
+  const askAiAboutPage = () => {
+    const tab = tabsRef.current.find((t) => t.isActive)
+    if (!tab || tab.content === undefined) return
+    const target = getSaveTarget()
+    let text = ""
+    try {
+      text = target?.doc.body?.innerText ?? ""
+    } catch {
+      text = ""
+    }
+    // The page left the proxy or has no body yet: fall back to the HTML Devon loaded
+    if (!text.trim()) text = snapshotFromHtml(tab.content, tab.url, tab.title).text
+    text = text.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim().slice(0, 20000)
+    askDevonAiAboutPage({ url: tab.url, title: target?.doc.title || tab.title, text })
+    showDevonAi("new-tab")
   }
 
   const savePage = async () => {
@@ -1447,8 +1496,11 @@ export function ProxyBrowser() {
               <DropdownMenuItem onSelect={() => navigateActive(GAMES_URL)}>
                 <Gamepad2 /> Games
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => navigateActive(YOUTUBE_URL)}>
-                <TvMinimalPlay /> YouTube downloader
+              <DropdownMenuItem onSelect={() => navigateActive(APPS_URL)}>
+                <LayoutGrid /> Apps
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={askAiAboutPage} disabled={activeTab?.content === undefined}>
+                <Sparkles /> Ask Devon AI about this page
               </DropdownMenuItem>
               <DropdownMenuItem
                 onSelect={(e) => {
@@ -1626,6 +1678,22 @@ export function ProxyBrowser() {
               title={activeTab.title}
               {...(activeTab.frameType?.includes("pdf") ? {} : { sandbox: "allow-downloads" })}
             />
+          ) : activeTab && parseAppsUrl(activeTab.url) !== null ? (
+            <div className="min-h-0 flex-1">
+              {parseAppsUrl(activeTab.url) === "ai" ? (
+                <DevonAiPage onOpenLink={(url) => openInNewTab(url)} onOpenApps={() => navigate(activeTab.id, APPS_URL, "push")} />
+              ) : parseAppsUrl(activeTab.url) === "prompt-gen" ? (
+                <PromptGenPage
+                  onOpenApps={() => navigate(activeTab.id, APPS_URL, "push")}
+                  onSendToAi={(prompt) => {
+                    setDevonAiDraft(prompt)
+                    showDevonAi("this-tab")
+                  }}
+                />
+              ) : (
+                <AppsPage onOpen={(url) => navigate(activeTab.id, url, "push")} />
+              )}
+            </div>
           ) : activeTab && parseYouTubeUrl(activeTab.url) ? (
             <div className="min-h-0 flex-1">
               <YouTubePage

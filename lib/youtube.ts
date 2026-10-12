@@ -1,16 +1,20 @@
 /**
- * Client side of Devon's YouTube page (devon://youtube): routes, download
+ * Client side of Devon's YouTube app (devon://apps/youtube): routes, download
  * options, the slice-by-slice downloader and in-browser merging with ffmpeg.wasm.
  */
 
-export const YOUTUBE_URL = "devon://youtube"
+/** YouTube lives under Apps; the old devon://youtube addresses still open it */
+export const YOUTUBE_URL = "devon://apps/youtube"
 export const YOUTUBE_ICON = "/youtube-icon.svg"
 
 export type YouTubeRoute = { view: "search"; q: string } | { view: "watch"; id: string }
 
-/** devon://youtube, devon://youtube?q=cats, devon://youtube/watch?v=<id> (or devon://youtube/<id>) */
+/**
+ * devon://apps/youtube, …?q=cats, …/watch?v=<id> (or …/<id>), and the same
+ * under the old devon://youtube
+ */
 export function parseYouTubeUrl(input: string): YouTubeRoute | null {
-  const m = /^devon:\/\/youtube(?:\/([\w-]*))?\/?(?:\?(.*))?$/i.exec(input.trim())
+  const m = /^devon:\/\/(?:apps\/)?youtube(?:\/([\w-]*))?\/?(?:\?(.*))?$/i.exec(input.trim())
   if (!m) return null
   const path = (m[1] || "").toLowerCase()
   const params = new URLSearchParams(m[2] || "")

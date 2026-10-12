@@ -3,5 +3,12 @@
     "nodejs": {
       "maxDuration": 60
     }
+  },
+  "agents": {
+    "framework": "claude-agent-sdk",
+    "timeout": 300,
+    "sandbox": {
+      "timeout": 300
+    }
   }
 }

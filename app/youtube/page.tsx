@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { YouTubePage } from "@/components/youtube-page"
 import { type YouTubeRoute, parseYouTubeUrl, youTubePageUrl } from "@/lib/youtube"
 
-/** Standalone YouTube page (/youtube, /youtube?q=…, /youtube?v=…) — the same page Devon opens at devon://youtube */
+/** Standalone YouTube page (/youtube, /youtube?q=…, /youtube?v=…) — the same page Devon opens at devon://apps/youtube */
 export default function YouTube() {
   const [route, setRoute] = useState<YouTubeRoute | null>(null)
   useEffect(() => {
@@ -18,7 +18,7 @@ export default function YouTube() {
     return () => window.removeEventListener("popstate", read)
   }, [])
   const go = (next: YouTubeRoute) => {
-    const qs = youTubePageUrl(next).replace(/^devon:\/\/youtube(\/watch)?/, "")
+    const qs = youTubePageUrl(next).replace(/^devon:\/\/(?:apps\/)?youtube(\/watch)?/, "")
     history.pushState(null, "", `/youtube${qs}`)
     setRoute(next)
   }
