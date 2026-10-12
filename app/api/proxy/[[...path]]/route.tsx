@@ -6,6 +6,7 @@ import https from "node:https"
 import { Readable } from "node:stream"
 import { brotliCompressSync, constants as zlibConstants, gzipSync } from "node:zlib"
 import { CookieJar, JAR_PATH, JAR_PREFIX, jarSetCookieHeaders } from "@/lib/cookie-jar"
+import { publicOrigin } from "@/lib/public-origin"
 
 // DNS lookups need the Node.js runtime (not Edge)
 export const runtime = "nodejs"
@@ -1799,7 +1800,7 @@ async function handle(
     const result = await buildProxyResponse(
       response,
       finalUrl,
-      request.nextUrl.origin,
+      publicOrigin(request),
       raw,
       init.method.toUpperCase() === "HEAD",
       experimental,
@@ -1907,7 +1908,7 @@ async function handleSlice(request: NextRequest, targetUrl: string, index: numbe
       const { response, finalUrl } = await fetchUpstream(targetUrl, { method: "GET" }, controller.signal)
       if (!response.ok) return NextResponse.json({ error: `HTTP ${response.status}` }, { status: 502 })
       const bytes = new TextEncoder().encode(
-        processJavaScript(await response.text(), finalUrl, request.nextUrl.origin, true),
+        processJavaScript(await response.text(), finalUrl, publicOrigin(request), true),
       )
       return new NextResponse(bytes.slice(start, end) as BodyInit, {
         status: 200,

@@ -1,0 +1,10 @@
+# Devon on your own server: `docker compose up -d`, then open http://localhost:3000.
+# See "Running Devon on your own server" in README.md for an https:// address.
+services:
+  devon:
+    build: .
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    # environment:
+    #   DEVON_YT_COOKIE: ""   # YouTube settings (DEVON_* variables), see README.md
