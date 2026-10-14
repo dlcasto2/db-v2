@@ -12,263 +12,90 @@
 <link rel="apple-touch-icon" href="apple-icon.png">
 <!--
   Devon's GitHub Pages address. GitHub Pages only serves static files, and
-  Devon needs a server (its web proxy), so this page shows Devon from a Devon
-  server, full-page: your own server if you've set one here, otherwise the ones
-  listed in SERVERS below. It checks which can be reached and uses the first
-  that answers. Devon tells this page when it has loaded (see
-  components/embed-bridge.tsx). Open this page with #server to change the server.
+  Devon needs a server (its web proxy and Devon AI), so this page shows the
+  real Devon, running on EdgeOne, full-page. Every site you open still loads
+  through EdgeOne. Devon tells this page when it has loaded (see
+  components/embed-bridge.tsx); if it never does, this page offers a direct link.
 -->
 <style>
-  :root { --bg: #15161b; --panel: #1c1d24; --fg: #e7e8ee; --muted: #9a9cab; --accent: #8f9bff; --line: #2c2e39; --bad: #ff8f8f; }
+  :root { --bg: #15161b; --fg: #e7e8ee; --muted: #9a9cab; --accent: #8f9bff; --line: #2a2c36; }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden;
     font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   iframe { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: var(--bg); }
-  #overlay { position: fixed; inset: 0; display: grid; place-items: center; padding: 16px; overflow-y: auto;
-    background: var(--bg); transition: opacity .25s ease; }
-  #overlay.hidden { opacity: 0; pointer-events: none; }
-  .card { width: 100%; max-width: 400px; display: grid; justify-items: center; gap: 14px; text-align: center; }
-  .card > img { width: 56px; height: 56px; }
-  h1 { margin: 0; font-size: 17px; font-weight: 600; }
-  p { margin: 0; color: var(--muted); }
+  #status { position: fixed; inset: 0; display: grid; place-items: center; padding: 16px; background: var(--bg);
+    transition: opacity .25s ease; }
+  #status.hidden { opacity: 0; pointer-events: none; }
+  .card { display: grid; justify-items: center; gap: 14px; text-align: center; max-width: 360px; }
+  .card img { width: 56px; height: 56px; }
+  .card p { margin: 0; color: var(--muted); }
+  .card strong { color: var(--fg); font-weight: 600; }
   .spinner { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent);
     animation: spin .8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
-  ul { list-style: none; margin: 0; padding: 0; width: 100%; display: grid; gap: 6px; }
-  li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 12px; border: 1px solid var(--line);
-    border-radius: 10px; background: var(--panel); font-size: 13px; text-align: left; }
-  li span:first-child { overflow-wrap: anywhere; }
-  li .bad { color: var(--bad); white-space: nowrap; }
-  .row { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
-  button, .button { font: inherit; font-weight: 600; padding: 8px 16px; border-radius: 999px; border: 1px solid var(--line);
-    background: var(--panel); color: var(--fg); cursor: pointer; text-decoration: none; }
-  button.primary, .button.primary { background: var(--accent); border-color: var(--accent); color: #11131c; }
-  button:focus-visible, .button:focus-visible, input:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
-  form { width: 100%; display: grid; gap: 8px; padding: 14px; border: 1px solid var(--line); border-radius: 14px;
-    background: var(--panel); text-align: left; }
-  label { font-weight: 600; font-size: 14px; }
-  input { width: 100%; font: inherit; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line);
-    background: var(--bg); color: var(--fg); }
-  .hint { font-size: 13px; }
-  .error { color: var(--bad); font-size: 13px; min-height: 1em; }
+  .button { display: inline-block; padding: 9px 18px; border-radius: 999px; background: var(--accent); color: #11131c;
+    font-weight: 600; text-decoration: none; }
+  .button:focus-visible { outline: 2px solid var(--fg); outline-offset: 3px; }
   [hidden] { display: none !important; }
 </style>
 </head>
 <body>
-<div id="overlay">
-  <div class="card">
+<div id="status" role="status" aria-live="polite">
+  <div class="card" id="loading">
     <img src="icon.svg" alt="">
-    <div id="connecting" role="status" aria-live="polite">
-      <div class="row"><div class="spinner" aria-hidden="true"></div></div>
-      <p id="connecting-text" style="margin-top:10px">Connecting to Devon…</p>
-    </div>
-
-    <div id="problem" hidden>
-      <h1 id="problem-title"></h1>
-      <p id="problem-text" style="margin-top:6px"></p>
-    </div>
-    <ul id="tried" hidden></ul>
-    <div class="row" id="problem-actions" hidden>
-      <button type="button" class="primary" id="retry">Try again</button>
-      <a class="button" id="direct" target="_top" rel="noopener" hidden>Open it directly</a>
-    </div>
-
-    <form id="server-form" hidden novalidate>
-      <label for="server-input">Your Devon server</label>
-      <input id="server-input" type="url" inputmode="url" autocomplete="url" spellcheck="false"
-        placeholder="https://devon.example.com" aria-describedby="server-hint server-error">
-      <p class="hint" id="server-hint">The https:// address of a server running Devon. Saved in this browser only, and tried before the built-in servers.</p>
-      <p class="error" id="server-error" role="alert"></p>
-      <div class="row">
-        <button type="submit" class="primary">Save and connect</button>
-        <button type="button" id="server-clear">Use built-in servers</button>
-        <button type="button" id="server-close" hidden>Close</button>
-      </div>
-    </form>
-    <p class="hint"><a href="#server" id="server-link" style="color:var(--muted)">Change server</a></p>
+    <div class="spinner" aria-hidden="true"></div>
+    <p>Loading Devon…</p>
+  </div>
+  <div class="card" id="failed" hidden>
+    <img src="icon.svg" alt="">
+    <p><strong>Devon didn't load here.</strong><br>The network may be slow, or this page may not be allowed to show it.</p>
+    <a class="button" id="direct" target="_top" rel="noopener">Open Devon directly</a>
   </div>
 </div>
 <script>
 (function () {
-  // Devon servers this page knows, tried in order (after yours, if you set one).
-  // Each must be a Devon deployment with an https:// address.
-  var SERVERS = ["https://db-v5.edgeone.dev/"];
-  var STORE_KEY = "devon_server";
-  var CHECK_MS = 8000;    // how long to wait for a server to answer at all
-  var LOAD_MS = 20000;    // how long Devon then has to say it loaded
+  // Where Devon runs. Change this if Devon moves to another EdgeOne address.
+  var DEVON_URL = "https://db-v5.edgeone.dev/";
+  var GIVE_UP_MS = 20000;
 
-  var $ = function (id) { return document.getElementById(id); };
-  var overlay = $("overlay"), form = $("server-form"), input = $("server-input");
-  var frame = null, current = null, loaded = false, giveUp = null, attempt = 0;
+  var origin = new URL(DEVON_URL).origin;
+  var statusEl = document.getElementById("status");
+  var loading = document.getElementById("loading");
+  var failed = document.getElementById("failed");
+  var loaded = false;
+  document.getElementById("direct").href = DEVON_URL;
 
-  // An https:// origin (or http://localhost, which browsers allow inside https pages)
-  function normalize(value) {
-    var s = String(value || "").trim();
-    if (!s) return null;
-    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = "https://" + s;
-    var u;
-    try { u = new URL(s); } catch (e) { return null; }
-    var local = u.hostname === "localhost" || u.hostname === "127.0.0.1" || u.hostname === "[::1]";
-    if (u.protocol !== "https:" && !(u.protocol === "http:" && local)) return null;
-    return u.origin + "/";
-  }
-  function savedServer() {
-    try { return normalize(localStorage.getItem(STORE_KEY)); } catch (e) { return null; }
-  }
-  function servers() {
-    var list = [], mine = savedServer();
-    if (mine) list.push(mine);
-    SERVERS.forEach(function (s) { s = normalize(s); if (s && list.indexOf(s) === -1) list.push(s); });
-    return list;
-  }
-
-  // Can this browser reach the server at all? A refused or blocked connection
-  // fails the request; any answer from the server (even an error page) counts.
-  function reachable(server) {
-    return new Promise(function (resolve) {
-      var ctrl = typeof AbortController === "function" ? new AbortController() : null;
-      var timer = setTimeout(function () { if (ctrl) ctrl.abort(); resolve(false); }, CHECK_MS);
-      fetch(server + "favicon.ico?devon-check=" + Date.now(), {
-        mode: "no-cors", cache: "no-store", credentials: "omit", signal: ctrl ? ctrl.signal : undefined
-      }).then(function () { clearTimeout(timer); resolve(true); }, function () { clearTimeout(timer); resolve(false); });
-    });
-  }
-
-  // "connecting", "problem", or "ready" (Devon is showing; only the server setting can cover it)
-  function show(state) {
-    overlay.classList.toggle("hidden", state === "ready" && form.hidden);
-    $("connecting").hidden = state !== "connecting";
-    ["problem", "problem-actions"].forEach(function (id) { $(id).hidden = state !== "problem"; });
-    $("tried").hidden = state !== "problem" || !$("tried").children.length;
-    $("server-link").parentNode.hidden = !form.hidden;
-  }
-
-  function showProblem(title, text, tried, directUrl) {
-    $("problem-title").textContent = title;
-    $("problem-text").textContent = text;
-    var ul = $("tried");
-    ul.textContent = "";
-    (tried || []).forEach(function (t) {
-      var li = document.createElement("li");
-      var a = document.createElement("span"); a.textContent = t.server.replace(/\/$/, "");
-      var b = document.createElement("span"); b.className = "bad"; b.textContent = t.note;
-      li.appendChild(a); li.appendChild(b); ul.appendChild(li);
-    });
-    var direct = $("direct");
-    direct.hidden = !directUrl;
-    if (directUrl) direct.href = directUrl;
-    show("problem");
-  }
-
-  function connect() {
-    var my = ++attempt;
-    loaded = false;
-    clearTimeout(giveUp);
-    var list = servers();
-    $("connecting-text").textContent = "Connecting to Devon…";
-    show("connecting");
-    var checks = list.map(reachable);
-    // Use the first server, in order, that answers
-    (function next(i) {
-      if (my !== attempt) return;
-      if (i >= list.length) {
-        showProblem(
-          "Can't reach a Devon server",
-          "This browser couldn't connect to any of these. The network, a firewall or a browser setting may be blocking them. If you run Devon on your own server, enter its address below.",
-          list.map(function (s) { return { server: s, note: "not reachable" }; })
-        );
-        openForm(false);
-        return;
-      }
-      checks[i].then(function (ok) {
-        if (my !== attempt) return;
-        if (ok) load(list[i]); else next(i + 1);
-      });
-    })(0);
-  }
-
-  function load(server) {
-    current = server;
-    var origin = server.replace(/\/$/, "");
-    $("connecting-text").textContent = "Loading Devon from " + new URL(server).host + "…";
-    if (frame) frame.remove();
-    frame = document.createElement("iframe");
-    frame.title = "Devon Browser";
-    // Let Devon (and the sites inside it) use what they'd have as a normal tab
-    frame.allow = [
-      "fullscreen", "clipboard-read", "clipboard-write", "autoplay", "encrypted-media", "picture-in-picture",
-      "camera", "microphone", "geolocation", "display-capture", "screen-wake-lock"
-    ].map(function (f) { return f + " " + origin; }).join("; ");
-    frame.referrerPolicy = "no-referrer";
-    frame.src = server;
-    document.body.insertBefore(frame, overlay);
-    giveUp = setTimeout(function () {
-      if (loaded) return;
-      showProblem(
-        "Devon didn't load",
-        new URL(server).host + " answered, but Devon didn't finish loading inside this page. The network may be slow, or something on the way may be blocking it.",
-        null,
-        server
-      );
-    }, LOAD_MS);
-  }
+  var frame = document.createElement("iframe");
+  frame.title = "Devon Browser";
+  frame.src = DEVON_URL;
+  // Let Devon (and the sites inside it) use what they'd have as a normal tab
+  frame.allow = [
+    "fullscreen", "clipboard-read", "clipboard-write", "autoplay", "encrypted-media", "picture-in-picture",
+    "camera", "microphone", "geolocation", "display-capture", "screen-wake-lock"
+  ].map(function (f) { return f + " " + origin; }).join("; ");
+  frame.referrerPolicy = "no-referrer";
+  document.body.insertBefore(frame, statusEl);
 
   window.addEventListener("message", function (event) {
-    if (!frame || !current || event.source !== frame.contentWindow) return;
-    if (event.origin !== current.replace(/\/$/, "")) return;
+    if (event.origin !== origin || event.source !== frame.contentWindow) return;
     var data = event.data;
     if (!data || data.source !== "devon") return;
     if (data.type === "devon-ready") {
       loaded = true;
-      clearTimeout(giveUp);
-      show("ready");
-      if (form.hidden) { try { frame.focus(); } catch (e) {} }
+      statusEl.classList.add("hidden");
+      failed.hidden = true;
+      try { frame.focus(); } catch (e) {}
     } else if (data.type === "devon-title" && typeof data.title === "string") {
       document.title = data.title.slice(0, 200) || "Devon Browser";
     }
   });
 
-  // ---- Choosing your own server
-  function openForm(focus) {
-    input.value = savedServer() || "";
-    $("server-error").textContent = "";
-    $("server-close").hidden = !loaded;
-    form.hidden = false;
-    $("server-link").parentNode.hidden = true;
-    overlay.classList.remove("hidden");
-    if (focus) input.focus();
-  }
-  function closeForm() {
-    form.hidden = true;
-    if (location.hash === "#server") history.replaceState(null, "", location.pathname + location.search);
-    $("server-link").parentNode.hidden = false;
-    if (loaded) show("ready");
-  }
-  form.addEventListener("submit", function (e) {
-    e.preventDefault();
-    var value = normalize(input.value);
-    if (!value) {
-      $("server-error").textContent = "Enter an https:// address, like https://devon.example.com";
-      input.focus();
-      return;
-    }
-    try { localStorage.setItem(STORE_KEY, value); } catch (err) {}
-    closeForm();
-    connect();
-  });
-  $("server-clear").addEventListener("click", function () {
-    try { localStorage.removeItem(STORE_KEY); } catch (err) {}
-    closeForm();
-    connect();
-  });
-  $("server-close").addEventListener("click", closeForm);
-  $("server-link").addEventListener("click", function (e) { e.preventDefault(); openForm(true); });
-  $("retry").addEventListener("click", function () { closeForm(); connect(); });
-  window.addEventListener("hashchange", function () { if (location.hash === "#server") openForm(true); });
-
-  if (location.hash === "#server") openForm(true);
-  connect();
+  setTimeout(function () {
+    if (loaded) return;
+    loading.hidden = true;
+    failed.hidden = false;
+  }, GIVE_UP_MS);
 })();
 </script>
 </body>
