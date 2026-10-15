@@ -82,7 +82,7 @@ pnpm start -p 3000
 
 Devon is then at `http://localhost:3000`, or `http://<server's address>:3000` from other devices on your network.
 
-To use it from the GitHub Pages address, or from any https page, it needs an **https://** address. Browsers won't show an http:// site inside an https page; `http://localhost` is the one exception. Two common ways to get one:
+To show it inside another https page, like the GitHub Pages address below, it needs an **https://** address. Browsers won't show an http:// site inside an https page; `http://localhost` is the one exception. Two common ways to get one:
 
 - **A domain and a reverse proxy.** Point a domain or subdomain at the server and put [Caddy](https://caddyserver.com/) in front of Devon. It gets the certificate for you: `caddy reverse-proxy --from devon.example.com --to localhost:3000`. Any reverse proxy works, as long as it passes the original `Host` header through. Caddy does this by default; with nginx, add `proxy_set_header Host $host;`.
 - **A tunnel service.** These give a computer without a public address an https:// URL.
@@ -91,14 +91,13 @@ YouTube settings (the `DEVON_*` variables below) are passed as environment varia
 
 ### GitHub Pages address
 
-Devon also has an address at **https://dlcasto2.github.io/db-v2/**. GitHub Pages only serves static files, and Devon needs a server (the proxy and Devon AI). So that page (`github-pages/index.html`) shows Devon from a Devon server, full-page.
+Devon also has an address at **https://dlcasto2.github.io/db-v2/**. GitHub Pages only serves static files, and Devon needs a server (the proxy and Devon AI). So that page (`github-pages/index.html`) shows Devon running on EdgeOne, full-page. Every site still loads through EdgeOne.
 
-- **Which server.** It tries your own server first, if you've set one, and then the built-in list (`SERVERS` at the top of its script, currently db-v5.edgeone.dev). It checks which ones this browser can reach and uses the first that answers. If none can be reached, it says so, lists them, and asks for your own server's address.
-- **Setting your own server.** Open the page with `#server`, or use "Change server". The address is saved in that browser only.
-- **Loading.** Devon tells the page when it has loaded (`components/embed-bridge.tsx`). If a server answers but Devon doesn't load within 20 seconds, the page offers a direct link.
 - **Publishing.** `.github/workflows/github-pages.yml` publishes `github-pages/` when it changes on `main`. In the repo settings, Pages → Source must be **GitHub Actions**.
+- **Loading.** Devon tells the page when it has loaded (`components/embed-bridge.tsx`). If it doesn't load within 20 seconds, the page offers a direct link instead.
+- **Which server.** The EdgeOne address is `DEVON_URL` at the top of the page's script. To show a Devon running on your own server instead, change it to that server's https:// address.
 - **Other embedding sites.** Devon only sends its messages to https://dlcasto2.github.io. To let another site embed Devon this way, add its origin to `NEXT_PUBLIC_DEVON_SHELL_ORIGINS` (comma-separated, read at build time).
-- **Saved data.** Browsers keep an embedded site's storage separate from the same site opened directly. So the GitHub Pages address has its own tabs, bookmarks, history and Devon AI chats.
+- **Saved data.** Browsers keep an embedded site's storage separate from the same site opened directly. So the GitHub Pages address has its own tabs, bookmarks, history and Devon AI chats, apart from db-v5.edgeone.dev.
 
 ## Project layout
 
@@ -115,7 +114,7 @@ Devon also has an address at **https://dlcasto2.github.io/db-v2/**. GitHub Pages
 | `components/games-page.tsx` | Games grid and player |
 | `components/extensions-dialog.tsx`, `extension-page.tsx` | Extension manager, popups and options pages |
 | `components/library-panel.tsx` | Bookmarks and history side panel |
-| `github-pages/`, `components/embed-bridge.tsx` | The GitHub Pages address, which shows Devon full-page from a Devon server, and Devon's side of it |
+| `github-pages/`, `components/embed-bridge.tsx` | The GitHub Pages address, which shows Devon full-page, and Devon's side of it |
 | `Dockerfile`, `docker-compose.yml`, `lib/public-origin.ts` | Running Devon on your own server |
 | `components/save-page-dialog.tsx`, `media-downloads.tsx`, `page-problems.tsx` | Save offline, media downloads, page report |
 | `lib/proxy-utils.ts` | URL formatting, search engine, proxy fetch helpers |
