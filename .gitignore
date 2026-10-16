@@ -5,6 +5,3 @@ node_modules
 next-env.d.ts
 .edgeone
 !.env.example
-
-# Made by scripts/copy-vendor.mjs on every install (10 MB of ffmpeg.wasm parts)
-/public/vendor/ffmpeg-core/
