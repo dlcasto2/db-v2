@@ -6,7 +6,6 @@ import https from "node:https"
 import { Readable } from "node:stream"
 import { brotliCompressSync, constants as zlibConstants, gzipSync } from "node:zlib"
 import { CookieJar, JAR_PATH, JAR_PREFIX, jarSetCookieHeaders } from "@/lib/cookie-jar"
-import { publicOrigin } from "@/lib/public-origin"
 
 // DNS lookups need the Node.js runtime (not Edge)
 export const runtime = "nodejs"
@@ -463,14 +462,6 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
   })();
   window.__devonProxied = true; // lets the app tell our pages from ones that escaped the proxy
 
-  // Devon's own window: the topmost window on this origin. Not window.top, since
-  // Devon itself may be embedded in another site (e.g. its GitHub Pages address).
-  var APP_WINDOW = (function () {
-    var w = window;
-    try { while (w.parent !== w && w.parent.location.origin === location.origin) w = w.parent; } catch (e) {}
-    return w;
-  })();
-
   // Paths on the proxy origin that really belong to the app, not the proxied site
   var APP_PATH = new RegExp('^/(api/proxy|_next/)');
 
@@ -552,7 +543,7 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
     // Nested proxied frame: new tabs go to the app, everything else loads in this frame
     if (msg.newTab) {
       msg.type = 'proxy-navigate';
-      try { APP_WINDOW.postMessage(msg, '*'); } catch (e) {}
+      try { window.top.postMessage(msg, '*'); } catch (e) {}
       return;
     }
     var target = msg.reload ? PAGE_URL : msg.url;
@@ -1158,7 +1149,7 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
 
     // Shared by all proxied frames (same origin): who is calling postMessage right now
     var shared;
-    try { shared = APP_WINDOW.__devonShared || (APP_WINDOW.__devonShared = {}); } catch (e) { shared = {}; }
+    try { shared = window.top.__devonShared || (window.top.__devonShared = {}); } catch (e) { shared = {}; }
     var clearScheduled = false;
     window.__devonPM = function (caller, name) {
       shared.caller = caller;
@@ -1800,7 +1791,7 @@ async function handle(
     const result = await buildProxyResponse(
       response,
       finalUrl,
-      publicOrigin(request),
+      request.nextUrl.origin,
       raw,
       init.method.toUpperCase() === "HEAD",
       experimental,
@@ -1908,7 +1899,7 @@ async function handleSlice(request: NextRequest, targetUrl: string, index: numbe
       const { response, finalUrl } = await fetchUpstream(targetUrl, { method: "GET" }, controller.signal)
       if (!response.ok) return NextResponse.json({ error: `HTTP ${response.status}` }, { status: 502 })
       const bytes = new TextEncoder().encode(
-        processJavaScript(await response.text(), finalUrl, publicOrigin(request), true),
+        processJavaScript(await response.text(), finalUrl, request.nextUrl.origin, true),
       )
       return new NextResponse(bytes.slice(start, end) as BodyInit, {
         status: 200,
