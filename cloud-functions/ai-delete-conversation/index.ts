@@ -63,7 +63,7 @@ export async function onRequestPost(context: CloudFunctionContext): Promise<Resp
 
   logger.log('conversationId:', conversationId, 'userId:', userId || '-');
 
-  if (!conversationId || /^d[qt]-/.test(conversationId)) {
+  if (!conversationId || /^(d[qt]|acct)-/.test(conversationId)) {
     logger.error('Missing conversationId');
     logger.log(`[ai-delete-conversation] end: ${new Date().toISOString()}, total: ${Date.now() - startTime}ms`);
     return jsonResponse({ status: 'error', message: 'conversation_id is required' }, 400);
