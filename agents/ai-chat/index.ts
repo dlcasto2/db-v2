@@ -180,7 +180,7 @@ export async function onRequest(context: AgentContext) {
 
   if (!message) return json({ error: "bad_request", message: "'message' is required" }, 400)
   // dq-* hold the daily-limit counters and dt-* the page-action mailboxes; chatting into one would scramble it
-  if (/^d[qt]-/.test(conversationId)) return json({ error: "bad_request", message: "Invalid conversation ID" }, 400)
+  if (/^(d[qt]|acct)-/.test(conversationId)) return json({ error: "bad_request", message: "Invalid conversation ID" }, 400)
   if (message.length > MAX_MESSAGE_CHARS) {
     return json({ error: "bad_request", message: `Messages can be up to ${MAX_MESSAGE_CHARS} characters` }, 400)
   }

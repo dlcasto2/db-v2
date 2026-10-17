@@ -29,6 +29,8 @@ import {
   Loader2,
   Lock,
   LockOpen,
+  LogIn,
+  LogOut,
   Plus,
   Puzzle,
   SquareTerminal,
@@ -39,11 +41,22 @@ import {
   Sparkles,
   Star,
   Trash2,
+  User,
   WifiOff,
   X,
 } from "lucide-react"
 import { fetchThroughProxy, formatUrl } from "@/lib/proxy-utils"
 import { SessionManager, type BookmarkItem, type HistoryItem } from "@/lib/session-manager"
+import {
+  fetchAccount,
+  mergeSync,
+  pullSync,
+  pushSync,
+  signOut as signOutAccount,
+  startSignIn,
+  type AccountState,
+  type SyncData,
+} from "@/lib/account"
 import { LibraryPanel, type LibraryView } from "@/components/library-panel"
 import { NewTabPage } from "@/components/new-tab-page"
 import { GamesPage } from "@/components/games-page"
@@ -257,6 +270,10 @@ export function ProxyBrowser() {
   const [showSave, setShowSave] = useState(false)
   /** Devon AI docked next to the page */
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
+  const [account, setAccount] = useState<AccountState>({ enabled: false, signedIn: false })
+  // Set while writing synced data into state, so the save-triggered push below skips it
+  const suppressPushRef = useRef(false)
+  const pushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [devtoolsOn, setDevtoolsOn] = useState(false)
   /** Script errors reported by each tab's page, cleared on every navigation */
   const [pageErrors, setPageErrors] = useState<Record<string, PageError[]>>({})
@@ -325,6 +342,82 @@ export function ProxyBrowser() {
       setDevtoolsOn(true)
       devtoolsReadyRef.current = loadDevtoolsSource()
     }
+  }, [])
+
+  // ── Google account: sign-in state and cross-device sync of bookmarks/history
+  const localSyncData = useCallback((): SyncData => {
+    const s = SessionManager.loadSession()
+    let settingsAt = 0
+    try {
+      settingsAt = Number(localStorage.getItem("proxy-browser-settings-at") || 0)
+    } catch {
+      // storage unavailable
+    }
+    return { bookmarks: s.bookmarks, history: s.history, settings: s.settings, settingsAt }
+  }, [])
+
+  const applyMerged = useCallback((merged: SyncData) => {
+    suppressPushRef.current = true
+    SessionManager.saveSession({
+      bookmarks: merged.bookmarks,
+      history: merged.history,
+      ...(merged.settings ? { settings: merged.settings } : {}),
+    })
+    setBookmarks(merged.bookmarks)
+    setHistory(merged.history)
+  }, [])
+
+  const runInitialSync = useCallback(async () => {
+    const server = await pullSync()
+    const merged = mergeSync(server ?? { bookmarks: [], history: [] }, localSyncData())
+    applyMerged(merged)
+    const confirmed = await pushSync(merged)
+    if (confirmed) applyMerged(confirmed)
+  }, [applyMerged, localSyncData])
+
+  // On mount: show any sign-in result, then load the account and do a first sync
+  useEffect(() => {
+    try {
+      const sp = new URLSearchParams(window.location.search)
+      const outcome = sp.get("signin")
+      if (outcome) {
+        if (outcome === "ok") toast.success("Signed in with Google")
+        else if (outcome === "cancelled") toast("Sign-in cancelled")
+        else if (outcome === "unavailable") toast.error("Google sign-in isn't set up on this site.")
+        else if (outcome === "expired") toast.error("That took too long — please try signing in again.")
+        else toast.error("Couldn't finish signing in. Please try again.")
+        sp.delete("signin")
+        const qs = sp.toString()
+        window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : "") + window.location.hash)
+      }
+    } catch {
+      // no window.location / history
+    }
+    fetchAccount().then((state) => {
+      setAccount(state)
+      if (state.signedIn) void runInitialSync()
+    })
+  }, [runInitialSync])
+
+  // While signed in, push bookmark/history changes up (debounced). The write
+  // that applied freshly-synced data sets suppressPushRef, so it isn't echoed back.
+  useEffect(() => {
+    if (!account.signedIn) return
+    if (suppressPushRef.current) {
+      suppressPushRef.current = false
+      return
+    }
+    if (pushTimerRef.current) clearTimeout(pushTimerRef.current)
+    pushTimerRef.current = setTimeout(() => void pushSync(localSyncData()), 1500)
+    return () => {
+      if (pushTimerRef.current) clearTimeout(pushTimerRef.current)
+    }
+  }, [bookmarks, history, account.signedIn, localSyncData])
+
+  const handleSignOut = useCallback(async () => {
+    await signOutAccount()
+    setAccount((a) => ({ enabled: a.enabled, signedIn: false }))
+    toast("Signed out")
   }, [])
 
   // Extensions: the proxied pages call window.__devonExtHost at document_start
@@ -1577,6 +1670,43 @@ export function ProxyBrowser() {
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" sideOffset={8} className="w-64 rounded-xl p-1.5">
+              {account.signedIn && account.user ? (
+                <>
+                  <div className="flex items-center gap-2.5 px-2 py-1.5">
+                    <span className="grid size-8 flex-shrink-0 place-items-center overflow-hidden rounded-full bg-white/[0.08]">
+                      {account.user.picture ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={account.user.picture}
+                          alt=""
+                          referrerPolicy="no-referrer"
+                          className="size-8 object-cover"
+                          onError={(e) => (e.currentTarget.style.display = "none")}
+                        />
+                      ) : (
+                        <User className="size-4 text-muted-foreground" />
+                      )}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium">{account.user.name || "Signed in"}</span>
+                      {account.user.email && (
+                        <span className="block truncate text-xs text-muted-foreground">{account.user.email}</span>
+                      )}
+                    </span>
+                  </div>
+                  <DropdownMenuItem onSelect={() => void handleSignOut()}>
+                    <LogOut /> Sign out
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              ) : account.enabled ? (
+                <>
+                  <DropdownMenuItem onSelect={startSignIn}>
+                    <LogIn /> Sign in with Google
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              ) : null}
               <DropdownMenuItem onSelect={addTab}>
                 <Plus /> New tab <DropdownMenuShortcut>Ctrl T</DropdownMenuShortcut>
               </DropdownMenuItem>

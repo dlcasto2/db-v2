@@ -32,7 +32,7 @@ export async function onRequestPost(context: CloudFunctionContext): Promise<Resp
     // empty body
   }
   const conversationId = context.agent?.conversation_id || ""
-  if (!conversationId || /^d[qt]-/.test(conversationId)) {
+  if (!conversationId || /^(d[qt]|acct)-/.test(conversationId)) {
     return jsonResponse({ status: "error", message: "Send the chat ID in the makers-conversation-id header" }, 400)
   }
   const store = context.agent!.store

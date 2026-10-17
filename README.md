@@ -84,6 +84,7 @@ Devon runs anywhere Next.js runs, and it is currently deployed on **EdgeOne Page
 | `lib/page-archiver.ts` | Offline ZIP snapshots |
 | `lib/devtools.ts`, `lib/diagnostics.ts`, `lib/media.ts` | Eruda, page report data, media detection |
 | `lib/session-manager.ts` | Tabs, bookmarks and history in local storage |
+| `lib/account.ts`, `cloud-functions/auth-*`, `cloud-functions/account-sync/`, `cloud-functions/_auth/` | Google sign-in and cross-device sync (`/auth-google-start`, `/auth-google-callback`, `/auth-me`, `/auth-logout`, `/account-sync`) |
 | `lib/games.ts` | The list of games |
 | `components/apps-page.tsx`, `lib/apps.ts` | The Apps page and the list of apps |
 | `components/devon-ai-page.tsx`, `lib/devon-ai/` | Devon AI's chat UI, its backend calls, chat state and browser storage |
@@ -137,6 +138,33 @@ Set these in the EdgeOne project's environment variables, then redeploy:
 Without a model key, Devon AI shows "isn't set up on this site yet". A visitor is identified by an ID kept in their browser's local storage; the counts themselves are stored on the server (as small hashed entries in the conversation store), so they can't be reset from the page. `DEVON_*` variables are never passed to the agent's Claude process.
 
 To run the agent locally, use the EdgeOne CLI: `npm i -g edgeone`, `edgeone makers link`, then `edgeone makers dev` (serves the site and the agent routes together). `pnpm dev` runs the site without the agent routes.
+
+## Google accounts
+
+Sign in to Devon with Google to sync your **bookmarks, history and settings** across devices. Like Devon AI, this runs on EdgeOne (the cloud functions under `cloud-functions/`); where it isn't set up, the sign-in control simply doesn't appear and Devon keeps everything in the browser as before.
+
+This signs you in to **Devon**, through Google's own consent screen — it does **not** log you in to Google on sites you open through the proxy. A proxy can only keep you "signed in to Google" by passing your Google password and session through Devon's server, which on a shared deployment would collect every visitor's Google login; Google blocks it too. So the account is Devon's own. No Google token ever reaches the browser, and the only thing the browser carries is a signed session cookie.
+
+For reaching your actual Google data (Gmail, YouTube) safely, the intended path is Google's official APIs once you're signed in — real access you grant on Google's screen, with no password through the proxy. The sign-in here is the first half of that; the API clients aren't built yet.
+
+### How it works
+
+- **Sign-in** uses OAuth 2.0 with PKCE. `/auth-google-start` creates the CSRF state, nonce and PKCE verifier, keeps them in a short-lived signed `HttpOnly` cookie, and sends you to Google. `/auth-google-callback` checks the state, swaps the code for tokens **server-to-server** (the client secret and verifier never touch the browser), reads your identity from the ID token, and sets Devon's own signed session cookie.
+- **Sync** (`/account-sync`) stores your bookmarks/history/settings in the Makers store under a namespace derived from a SHA-256 of your Google subject — taken from the session cookie, never from anything the browser sends — so an account can only ever read or write its own data. On sign-in the browser's copy and the server's are merged (union by id, newest wins; history also de-duplicated by URL); later changes are pushed up, debounced.
+- The signing of the session cookie is HMAC-SHA256; a tampered or expired cookie is rejected.
+
+### Setup
+
+1. In the [Google Cloud Console](https://console.cloud.google.com/apis/credentials), create an **OAuth 2.0 Client ID** of type **Web application**.
+2. Add an **Authorized redirect URI** for each host Devon runs on: `https://<your-host>/auth-google-callback` (for example `https://db-v5.edgeone.dev/auth-google-callback`).
+3. The only scopes needed are `openid`, `email` and `profile` (the defaults).
+4. Set these in the EdgeOne project's environment variables, then redeploy:
+
+| Variable | What it is |
+| --- | --- |
+| `DEVON_GOOGLE_CLIENT_ID` | The OAuth client ID (public). |
+| `DEVON_GOOGLE_CLIENT_SECRET` | The OAuth client secret (server-only; never sent to the browser). |
+| `DEVON_AUTH_SECRET` | A random string used to sign the session cookie. Optional — falls back to the client secret — but setting your own means changing the client secret doesn't sign everyone out. |
 
 ## YouTube
 
