@@ -1,14 +1,17 @@
 /**
- * Server-side helpers shared by Devon's Google-account cloud functions:
- * reading the OAuth config from the environment, building and reading cookies,
- * small Response helpers, and the per-user sync store.
+ * Server-side helpers shared by Devon's account cloud functions: reading the
+ * OIDC config from the environment, building and reading cookies, small
+ * Response helpers, and the per-user sync store.
  *
- * Google accounts are an EdgeOne feature, like Devon AI: these functions read
- * `context.env` and use the Makers store. Set these in the EdgeOne project:
- *   DEVON_GOOGLE_CLIENT_ID      OAuth 2.0 client ID (public)
- *   DEVON_GOOGLE_CLIENT_SECRET  OAuth 2.0 client secret (server-only)
- *   DEVON_AUTH_SECRET           random string used to sign the session cookie
- *                               (optional; falls back to the client secret)
+ * Sign-in goes through Auth0 (an OIDC provider), which can front Google and
+ * other logins. Accounts are an EdgeOne feature, like Devon AI: these
+ * functions read `context.env` and use the Makers store. Set in the EdgeOne
+ * project:
+ *   DEVON_AUTH0_DOMAIN         the tenant domain, e.g. your-tenant.us.auth0.com
+ *   DEVON_AUTH0_CLIENT_ID      the application's client ID (public)
+ *   DEVON_AUTH0_CLIENT_SECRET  the application's client secret (server-only)
+ *   DEVON_AUTH_SECRET          random string used to sign the session cookie
+ *                              (optional; falls back to the client secret)
  */
 
 import type { AgentMemory } from "@edgeone/types"
@@ -22,27 +25,47 @@ export const OAUTH_COOKIE = "devon_oauth"
 export const SESSION_MAX_AGE = 30 * 24 * 60 * 60 // 30 days
 export const OAUTH_MAX_AGE = 10 * 60 // 10 minutes
 
-export const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
-export const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
-export const GOOGLE_SCOPE = "openid email profile"
+/** OpenID Connect scopes; Auth0 returns the profile claims Devon shows */
+export const OIDC_SCOPE = "openid profile email"
 
 export interface AuthConfig {
   enabled: boolean
   clientId: string
   clientSecret: string
+  /** The Auth0 (OIDC) endpoints, derived from the tenant domain */
+  issuer: string
+  authorizeUrl: string
+  tokenUrl: string
   /** Key the session cookie is signed with */
   signingSecret: string
 }
 
+/** Strip a tenant domain down to a bare host (no scheme, no trailing slash/path) */
+function cleanDomain(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/.*$/, "")
+}
+
 export function authConfig(env: Env): AuthConfig {
-  const clientId = (env.DEVON_GOOGLE_CLIENT_ID || "").trim()
-  const clientSecret = (env.DEVON_GOOGLE_CLIENT_SECRET || "").trim()
+  const domain = cleanDomain(env.DEVON_AUTH0_DOMAIN || "")
+  const clientId = (env.DEVON_AUTH0_CLIENT_ID || "").trim()
+  const clientSecret = (env.DEVON_AUTH0_CLIENT_SECRET || "").trim()
   const signingSecret = (env.DEVON_AUTH_SECRET || "").trim() || clientSecret
-  return { enabled: Boolean(clientId && clientSecret), clientId, clientSecret, signingSecret }
+  return {
+    enabled: Boolean(domain && clientId && clientSecret),
+    clientId,
+    clientSecret,
+    issuer: domain ? `https://${domain}/` : "",
+    authorizeUrl: domain ? `https://${domain}/authorize` : "",
+    tokenUrl: domain ? `https://${domain}/oauth/token` : "",
+    signingSecret,
+  }
 }
 
 // ---------------------------------------------------------------------------
-// The session the browser carries (no Google tokens ever reach the browser)
+// The session the browser carries (no provider tokens ever reach the browser)
 // ---------------------------------------------------------------------------
 
 export interface AccountSession {

@@ -4,7 +4,7 @@
  *   GET   -> the signed-in account's bookmarks, history and settings
  *   POST  -> merges the browser's copy into the server's, returns the result
  *
- * The data is keyed to the Google subject taken from Devon's session cookie —
+ * The data is keyed to the subject (sub) taken from Devon's session cookie —
  * never from anything the client supplies — so one account can only ever read
  * or write its own data. Only sign-in state travels in the cookie; the data
  * lives in the Makers store under an unguessable per-user namespace.

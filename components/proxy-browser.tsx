@@ -344,7 +344,7 @@ export function ProxyBrowser() {
     }
   }, [])
 
-  // ── Google account: sign-in state and cross-device sync of bookmarks/history
+  // ── Account (Auth0): sign-in state and cross-device sync of bookmarks/history
   const localSyncData = useCallback((): SyncData => {
     const s = SessionManager.loadSession()
     let settingsAt = 0
@@ -381,9 +381,9 @@ export function ProxyBrowser() {
       const sp = new URLSearchParams(window.location.search)
       const outcome = sp.get("signin")
       if (outcome) {
-        if (outcome === "ok") toast.success("Signed in with Google")
+        if (outcome === "ok") toast.success("Signed in")
         else if (outcome === "cancelled") toast("Sign-in cancelled")
-        else if (outcome === "unavailable") toast.error("Google sign-in isn't set up on this site.")
+        else if (outcome === "unavailable") toast.error("Sign-in isn't set up on this site.")
         else if (outcome === "expired") toast.error("That took too long — please try signing in again.")
         else toast.error("Couldn't finish signing in. Please try again.")
         sp.delete("signin")
@@ -1702,7 +1702,7 @@ export function ProxyBrowser() {
               ) : account.enabled ? (
                 <>
                   <DropdownMenuItem onSelect={startSignIn}>
-                    <LogIn /> Sign in with Google
+                    <LogIn /> Sign in
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                 </>

@@ -84,7 +84,7 @@ Devon runs anywhere Next.js runs, and it is currently deployed on **EdgeOne Page
 | `lib/page-archiver.ts` | Offline ZIP snapshots |
 | `lib/devtools.ts`, `lib/diagnostics.ts`, `lib/media.ts` | Eruda, page report data, media detection |
 | `lib/session-manager.ts` | Tabs, bookmarks and history in local storage |
-| `lib/account.ts`, `cloud-functions/auth-*`, `cloud-functions/account-sync/`, `cloud-functions/_auth/` | Google sign-in and cross-device sync (`/auth-google-start`, `/auth-google-callback`, `/auth-me`, `/auth-logout`, `/account-sync`) |
+| `lib/account.ts`, `cloud-functions/auth-*`, `cloud-functions/account-sync/`, `cloud-functions/_auth/` | Auth0 (OIDC) sign-in and cross-device sync (`/auth-login`, `/auth-callback`, `/auth-me`, `/auth-logout`, `/account-sync`) |
 | `lib/games.ts` | The list of games |
 | `components/apps-page.tsx`, `lib/apps.ts` | The Apps page and the list of apps |
 | `components/devon-ai-page.tsx`, `lib/devon-ai/` | Devon AI's chat UI, its backend calls, chat state and browser storage |
@@ -139,32 +139,35 @@ Without a model key, Devon AI shows "isn't set up on this site yet". A visitor i
 
 To run the agent locally, use the EdgeOne CLI: `npm i -g edgeone`, `edgeone makers link`, then `edgeone makers dev` (serves the site and the agent routes together). `pnpm dev` runs the site without the agent routes.
 
-## Google accounts
+## Accounts
 
-Sign in to Devon with Google to sync your **bookmarks, history and settings** across devices. Like Devon AI, this runs on EdgeOne (the cloud functions under `cloud-functions/`); where it isn't set up, the sign-in control simply doesn't appear and Devon keeps everything in the browser as before.
+Sign in to Devon to sync your **bookmarks, history and settings** across devices. Sign-in goes through **Auth0** (an OpenID Connect provider), which can front Google and other logins. Like Devon AI, this runs on EdgeOne (the cloud functions under `cloud-functions/`); where it isn't set up, the sign-in control simply doesn't appear and Devon keeps everything in the browser as before.
 
-This signs you in to **Devon**, through Google's own consent screen — it does **not** log you in to Google on sites you open through the proxy. A proxy can only keep you "signed in to Google" by passing your Google password and session through Devon's server, which on a shared deployment would collect every visitor's Google login; Google blocks it too. So the account is Devon's own. No Google token ever reaches the browser, and the only thing the browser carries is a signed session cookie.
+This signs you in to **Devon**, on Auth0's own login screen — it does **not** log you in to Google (or anything else) on sites you open through the proxy. A proxy can only keep you "signed in" to a site by passing your password and session through Devon's server, which on a shared deployment would collect every visitor's login; providers block it too. So the account is Devon's own. No provider token ever reaches the browser, and the only thing the browser carries is a signed session cookie.
 
-For reaching your actual Google data (Gmail, YouTube) safely, the intended path is Google's official APIs once you're signed in — real access you grant on Google's screen, with no password through the proxy. The sign-in here is the first half of that; the API clients aren't built yet.
+To offer "Sign in with Google", add Google as a **social connection** in Auth0 and enable it for the application — Auth0 handles the Google side, and Devon only ever talks to Auth0.
 
 ### How it works
 
-- **Sign-in** uses OAuth 2.0 with PKCE. `/auth-google-start` creates the CSRF state, nonce and PKCE verifier, keeps them in a short-lived signed `HttpOnly` cookie, and sends you to Google. `/auth-google-callback` checks the state, swaps the code for tokens **server-to-server** (the client secret and verifier never touch the browser), reads your identity from the ID token, and sets Devon's own signed session cookie.
-- **Sync** (`/account-sync`) stores your bookmarks/history/settings in the Makers store under a namespace derived from a SHA-256 of your Google subject — taken from the session cookie, never from anything the browser sends — so an account can only ever read or write its own data. On sign-in the browser's copy and the server's are merged (union by id, newest wins; history also de-duplicated by URL); later changes are pushed up, debounced.
-- The signing of the session cookie is HMAC-SHA256; a tampered or expired cookie is rejected.
+- **Sign-in** is OpenID Connect with PKCE. `/auth-login` creates the CSRF state, nonce and PKCE verifier, keeps them in a short-lived signed `HttpOnly` cookie, and sends you to Auth0's `/authorize`. `/auth-callback` checks the state, swaps the code for tokens **server-to-server** at Auth0's `/oauth/token` (the client secret and verifier never touch the browser), reads your identity from the ID token (checking issuer, audience, expiry and nonce), and sets Devon's own signed session cookie.
+- **Sync** (`/account-sync`) stores your bookmarks/history/settings in the Makers store under a namespace derived from a SHA-256 of your subject (`sub`) — taken from the session cookie, never from anything the browser sends — so an account can only ever read or write its own data. On sign-in the browser's copy and the server's are merged (union by id, newest wins; history also de-duplicated by URL); later changes are pushed up, debounced.
+- The session cookie is signed with HMAC-SHA256; a tampered or expired cookie is rejected.
 
 ### Setup
 
-1. In the [Google Cloud Console](https://console.cloud.google.com/apis/credentials), create an **OAuth 2.0 Client ID** of type **Web application**.
-2. Add an **Authorized redirect URI** for each host Devon runs on: `https://<your-host>/auth-google-callback` (for example `https://db-v5.edgeone.dev/auth-google-callback`).
-3. The only scopes needed are `openid`, `email` and `profile` (the defaults).
+1. In the [Auth0 dashboard](https://manage.auth0.com/), create an **Application** of type **Regular Web Application**.
+2. In its settings, add an **Allowed Callback URL** for each host Devon runs on: `https://<your-host>/auth-callback` (for example `https://db-v5.edgeone.dev/auth-callback`). Add the host's root to **Allowed Logout URLs** too.
+3. (Optional) Under **Authentication → Social**, add a **Google** connection and enable it for this application, so the login screen offers "Continue with Google".
 4. Set these in the EdgeOne project's environment variables, then redeploy:
 
 | Variable | What it is |
 | --- | --- |
-| `DEVON_GOOGLE_CLIENT_ID` | The OAuth client ID (public). |
-| `DEVON_GOOGLE_CLIENT_SECRET` | The OAuth client secret (server-only; never sent to the browser). |
-| `DEVON_AUTH_SECRET` | A random string used to sign the session cookie. Optional — falls back to the client secret — but setting your own means changing the client secret doesn't sign everyone out. |
+| `DEVON_AUTH0_DOMAIN` | The tenant domain, e.g. `your-tenant.us.auth0.com` (scheme and path are ignored). |
+| `DEVON_AUTH0_CLIENT_ID` | The application's client ID (public). |
+| `DEVON_AUTH0_CLIENT_SECRET` | The application's client secret (server-only; never sent to the browser). |
+| `DEVON_AUTH_SECRET` | A random string used to sign the session cookie. Optional — falls back to the client secret — but setting your own means rotating the client secret doesn't sign everyone out. |
+
+`/auth-me` reports `{"enabled":true}` once the three `DEVON_AUTH0_*` values are set, and the sign-in control appears. Register callback URLs against your **stable** host, not EdgeOne's per-build `*-xxxx.edgeone.app` preview host, which changes each deploy.
 
 ## YouTube
 

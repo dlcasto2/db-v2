@@ -1,12 +1,11 @@
 /**
- * Google sign-in callback — EdgeOne Makers Node Function
- * (GET /auth-google-callback).
+ * Sign-in callback — EdgeOne Makers Node Function (GET /auth-callback).
  *
- * Google redirects here with a one-time code. This verifies the state against
+ * Auth0 redirects here with a one-time code. This verifies the state against
  * the cookie set at the start, exchanges the code for tokens server-to-server
  * (the client secret and PKCE verifier never touch the browser), reads the
  * identity from the ID token, and sets Devon's own signed session cookie. No
- * Google token is ever handed to the browser.
+ * provider token is ever handed to the browser.
  */
 
 import type { CloudFunctionContext } from "@edgeone/types"
@@ -16,7 +15,6 @@ import {
   authConfig,
   clearCookieHeader,
   cookieHeader,
-  GOOGLE_TOKEN_URL,
   isHttps,
   makeSessionToken,
   OAUTH_COOKIE,
@@ -27,7 +25,7 @@ import {
   SESSION_MAX_AGE,
 } from "../_auth/config"
 
-const logger = createLogger("auth-google-callback")
+const logger = createLogger("auth-callback")
 
 interface OAuthState {
   state: string
@@ -53,7 +51,10 @@ export async function onRequestGet(context: CloudFunctionContext): Promise<Respo
   if (!code || !state) return back("error")
 
   // The start endpoint's cookie carries the expected state, nonce and PKCE verifier
-  const saved = await verifyToken<OAuthState>(parseCookies(request.headers.get("cookie"))[OAUTH_COOKIE] || "", cfg.signingSecret)
+  const saved = await verifyToken<OAuthState>(
+    parseCookies(request.headers.get("cookie"))[OAUTH_COOKIE] || "",
+    cfg.signingSecret,
+  )
   if (!saved) return back("expired")
   if (saved.state !== state) return back("error")
 
@@ -61,12 +62,12 @@ export async function onRequestGet(context: CloudFunctionContext): Promise<Respo
     const body = new URLSearchParams({
       grant_type: "authorization_code",
       code,
-      redirect_uri: `${origin}/auth-google-callback`,
+      redirect_uri: `${origin}/auth-callback`,
       client_id: cfg.clientId,
       client_secret: cfg.clientSecret,
       code_verifier: saved.verifier,
     })
-    const res = await fetch(GOOGLE_TOKEN_URL, {
+    const res = await fetch(cfg.tokenUrl, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
       body: body.toString(),
@@ -78,9 +79,13 @@ export async function onRequestGet(context: CloudFunctionContext): Promise<Respo
     const tokens = (await res.json()) as { id_token?: string }
     if (!tokens.id_token) return back("error")
 
-    // The ID token came straight from Google's token endpoint over TLS, so the
+    // The ID token came straight from Auth0's token endpoint over TLS, so the
     // channel vouches for it; we still check issuer, audience, expiry and nonce.
-    const check = validateClaims(decodeIdToken(tokens.id_token), { clientId: cfg.clientId, nonce: saved.nonce })
+    const check = validateClaims(decodeIdToken(tokens.id_token), {
+      issuer: cfg.issuer,
+      clientId: cfg.clientId,
+      nonce: saved.nonce,
+    })
     if (!check.ok) {
       logger.error("ID token rejected:", check.reason)
       return back("error")
@@ -90,10 +95,7 @@ export async function onRequestGet(context: CloudFunctionContext): Promise<Respo
       { sub: c.sub, email: c.email, name: c.name, picture: c.picture },
       cfg.signingSecret,
     )
-    return back("ok", [
-      cookieHeader(SESSION_COOKIE, session, { maxAge: SESSION_MAX_AGE, secure }),
-      dropOauth,
-    ])
+    return back("ok", [cookieHeader(SESSION_COOKIE, session, { maxAge: SESSION_MAX_AGE, secure }), dropOauth])
   } catch (e) {
     logger.error("callback error:", e)
     return back("error")
