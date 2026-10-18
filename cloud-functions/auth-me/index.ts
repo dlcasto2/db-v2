@@ -2,7 +2,7 @@
  * Who's signed in — EdgeOne Makers Node Function (GET /auth-me).
  *
  * Reads Devon's session cookie and reports the signed-in user (name, email,
- * picture — never any Google token) and whether Google sign-in is configured
+ * picture — never any provider token) and whether sign-in is configured
  * on this deployment, so the UI can show the right control.
  */
 

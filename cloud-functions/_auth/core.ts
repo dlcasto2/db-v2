@@ -125,12 +125,13 @@ export async function pkceChallenge(verifier: string): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// Google ID token (JWT) claims
+// OIDC ID token (JWT) claims
 // ---------------------------------------------------------------------------
 
-export interface GoogleClaims {
+export interface IdTokenClaims {
   iss: string
-  aud: string
+  /** May be a single string or (OIDC allows) an array of audiences */
+  aud: string | string[]
   sub: string
   email?: string
   email_verified?: boolean
@@ -142,32 +143,31 @@ export interface GoogleClaims {
 }
 
 /**
- * Reads the claims out of a Google ID token WITHOUT verifying the RSA
- * signature. Only ever call this on a token fetched by the server directly
- * from Google's token endpoint over TLS (never one that passed through a
+ * Reads the claims out of an ID token WITHOUT verifying the RSA signature.
+ * Only ever call this on a token fetched by the server directly from the
+ * provider's token endpoint over TLS (never one that passed through a
  * browser): that server-to-server channel is itself the proof of origin, which
  * is why validateClaims still checks iss / aud / exp / nonce.
  */
-export function decodeIdToken(idToken: string): GoogleClaims | null {
+export function decodeIdToken(idToken: string): IdTokenClaims | null {
   const parts = idToken.split(".")
   if (parts.length !== 3) return null
   try {
-    return decodeJson<GoogleClaims>(parts[1])
+    return decodeJson<IdTokenClaims>(parts[1])
   } catch {
     return null
   }
 }
 
-const GOOGLE_ISSUERS = new Set(["https://accounts.google.com", "accounts.google.com"])
-
 export function validateClaims(
-  claims: GoogleClaims | null,
-  expected: { clientId: string; nonce: string; now?: number },
-): { ok: true; claims: GoogleClaims } | { ok: false; reason: string } {
+  claims: IdTokenClaims | null,
+  expected: { issuer: string; clientId: string; nonce: string; now?: number },
+): { ok: true; claims: IdTokenClaims } | { ok: false; reason: string } {
   if (!claims) return { ok: false, reason: "unreadable token" }
   const now = Math.floor((expected.now ?? Date.now()) / 1000)
-  if (!GOOGLE_ISSUERS.has(claims.iss)) return { ok: false, reason: "wrong issuer" }
-  if (claims.aud !== expected.clientId) return { ok: false, reason: "wrong audience" }
+  if (claims.iss !== expected.issuer) return { ok: false, reason: "wrong issuer" }
+  const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud]
+  if (!audiences.includes(expected.clientId)) return { ok: false, reason: "wrong audience" }
   if (typeof claims.exp !== "number" || claims.exp <= now) return { ok: false, reason: "expired" }
   if (!claims.sub) return { ok: false, reason: "no subject" }
   if (claims.nonce !== expected.nonce) return { ok: false, reason: "nonce mismatch" }

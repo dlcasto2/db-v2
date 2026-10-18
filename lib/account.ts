@@ -1,5 +1,5 @@
 /**
- * Devon's side of Google accounts: talking to the auth cloud functions and
+ * Devon's side of accounts: talking to the auth cloud functions and
  * carrying the synced data between the server and the browser. The merge rules
  * themselves live in cloud-functions/_auth/sync.ts, shared with the server so
  * both sides reconcile identically.
@@ -22,7 +22,7 @@ export interface AccountUser {
 }
 
 export interface AccountState {
-  /** Whether Google sign-in is set up on this deployment */
+  /** Whether sign-in is set up on this deployment */
   enabled: boolean
   signedIn: boolean
   user?: AccountUser
@@ -30,7 +30,7 @@ export interface AccountState {
 
 const API = {
   me: "/auth-me",
-  start: "/auth-google-start",
+  start: "/auth-login",
   logout: "/auth-logout",
   sync: "/account-sync",
 } as const
@@ -56,7 +56,7 @@ export async function fetchAccount(): Promise<AccountState> {
   }
 }
 
-/** Send the browser to Google's consent screen (a full-page navigation of the app shell) */
+/** Send the browser to the provider's login (a full-page navigation of the app shell) */
 export function startSignIn(): void {
   window.location.href = API.start
 }
