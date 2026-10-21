@@ -9,6 +9,6 @@ import type { CloudFunctionContext } from "@edgeone/types"
 import { clearCookieHeader, isHttps, json, SESSION_COOKIE } from "../_auth/config"
 
 export async function onRequestPost(context: CloudFunctionContext): Promise<Response> {
-  const secure = context.request ? isHttps(context.request) : true
+  const secure = context.request ? isHttps(context.request, context.env) : true
   return json({ ok: true }, 200, [clearCookieHeader(SESSION_COOKIE, secure)])
 }

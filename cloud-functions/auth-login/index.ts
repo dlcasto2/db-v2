@@ -28,14 +28,14 @@ const logger = createLogger("auth-login")
 export async function onRequestGet(context: CloudFunctionContext): Promise<Response> {
   const request = context.request!
   const cfg = authConfig(context.env)
-  if (!cfg.enabled) return redirect(`${originOf(request)}/?signin=unavailable`)
+  if (!cfg.enabled) return redirect(`${originOf(request, context.env)}/?signin=unavailable`)
 
   try {
     const state = randomToken()
     const nonce = randomToken()
     const verifier = randomToken(48)
     const challenge = await pkceChallenge(verifier)
-    const redirectUri = `${originOf(request)}/auth-callback`
+    const redirectUri = `${originOf(request, context.env)}/auth-callback`
 
     const oauthCookie = await signToken(
       { state, nonce, verifier, exp: Math.floor(Date.now() / 1000) + OAUTH_MAX_AGE },
@@ -54,10 +54,10 @@ export async function onRequestGet(context: CloudFunctionContext): Promise<Respo
     })
 
     return redirect(`${cfg.authorizeUrl}?${params.toString()}`, [
-      cookieHeader(OAUTH_COOKIE, oauthCookie, { maxAge: OAUTH_MAX_AGE, secure: isHttps(request) }),
+      cookieHeader(OAUTH_COOKIE, oauthCookie, { maxAge: OAUTH_MAX_AGE, secure: isHttps(request, context.env) }),
     ])
   } catch (e) {
     logger.error("couldn't start sign-in:", e)
-    return redirect(`${originOf(request)}/?signin=error`)
+    return redirect(`${originOf(request, context.env)}/?signin=error`)
   }
 }
