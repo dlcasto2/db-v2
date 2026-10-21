@@ -12,6 +12,10 @@
  *   DEVON_AUTH0_CLIENT_SECRET  the application's client secret (server-only)
  *   DEVON_AUTH_SECRET          random string used to sign the session cookie
  *                              (optional; falls back to the client secret)
+ *   DEVON_PUBLIC_ORIGIN        the address browsers use, e.g.
+ *                              https://devon.example.com. Set this on EdgeOne:
+ *                              the runtime reports an internal host, which
+ *                              would make the OAuth redirect URI wrong.
  */
 
 import type { AgentMemory } from "@edgeone/types"
@@ -155,13 +159,74 @@ export function redirect(location: string, cookies: string[] = []): Response {
   return new Response(null, { status: 302, headers })
 }
 
-/** Devon's own origin for building the OAuth redirect URI (from the request URL) */
-export function originOf(request: { url: string }): string {
-  return new URL(request.url).origin
+/**
+ * Devon's own origin as the BROWSER sees it, e.g. https://devon.example.com.
+ *
+ * EdgeOne runs these functions behind its CDN, and the runtime reports the
+ * internal function host in `request.url` (something like
+ * http://pages-pro-0000.pages-scf-ab-pro.qcloudteo.com). Building the OAuth
+ * redirect URI from that sends Auth0 an address that isn't the one registered
+ * on the application — and isn't reachable — so sign-in fails with a callback
+ * mismatch. The public origin is resolved instead, in order:
+ *
+ *   1. DEVON_PUBLIC_ORIGIN, if set (exact and deployment-specific: recommended)
+ *   2. the X-Forwarded-Host / X-Forwarded-Proto headers the CDN adds
+ *   3. the Host header, when it isn't one of the internal names
+ *   4. whatever `request.url` says, as a last resort
+ */
+
+type HeaderBag = { get(name: string): string | null }
+
+/** Internal hosts the platform uses between its CDN and the function */
+const INTERNAL_HOST = /(^|\.)qcloudteo\.com$|(^|\.)pages-scf|(^|\.)scf\.tencentcs\.com$|^0\.0\.0\.0|^\[?::\]?$/i
+
+const HOST_SHAPE = /^([a-z0-9-]+\.)*[a-z0-9-]+(:\d{1,5})?$|^\[[0-9a-f:.]+\](:\d{1,5})?$/i
+
+function firstValue(raw: string | null | undefined): string {
+  return (raw || "").split(",")[0].trim()
 }
 
-export function isHttps(request: { url: string }): boolean {
-  return new URL(request.url).protocol === "https:"
+function isLocal(host: string): boolean {
+  const name = host.split(":")[0].toLowerCase()
+  return name === "localhost" || name === "127.0.0.1" || name === "[::1]"
+}
+
+export function publicOrigin(request: { url: string; headers?: HeaderBag }, env: Env = {}): string {
+  const explicit = (env.DEVON_PUBLIC_ORIGIN || "").trim()
+  if (explicit) {
+    try {
+      return new URL(explicit).origin
+    } catch {
+      // a malformed override falls through to the request
+    }
+  }
+
+  const headers = request.headers
+  const fromUrl = new URL(request.url)
+  const forwardedHost = firstValue(headers?.get("x-forwarded-host"))
+  const hostHeader = firstValue(headers?.get("host"))
+  const candidate = [forwardedHost, hostHeader].find((h) => h && HOST_SHAPE.test(h) && !INTERNAL_HOST.test(h))
+  const host = candidate || fromUrl.host
+
+  const forwardedProto = firstValue(headers?.get("x-forwarded-proto")).toLowerCase()
+  const protocol = forwardedProto
+    ? `${forwardedProto}:`
+    : candidate
+      ? isLocal(host)
+        ? "http:"
+        : "https:" // a public host reached through the CDN is served over https
+      : fromUrl.protocol
+
+  return `${protocol}//${host}`
+}
+
+/** Devon's own origin for building the OAuth redirect URI */
+export function originOf(request: { url: string; headers?: HeaderBag }, env: Env = {}): string {
+  return publicOrigin(request, env)
+}
+
+export function isHttps(request: { url: string; headers?: HeaderBag }, env: Env = {}): boolean {
+  return publicOrigin(request, env).startsWith("https:")
 }
 
 // ---------------------------------------------------------------------------

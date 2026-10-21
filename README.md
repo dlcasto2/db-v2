@@ -166,8 +166,9 @@ To offer "Sign in with Google", add Google as a **social connection** in Auth0 a
 | `DEVON_AUTH0_CLIENT_ID` | The application's client ID (public). |
 | `DEVON_AUTH0_CLIENT_SECRET` | The application's client secret (server-only; never sent to the browser). |
 | `DEVON_AUTH_SECRET` | A random string used to sign the session cookie. Optional — falls back to the client secret — but setting your own means rotating the client secret doesn't sign everyone out. |
+| `DEVON_PUBLIC_ORIGIN` | The address browsers use, e.g. `https://db-v5.edgeone.dev`. **Set this on EdgeOne.** The runtime reports an internal function host (`…pages-scf….qcloudteo.com`) as the request's origin, and the OAuth redirect URI is built from it — without this, Auth0 rejects the login with a callback mismatch. Devon falls back to the `X-Forwarded-Host` / `Host` headers, but the explicit value is exact. |
 
-`/auth-me` reports `{"enabled":true}` once the three `DEVON_AUTH0_*` values are set, and the sign-in control appears. Register callback URLs against your **stable** host, not EdgeOne's per-build `*-xxxx.edgeone.app` preview host, which changes each deploy.
+`/auth-me` reports `{"enabled":true}` once the three `DEVON_AUTH0_*` values are set, and the sign-in control appears. It also reports `origin` — the address Devon believes browsers use. If that doesn't match the host you open Devon on, the callback URI will be wrong: set `DEVON_PUBLIC_ORIGIN`. Register callback URLs against your **stable** host, not EdgeOne's per-build `*-xxxx.edgeone.app` preview host, which changes each deploy.
 
 ## YouTube
 

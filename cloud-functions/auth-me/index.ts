@@ -7,18 +7,22 @@
  */
 
 import type { CloudFunctionContext } from "@edgeone/types"
-import { authConfig, json, parseCookies, readSession } from "../_auth/config"
+import { authConfig, json, parseCookies, publicOrigin, readSession } from "../_auth/config"
 
 export async function onRequestGet(context: CloudFunctionContext): Promise<Response> {
   const cfg = authConfig(context.env)
+  // The address this deployment believes browsers use; the OAuth redirect URI is
+  // built from it, so showing it here makes a wrong one easy to spot.
+  const origin = context.request ? publicOrigin(context.request, context.env) : ""
   const cookies = parseCookies(context.request?.headers.get("cookie"))
   const session = await readSession(cookies, cfg.signingSecret)
   if (session) {
     return json({
       enabled: true,
+      origin,
       signedIn: true,
       user: { sub: session.sub, email: session.email, name: session.name, picture: session.picture },
     })
   }
-  return json({ enabled: cfg.enabled, signedIn: false })
+  return json({ enabled: cfg.enabled, origin, signedIn: false })
 }

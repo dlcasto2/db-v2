@@ -36,9 +36,9 @@ interface OAuthState {
 
 export async function onRequestGet(context: CloudFunctionContext): Promise<Response> {
   const request = context.request!
-  const origin = originOf(request)
+  const origin = originOf(request, context.env)
   const cfg = authConfig(context.env)
-  const secure = isHttps(request)
+  const secure = isHttps(request, context.env)
   const dropOauth = clearCookieHeader(OAUTH_COOKIE, secure)
   const back = (status: string, cookies: string[] = [dropOauth]) => redirect(`${origin}/?signin=${status}`, cookies)
 
