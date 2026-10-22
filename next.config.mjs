@@ -1,5 +1,11 @@
 /** @type {import('next').NextConfig} */
+const basePath = process.env.NEXT_PUBLIC_BASE_PATH || ""
+
 const nextConfig = {
+  output: "export",
+  trailingSlash: true,
+  basePath,
+  assetPrefix: basePath ? `${basePath}/` : undefined,
   // Baked into the server code at build time, so the YouTube settings work even on
   // hosts that only give environment variables to the build (they're only used by
   // lib/youtube-server.ts, which never reaches the browser)
