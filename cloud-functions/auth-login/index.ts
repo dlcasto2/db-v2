@@ -28,17 +28,21 @@ const logger = createLogger("auth-login")
 export async function onRequestGet(context: CloudFunctionContext): Promise<Response> {
   const request = context.request!
   const cfg = authConfig(context.env)
-  if (!cfg.enabled) return redirect(`${originOf(request, context.env)}/?signin=unavailable`)
+  if (!cfg.enabled) return redirect("/?signin=unavailable")
 
   try {
     const state = randomToken()
     const nonce = randomToken()
     const verifier = randomToken(48)
     const challenge = await pkceChallenge(verifier)
-    const redirectUri = `${originOf(request, context.env)}/auth-callback`
+    const origin = originOf(request, context.env)
+    const redirectUri = `${origin}/auth-callback`
 
+    // The origin travels in the signed cookie so the callback redeems the code
+    // against exactly the redirect_uri that was authorized — OAuth requires the
+    // two to match, and signing it keeps the browser from changing it in between.
     const oauthCookie = await signToken(
-      { state, nonce, verifier, exp: Math.floor(Date.now() / 1000) + OAUTH_MAX_AGE },
+      { state, nonce, verifier, origin, exp: Math.floor(Date.now() / 1000) + OAUTH_MAX_AGE },
       cfg.signingSecret,
     )
 
@@ -58,6 +62,6 @@ export async function onRequestGet(context: CloudFunctionContext): Promise<Respo
     ])
   } catch (e) {
     logger.error("couldn't start sign-in:", e)
-    return redirect(`${originOf(request, context.env)}/?signin=error`)
+    return redirect("/?signin=error")
   }
 }

@@ -61,6 +61,7 @@ Devon runs anywhere Next.js runs, and it is currently deployed on **EdgeOne Page
 - `app/api/proxy` is a serverless function with `maxDuration = 60`.
 - EdgeOne caps a response at about 4 MB. The proxy works around this by compressing responses and splitting big scripts into slices.
 - Static files under `public/` are served by the CDN, not the function.
+- **Devon is not a static site.** Don't set `output: "export"` in `next.config.mjs`: the proxy, the YouTube routes and the page-safety route run on the server, and the export fails on the first of them (and the EdgeOne CLI then reports "No server-handler detected, generating routes.json for pure project"). For a github.io address, publish a small page that shows Devon running on the server instead.
 
 ## Project layout
 
@@ -166,9 +167,11 @@ To offer "Sign in with Google", add Google as a **social connection** in Auth0 a
 | `DEVON_AUTH0_CLIENT_ID` | The application's client ID (public). |
 | `DEVON_AUTH0_CLIENT_SECRET` | The application's client secret (server-only; never sent to the browser). |
 | `DEVON_AUTH_SECRET` | A random string used to sign the session cookie. Optional — falls back to the client secret — but setting your own means rotating the client secret doesn't sign everyone out. |
-| `DEVON_PUBLIC_ORIGIN` | The address browsers use, e.g. `https://db-v5.edgeone.dev`. **Set this on EdgeOne.** The runtime reports an internal function host (`…pages-scf….qcloudteo.com`) as the request's origin, and the OAuth redirect URI is built from it — without this, Auth0 rejects the login with a callback mismatch. Devon falls back to the `X-Forwarded-Host` / `Host` headers, but the explicit value is exact. |
+| `DEVON_PUBLIC_ORIGIN` | Optional. The address browsers use, e.g. `https://db-v5.edgeone.dev`. Only the OAuth redirect URI needs an absolute address, and the Devon page states its own origin when it sends you to `/auth-login`, so this normally isn't needed. Set it to pin the value regardless of what the browser says. |
 
-`/auth-me` reports `{"enabled":true}` once the three `DEVON_AUTH0_*` values are set, and the sign-in control appears. It also reports `origin` — the address Devon believes browsers use. If that doesn't match the host you open Devon on, the callback URI will be wrong: set `DEVON_PUBLIC_ORIGIN`. Register callback URLs against your **stable** host, not EdgeOne's per-build `*-xxxx.edgeone.app` preview host, which changes each deploy.
+`/auth-me` reports `{"enabled":true}` once the three `DEVON_AUTH0_*` values are set, and the sign-in control appears.
+
+**On hosts that hide the public address.** EdgeOne runs these functions behind its CDN and reports an internal host (`…pages-scf….qcloudteo.com`) as the request's origin — it sends no `X-Forwarded-Host` either. Building the OAuth redirect URI from that gets the login rejected for a callback mismatch. So Devon's page states its own origin on the way to `/auth-login`, and that value is carried through the signed state cookie to the token exchange. It is used *only* for the redirect URI, which Auth0 checks against the application's Allowed Callback URLs, so a made-up one is refused rather than followed; every redirect Devon sends a visitor is relative, so there's no origin to point elsewhere. The `origin` field in `/auth-me` shows what the server would work out on its own, which is useful for spotting this, and `DEVON_PUBLIC_ORIGIN` pins it if you'd rather not rely on the page. Register callback URLs against your **stable** host, not EdgeOne's per-build `*-xxxx.edgeone.app` preview host, which changes each deploy.
 
 ## YouTube
 

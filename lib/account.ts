@@ -56,9 +56,16 @@ export async function fetchAccount(): Promise<AccountState> {
   }
 }
 
-/** Send the browser to the provider's login (a full-page navigation of the app shell) */
+/**
+ * Send the browser to the provider's login (a full-page navigation of the app
+ * shell). Devon states its own origin, because the host the page was loaded
+ * from is the one the OAuth callback has to come back to, and some platforms
+ * (EdgeOne among them) only show the server an internal hostname. The server
+ * uses it solely to build the redirect_uri, which the provider checks against
+ * its own allowed-callback list.
+ */
 export function startSignIn(): void {
-  window.location.href = API.start
+  window.location.href = `${API.start}?origin=${encodeURIComponent(window.location.origin)}`
 }
 
 export async function signOut(): Promise<boolean> {

@@ -31,16 +31,19 @@ interface OAuthState {
   state: string
   nonce: string
   verifier: string
+  /** The origin /auth-login authorized against; the token exchange must match it */
+  origin?: string
   exp: number
 }
 
 export async function onRequestGet(context: CloudFunctionContext): Promise<Response> {
   const request = context.request!
-  const origin = originOf(request, context.env)
   const cfg = authConfig(context.env)
   const secure = isHttps(request, context.env)
   const dropOauth = clearCookieHeader(OAUTH_COOKIE, secure)
-  const back = (status: string, cookies: string[] = [dropOauth]) => redirect(`${origin}/?signin=${status}`, cookies)
+  // Relative: the browser resolves it against the address it actually asked for,
+  // so this works whatever the runtime thinks its own host is, and can't be aimed elsewhere.
+  const back = (status: string, cookies: string[] = [dropOauth]) => redirect(`/?signin=${status}`, cookies)
 
   if (!cfg.enabled) return back("unavailable")
 
@@ -62,7 +65,7 @@ export async function onRequestGet(context: CloudFunctionContext): Promise<Respo
     const body = new URLSearchParams({
       grant_type: "authorization_code",
       code,
-      redirect_uri: `${origin}/auth-callback`,
+      redirect_uri: `${saved.origin || originOf(request, context.env)}/auth-callback`,
       client_id: cfg.clientId,
       client_secret: cfg.clientSecret,
       code_verifier: saved.verifier,
