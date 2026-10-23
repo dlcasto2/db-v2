@@ -169,10 +169,19 @@ export function redirect(location: string, cookies: string[] = []): Response {
  * on the application — and isn't reachable — so sign-in fails with a callback
  * mismatch. The public origin is resolved instead, in order:
  *
- *   1. DEVON_PUBLIC_ORIGIN, if set (exact and deployment-specific: recommended)
- *   2. the X-Forwarded-Host / X-Forwarded-Proto headers the CDN adds
- *   3. the Host header, when it isn't one of the internal names
- *   4. whatever `request.url` says, as a last resort
+ *   1. DEVON_PUBLIC_ORIGIN, if set (exact and deployment-specific)
+ *   2. the ?origin= the Devon page states for itself when it sends you to
+ *      /auth-login (EdgeOne exposes the public host nowhere else)
+ *   3. the X-Forwarded-Host / X-Forwarded-Proto headers a CDN may add
+ *   4. the Host header, when it isn't one of the internal names
+ *   5. whatever `request.url` says, as a last resort
+ *
+ * (2) is stated by the browser, so it is not trusted for anything that could
+ * be abused. It is used for ONE thing: the redirect_uri handed to Auth0, which
+ * Auth0 itself checks against the application's Allowed Callback URLs — a made
+ * up value is refused there rather than followed. Nothing here is ever used to
+ * build a Location header: every redirect Devon sends back to the visitor is
+ * relative, so there is no origin for an attacker to point somewhere else.
  */
 
 type HeaderBag = { get(name: string): string | null }
@@ -191,15 +200,27 @@ function isLocal(host: string): boolean {
   return name === "localhost" || name === "127.0.0.1" || name === "[::1]"
 }
 
-export function publicOrigin(request: { url: string; headers?: HeaderBag }, env: Env = {}): string {
-  const explicit = (env.DEVON_PUBLIC_ORIGIN || "").trim()
-  if (explicit) {
-    try {
-      return new URL(explicit).origin
-    } catch {
-      // a malformed override falls through to the request
-    }
+/** A usable http(s) origin, or "" — used for both the env override and ?origin= */
+function readOrigin(raw: string | null | undefined): string {
+  const value = (raw || "").trim()
+  if (!value) return ""
+  try {
+    const u = new URL(value)
+    if (u.protocol !== "http:" && u.protocol !== "https:") return ""
+    if (!HOST_SHAPE.test(u.host)) return ""
+    return u.origin
+  } catch {
+    return ""
   }
+}
+
+export function publicOrigin(request: { url: string; headers?: HeaderBag }, env: Env = {}): string {
+  const explicit = readOrigin(env.DEVON_PUBLIC_ORIGIN)
+  if (explicit) return explicit
+
+  const fromUrlEarly = new URL(request.url)
+  const stated = readOrigin(fromUrlEarly.searchParams.get("origin"))
+  if (stated) return stated
 
   const headers = request.headers
   const fromUrl = new URL(request.url)
@@ -225,8 +246,19 @@ export function originOf(request: { url: string; headers?: HeaderBag }, env: Env
   return publicOrigin(request, env)
 }
 
+/**
+ * Whether cookies should carry Secure. True for anything but a local address:
+ * the runtime can report plain http for an internal hop even though the
+ * visitor reached Devon over https.
+ */
 export function isHttps(request: { url: string; headers?: HeaderBag }, env: Env = {}): boolean {
-  return publicOrigin(request, env).startsWith("https:")
+  const origin = publicOrigin(request, env)
+  if (origin.startsWith("https:")) return true
+  try {
+    return !isLocal(new URL(origin).host)
+  } catch {
+    return true
+  }
 }
 
 // ---------------------------------------------------------------------------
