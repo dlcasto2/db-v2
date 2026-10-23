@@ -10,7 +10,8 @@ Built with Next.js 16 (App Router), TypeScript, Tailwind CSS v4 and shadcn/ui.
 ## Features
 
 - **Browsing:** tabs, back and forward, reload, bookmarks, history and a new tab page with shortcut tiles.
-- **Search:** DuckDuckGo is the default search engine.
+- **Search:** DuckDuckGo is the preferred search engine, with Mojeek, Ecosia, Brave and Bing behind it.
+  - Devon uses the first of those that actually answers from where it's deployed — see [Search](#search).
   - The address bar suggests searches, popular sites, and pages from your history and bookmarks.
 - **Proxy:** pages, CSS and scripts are rewritten so links, forms, `fetch`/XHR, workers, iframes and `history.pushState` stay inside Devon.
   - Large scripts are compressed, or fetched in slices, so they fit under the host's response size limit.
@@ -80,6 +81,7 @@ Devon runs anywhere Next.js runs, and it is currently deployed on **EdgeOne Page
 | `components/library-panel.tsx` | Bookmarks and history side panel |
 | `components/save-page-dialog.tsx`, `media-downloads.tsx`, `page-problems.tsx` | Save offline, media downloads, page report |
 | `lib/proxy-utils.ts` | URL formatting, search engine, proxy fetch helpers |
+| `lib/search-engines.ts` | The search engines Devon tries, and how it spots a block page |
 | `lib/suggestions.ts` | Address bar suggestions |
 | `lib/extensions/` | Extension store, manifest handling, runtime (`chrome.*` APIs), page builder, URL matching, zip reader |
 | `lib/page-archiver.ts` | Offline ZIP snapshots |
@@ -97,6 +99,35 @@ Devon runs anywhere Next.js runs, and it is currently deployed on **EdgeOne Page
 | `components/prompt-gen-page.tsx`, `lib/prompt-gen.ts` | Prompt Gen |
 | `public/games/` | Game files |
 | `public/devon-frame.html` | Blank same-origin page used for extension frames |
+
+## Search
+
+Typing something that isn't an address searches the web. Which engine answers
+that search is decided per deployment, not in the code, because search engines
+refuse requests from datacenter addresses and they don't all refuse the same
+ones — DuckDuckGo answers from some hosts and returns its "Unexpected error.
+Please try again." page from others (Vercel among them), while Bing answers
+from both.
+
+So the first search on a server instance asks `/api/search`, which tries the
+engines in [`lib/search-engines.ts`](lib/search-engines.ts) in order with a
+stand-in query and keeps the first that answers for half an hour. Every search
+after that is answered from memory, and the address bar shows that engine's
+own results URL.
+
+An engine counts as answering when its page links out to at least six other
+sites. That's the one difference between a results page and a block page that
+holds across every engine and survives their markup changes — a results page
+links out to dozens of sites, a CAPTCHA or error page to none. Matching on the
+wording of block pages would also misfire on a search *for* those words.
+
+To pin one engine instead, call `/api/search?q=…&engine=<id>` with an id from
+that file (`ddg`, `mojeek`, `ecosia`, `brave`, `bing`); that skips the probe.
+If `/api/search` can't be reached at all, Devon falls back to DuckDuckGo.
+
+Address-bar *suggestions* are separate, and come from DuckDuckGo's autocomplete
+and Instant Answer endpoints through the proxy. Those answer from datacenter
+addresses even where the results page doesn't, so they're left alone.
 
 ## Apps
 

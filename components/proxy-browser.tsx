@@ -45,7 +45,7 @@ import {
   WifiOff,
   X,
 } from "lucide-react"
-import { fetchThroughProxy, formatUrl } from "@/lib/proxy-utils"
+import { fetchThroughProxy, formatUrl, isSearchInput, resolveSearchUrl } from "@/lib/proxy-utils"
 import { SessionManager, type BookmarkItem, type HistoryItem } from "@/lib/session-manager"
 import {
   fetchAccount,
@@ -548,7 +548,9 @@ export function ProxyBrowser() {
         return
       }
 
-      const formattedUrl = formatUrl(trimmed)
+      // A search asks the server which engine answers from this deployment
+      // first; an address goes straight through.
+      const formattedUrl = isSearchInput(trimmed) ? await resolveSearchUrl(trimmed) : formatUrl(trimmed)
       setPageErrors((prev) => (prev[tabId]?.length ? { ...prev, [tabId]: [] } : prev))
       setPageActivity((prev) => (prev[tabId]?.length ? { ...prev, [tabId]: [] } : prev))
 
