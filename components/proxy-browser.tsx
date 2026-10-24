@@ -46,7 +46,16 @@ import {
   WifiOff,
   X,
 } from "lucide-react"
-import { fetchThroughProxy, formatUrl, isSearchInput, isStrictIdentityUrl, reportIdpBlock, resolveSearchUrl } from "@/lib/proxy-utils"
+import {
+  fetchThroughProxy,
+  formatUrl,
+  identityHandoff,
+  isSearchInput,
+  isStrictIdentityUrl,
+  reportIdpBlock,
+  resolveSearchUrl,
+  type IdentityHandoff,
+} from "@/lib/proxy-utils"
 import { SessionManager, type BookmarkItem, type HistoryItem } from "@/lib/session-manager"
 import {
   fetchAccount,
@@ -119,18 +128,17 @@ interface Tab {
   /** The frame navigated somewhere the proxy couldn't intercept */
   leftProxy?: boolean
   /**
-   * Navigation landed on a strict identity provider's sign-in page (see
+   * Navigation landed on a strict identity provider's page (see
    * isStrictIdentityUrl) — never fetched/rendered, since it can only ever
-   * show a dead-end error inside Devon's frame. destinationUrl is the real
-   * site the user was actually trying to sign into, offered as an unproxied
-   * tab instead — or null when that site isn't known (e.g. the IdP URL was
-   * navigated to directly, with no prior page to infer it from). It must
-   * never fall back to idpUrl itself: that URL carries a redirect_uri baked
-   * in from Devon's own origin, which Microsoft/Google/Apple never have
-   * registered, so opening it for real reproduces the exact sign-in error
-   * (AADSTS50011 and the like) this interstitial exists to avoid.
+   * show a dead-end error inside Devon's frame. Built by identityHandoff:
+   * destinationUrl is the real site the user was trying to sign into and
+   * directUrl a clean entry point on the provider itself, both offered as
+   * unproxied tabs. Neither is ever idpUrl itself — that URL carries a
+   * redirect_uri baked in from Devon's own origin, so opening it for real
+   * reproduces the exact sign-in error (AADSTS50011 and the like) this
+   * interstitial exists to avoid.
    */
-  blockedSignIn?: { idpUrl: string; destinationUrl: string | null }
+  blockedSignIn?: IdentityHandoff
 }
 
 /**
@@ -576,11 +584,10 @@ export function ProxyBrowser() {
       // opened as a real, unproxied tab.
       if (isStrictIdentityUrl(formattedUrl)) {
         const previousUrl = tabsRef.current.find((t) => t.id === tabId)?.url
-        // Never fall back to formattedUrl itself here — it's the IdP URL
-        // that was just blocked, redirect_uri and all, so opening it for
-        // real would only reproduce the error (see the Tab.blockedSignIn
-        // doc comment). Null means "destination unknown"; the UI handles that.
-        const destinationUrl = previousUrl && !isStrictIdentityUrl(previousUrl) ? previousUrl : null
+        // identityHandoff never offers formattedUrl itself — it's the IdP URL
+        // that was just blocked, redirect_uri and all (see the
+        // Tab.blockedSignIn doc comment).
+        const handoff = identityHandoff(formattedUrl, previousUrl)
         reportIdpBlock(formattedUrl, previousUrl)
         controllersRef.current.get(tabId)?.abort()
         controllersRef.current.delete(tabId)
@@ -599,7 +606,7 @@ export function ProxyBrowser() {
                   leftProxy: undefined,
                   error: `${hostnameOf(formattedUrl)}'s sign-in page can't render inside Devon (blocks embedding)`,
                   errorDetails: undefined,
-                  blockedSignIn: { idpUrl: formattedUrl, destinationUrl },
+                  blockedSignIn: handoff,
                   isSecure: formattedUrl.startsWith("https://"),
                 }
               : tab,
@@ -679,7 +686,7 @@ export function ProxyBrowser() {
                     leftProxy: undefined,
                     error: `${hostnameOf(finalUrl)}'s sign-in page can't render inside Devon (blocks embedding)`,
                     errorDetails: undefined,
-                    blockedSignIn: { idpUrl: finalUrl, destinationUrl: formattedUrl },
+                    blockedSignIn: identityHandoff(finalUrl, formattedUrl),
                     isSecure: finalUrl.startsWith("https://"),
                   }
                 : tab,
@@ -2054,18 +2061,33 @@ export function ProxyBrowser() {
                   iframe, which is how every page in Devon is shown — this isn&apos;t a bug in Devon, it&apos;s a
                   deliberate anti-clickjacking protection on their end, and there&apos;s no way around it from here.
                 </p>
-                {!activeTab.blockedSignIn.destinationUrl && (
-                  <p className="mt-2 text-sm text-foreground/80">
-                    Devon can&apos;t tell which site you were trying to reach, so there&apos;s no safe link to hand
-                    you here — opening the sign-in page itself would just repeat the same error for real, instead of
-                    blocking it. Open the site directly in a new tab and sign in from there.
-                  </p>
-                )}
-                <div className="mt-6 flex gap-2">
+                <p className="mt-2 text-sm text-foreground/80">
+                  {activeTab.blockedSignIn.destinationUrl
+                    ? "Open the site in a normal tab and sign in there — your password goes straight to the real page, never through Devon."
+                    : activeTab.blockedSignIn.directUrl
+                      ? "Devon can't tell which site you were trying to reach, so it offers a clean copy of the sign-in page instead — without the return address that would send you back through Devon. Your password goes straight to the real page, never through Devon."
+                      : "Devon can't tell which site you were trying to reach, so there's no safe link to hand you here. Open the site directly in a new tab and sign in from there."}
+                </p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Signing in there doesn&apos;t sign in pages you browse through Devon — that session stays in the
+                  normal tab.
+                </p>
+                <div className="mt-6 flex flex-wrap gap-2">
                   {activeTab.blockedSignIn.destinationUrl && (
                     <Button asChild className="rounded-full px-5">
                       <a href={activeTab.blockedSignIn.destinationUrl} target="_blank" rel="noopener noreferrer">
                         <ExternalLink /> Open {hostnameOf(activeTab.blockedSignIn.destinationUrl)} in my browser
+                      </a>
+                    </Button>
+                  )}
+                  {activeTab.blockedSignIn.directUrl && (
+                    <Button
+                      asChild
+                      variant={activeTab.blockedSignIn.destinationUrl ? "outline" : "default"}
+                      className="rounded-full px-5"
+                    >
+                      <a href={activeTab.blockedSignIn.directUrl} target="_blank" rel="noopener noreferrer">
+                        <ExternalLink /> Open {hostnameOf(activeTab.blockedSignIn.directUrl)}
                       </a>
                     </Button>
                   )}
