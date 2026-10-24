@@ -9,10 +9,12 @@
  *   cloud-functions/ai-delete-conversation  → POST /ai-delete-conversation
  *   cloud-functions/ai-page-result          → POST /ai-page-result   (page tool results)
  *   cloud-functions/ai-session              → POST /ai-session       (session state)
+ *   cloud-functions/ai-feedback             → POST /ai-feedback     (thumbs up/down on a reply)
  */
 
 import type {
   BrowserSession,
+  FeedbackReasonCode,
   ImageSsePayload,
   ListConversationsResponse,
   Message,
@@ -30,6 +32,7 @@ export const AI_API = {
   deleteConversation: "/ai-delete-conversation",
   pageResult: "/ai-page-result",
   session: "/ai-session",
+  feedback: "/ai-feedback",
 } as const
 
 /** Why a message couldn't be sent */
@@ -313,6 +316,39 @@ export async function fetchSession(conversationId: string): Promise<{ session: S
     return { session: data?.session ?? null, available: Boolean(data?.available) }
   } catch {
     return { session: null, available: false }
+  }
+}
+
+/**
+ * Record a thumbs up/down on a reply. Best-effort, fire-and-forget: a visitor
+ * never needs to wait on this and it never blocks the chat. Note: deliberately
+ * doesn't send the page or the conversation — see "Devon AI" → "Feedback" in
+ * README.md for exactly what's logged and why.
+ */
+export async function postFeedback(input: {
+  conversationId: string
+  messageId: string
+  rating: "up" | "down"
+  reason?: FeedbackReasonCode
+  note?: string
+  taskType: string
+}): Promise<boolean> {
+  try {
+    const res = await fetch(AI_API.feedback, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversation_id: input.conversationId,
+        message_id: input.messageId,
+        rating: input.rating,
+        ...(input.reason ? { reason: input.reason } : {}),
+        ...(input.note ? { note: input.note } : {}),
+        task_type: input.taskType,
+      }),
+    })
+    return res.ok
+  } catch {
+    return false
   }
 }
 

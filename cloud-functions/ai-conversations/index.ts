@@ -314,7 +314,7 @@ export async function onRequestPost(context: CloudFunctionContext): Promise<Resp
     const conversations: NormalizedConversation[] = [];
     for (const conv of normalized) {
       // dq-* (daily-limit counters) and dt-* (page-action mailboxes) aren't chats
-      if (/^(d[qt]|acct)-/.test(conv.id)) continue;
+      if (/^(d[qft]|acct)-/.test(conv.id)) continue;
       if (seenIds.has(conv.id)) continue;
       seenIds.add(conv.id);
       conversations.push(conv);

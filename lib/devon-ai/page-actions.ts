@@ -280,6 +280,27 @@ export function findRef(doc: Document, ref: number): HTMLElement {
   return el
 }
 
+/**
+ * Something else is on top of `el` at the point Devon AI would click/type —
+ * almost always a modal, cookie banner or other overlay that would silently
+ * swallow the action. Call after reveal() so off-screen elements are already
+ * scrolled into view. Returns a short description of what's covering it, or
+ * null when `el` (or an ancestor/descendant of it — e.g. a <label> wrapping a
+ * hidden checkbox) is really the topmost thing there.
+ */
+export function topElementObstructing(doc: Document, el: HTMLElement): string | null {
+  const win = winOf(doc)
+  const rect = el.getBoundingClientRect()
+  if (rect.width < 1 || rect.height < 1) return null // e.g. a custom checkbox hidden behind its label
+  const x = Math.min(Math.max(rect.left + rect.width / 2, 0), win.innerWidth - 1)
+  const y = Math.min(Math.max(rect.top + rect.height / 2, 0), win.innerHeight - 1)
+  if (rect.bottom < 0 || rect.top > win.innerHeight) return null // still off screen; let the caller decide
+  const top = doc.elementFromPoint(x, y)
+  if (!top || top === el || el.contains(top) || top.contains(el)) return null
+  if (el instanceof win.HTMLInputElement && el.labels?.length && Array.from(el.labels).some((l) => l === top || l.contains(top))) return null
+  return squash(nameOf(top as HTMLElement) || top.tagName.toLowerCase(), 60)
+}
+
 /** Briefly outline the element so the visitor sees what Devon AI is touching */
 export function highlight(el: HTMLElement) {
   const doc = el.ownerDocument
@@ -293,7 +314,7 @@ export function highlight(el: HTMLElement) {
   winOf(doc).setTimeout(() => el.removeAttribute(FOCUS_ATTR), 1600)
 }
 
-function reveal(el: HTMLElement) {
+export function reveal(el: HTMLElement) {
   try {
     el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" as ScrollBehavior })
   } catch {
@@ -302,7 +323,7 @@ function reveal(el: HTMLElement) {
   highlight(el)
 }
 
-function describe(el: HTMLElement): string {
+export function describe(el: HTMLElement): string {
   const name = nameOf(el)
   return `${roleOf(el)}${name ? ` "${name}"` : ""}`
 }
@@ -497,6 +518,82 @@ export function scrollPage(doc: Document, opts: { direction?: string; ref?: numb
       win.scrollBy({ top: step, behavior: "instant" as ScrollBehavior })
   }
   return `Scrolled ${opts.direction || "down"}. Now ${scrollInfo(doc)}.`
+}
+
+// ---------------------------------------------------------------------------
+// Verifying an action actually did something (not just that it was dispatched)
+// ---------------------------------------------------------------------------
+
+export interface StructuredSnapshot {
+  url: string
+  elements: { ref: number; line: string }[]
+  text: string
+}
+
+/** A lightweight, comparable snapshot of a page's state — for diffing, not for showing to the model directly */
+export function captureSnapshot(doc: Document, url: string): StructuredSnapshot {
+  return { url, elements: listElements(doc).map((e) => ({ ref: e.ref, line: e.line })), text: pageText(doc) }
+}
+
+function normText(t: string): string {
+  return t.replace(/\s+/g, " ").trim()
+}
+
+/** Lines that look like a price or availability changing (the case a plain text diff is most useful for) */
+const PRICE_LIKE = /[$£€¥]\s?\d|\d\s?%|\bin stock\b|\bout of stock\b|\bsold out\b|\bunavailable\b|\bavailable\b|\bprice\b/i
+
+function priceLikeChanges(beforeText: string, afterText: string, max = 5): string[] {
+  const before = new Set(beforeText.split("\n").map(normText).filter(Boolean))
+  const out: string[] = []
+  for (const raw of afterText.split("\n")) {
+    const line = normText(raw)
+    if (!line || before.has(line) || !PRICE_LIKE.test(line)) continue
+    out.push(squash(line, 90))
+    if (out.length >= max) break
+  }
+  return out
+}
+
+export interface SnapshotDiff {
+  /** Anything at all changed (url, an element, or the page text) */
+  changed: boolean
+  /** One short line for the model: what changed, or that nothing did */
+  summary: string
+}
+
+/**
+ * What changed between two snapshots of the same tab. Element lines already
+ * carry state (checked/selected/value/disabled/…), so a ref whose line didn't
+ * change really didn't change — this is what lets an action's result say
+ * "nothing happened" instead of just dumping a second full page read and
+ * hoping the model notices.
+ */
+export function diffSnapshots(before: StructuredSnapshot, after: StructuredSnapshot): SnapshotDiff {
+  const beforeByRef = new Map(before.elements.map((e) => [e.ref, e.line]))
+  const afterByRef = new Map(after.elements.map((e) => [e.ref, e.line]))
+  const added: string[] = []
+  const changed: string[] = []
+  for (const [ref, line] of afterByRef) {
+    const prev = beforeByRef.get(ref)
+    if (prev === undefined) added.push(line)
+    else if (prev !== line) changed.push(`${squash(prev, 60)} → ${squash(line, 60)}`)
+  }
+  const removed: string[] = []
+  for (const [ref, line] of beforeByRef) if (!afterByRef.has(ref)) removed.push(line)
+
+  const urlChanged = before.url !== after.url
+  const prices = priceLikeChanges(before.text, after.text)
+  const textChanged = prices.length > 0 || normText(before.text) !== normText(after.text)
+
+  const parts: string[] = []
+  if (urlChanged) parts.push(`moved to ${after.url}`)
+  if (changed.length) parts.push(`${changed.length} element${changed.length === 1 ? "" : "s"} changed: ${changed.slice(0, 5).join("; ")}`)
+  if (added.length) parts.push(`${added.length} new element${added.length === 1 ? "" : "s"} appeared: ${added.slice(0, 5).map((l) => squash(l, 60)).join(" | ")}`)
+  if (removed.length) parts.push(`${removed.length} element${removed.length === 1 ? "" : "s"} disappeared: ${removed.slice(0, 5).map((l) => squash(l, 60)).join(" | ")}`)
+  if (prices.length) parts.push(`text that looks like a price or availability changed: ${prices.join(" | ")}`)
+  else if (!urlChanged && textChanged && !changed.length && !added.length && !removed.length) parts.push("the page text changed")
+
+  return { changed: parts.length > 0, summary: parts.join("; ") || "nothing — the page looks the same as before" }
 }
 
 /** Resolves once the page has stopped changing for `quietMs` (or after `maxMs`) */

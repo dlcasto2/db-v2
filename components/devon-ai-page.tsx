@@ -19,9 +19,12 @@ import {
   Maximize2,
   MessagesSquare,
   Plus,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
   Square,
+  ThumbsDown,
+  ThumbsUp,
   Trash2,
   X,
 } from "lucide-react"
@@ -41,9 +44,10 @@ import {
   sendDevonAi,
   startDevonAi,
   stopDevonAi,
+  submitDevonAiFeedback,
   useDevonAi,
 } from "@/lib/devon-ai/store"
-import type { ActionStep, ConversationSummary, Message } from "@/lib/devon-ai/types"
+import type { ActionStep, ConversationSummary, FeedbackReasonCode, Message } from "@/lib/devon-ai/types"
 import { cn } from "@/lib/utils"
 
 interface DevonAiPageProps {
@@ -192,7 +196,7 @@ export function DevonAiPage({ onOpenLink, onOpenApps, variant = "page", onClose,
 
 function SessionPanel({ chat, onOpenLink, onClose }: { chat: ChatState; onOpenLink: (url: string) => void; onClose: () => void }) {
   const s = chat.session
-  const empty = !s?.task && !s?.steps.length && !s?.notes.length && !s?.pages.length && !chat.allowedSites.length
+  const empty = !s?.task && !s?.steps.length && !s?.notes.length && !s?.openQuestions.length && !s?.pages.length && !chat.allowedSites.length
   return (
     <div className="relative z-20 max-h-[55%] flex-shrink-0 overflow-y-auto scrollbar-thin border-b border-border bg-toolbar px-4 py-3 text-[13px] shadow-lg">
       <div className="mb-2 flex items-center gap-2">
@@ -257,6 +261,16 @@ function SessionPanel({ chat, onOpenLink, onClose }: { chat: ChatState; onOpenLi
               </ul>
             </div>
           )}
+          {!!s?.openQuestions.length && (
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Open questions</p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4 text-amber-200/80">
+                {s.openQuestions.map((q, i) => (
+                  <li key={i}>{q}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           {!!s?.pages.length && (
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Pages used</p>
@@ -267,6 +281,7 @@ function SessionPanel({ chat, onOpenLink, onClose }: { chat: ChatState; onOpenLi
                       {p.title || hostOf(p.url)}
                     </button>
                     <span className="text-muted-foreground"> · {hostOf(p.url)}</span>
+                    {p.state && <span className="text-muted-foreground"> — {p.state}</span>}
                   </li>
                 ))}
               </ul>
@@ -298,22 +313,34 @@ function SessionPanel({ chat, onOpenLink, onClose }: { chat: ChatState; onOpenLi
 }
 
 function ApprovalCard({ approval }: { approval: NonNullable<ChatState["approval"]> }) {
+  const warn = approval.irreversible
   return (
-    <div role="alertdialog" aria-label="Devon AI wants to act on a page" className="mb-2 rounded-xl bg-primary/10 px-3 py-3 ring-1 ring-primary/35">
+    <div
+      role="alertdialog"
+      aria-label="Devon AI wants to act on a page"
+      className={cn("mb-2 rounded-xl px-3 py-3 ring-1", warn ? "bg-amber-400/10 ring-amber-400/40" : "bg-primary/10 ring-primary/35")}
+    >
       <div className="flex items-start gap-2.5">
-        <Hand className="mt-0.5 size-4 flex-shrink-0 text-primary" />
+        {warn ? (
+          <ShieldAlert className="mt-0.5 size-4 flex-shrink-0 text-amber-400" />
+        ) : (
+          <Hand className="mt-0.5 size-4 flex-shrink-0 text-primary" />
+        )}
         <p className="flex-1 text-[13px]">
           Devon AI wants to <span className="font-medium text-foreground">{approval.description}</span> on{" "}
           <span className="font-medium text-foreground">{approval.site}</span>.
+          {warn && <span className="mt-0.5 block text-amber-200/90">This looks hard to undo — it's asked fresh every time, even on sites you've allowed.</span>}
         </p>
       </div>
       <div className="mt-2.5 flex flex-wrap gap-1.5 pl-6">
         <Button size="sm" className="h-7 rounded-full px-3 text-xs" onClick={() => respondDevonAiApproval("once")}>
           Allow
         </Button>
-        <Button size="sm" variant="secondary" className="h-7 rounded-full px-3 text-xs" onClick={() => respondDevonAiApproval("site")}>
-          <ShieldCheck /> Allow on {approval.site} for this chat
-        </Button>
+        {!warn && (
+          <Button size="sm" variant="secondary" className="h-7 rounded-full px-3 text-xs" onClick={() => respondDevonAiApproval("site")}>
+            <ShieldCheck /> Allow on {approval.site} for this chat
+          </Button>
+        )}
         <Button size="sm" variant="ghost" className="h-7 rounded-full px-3 text-xs" onClick={() => respondDevonAiApproval("deny")}>
           Deny
         </Button>
@@ -583,19 +610,108 @@ function Bubble({ message, onOpenLink }: { message: Message; onOpenLink: (url: s
           </div>
         )}
         {!message.streaming && message.content && !message.failed && (
-          <button
-            onClick={() => {
-              navigator.clipboard?.writeText(message.content).then(() => {
-                setCopied(true)
-                setTimeout(() => setCopied(false), 1200)
-              })
-            }}
-            className="mt-1.5 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground opacity-0 transition hover:bg-white/[0.06] hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
-          >
-            {copied ? <Check className="size-3" /> : <Copy className="size-3" />} {copied ? "Copied" : "Copy"}
-          </button>
+          <div className="mt-1.5 flex items-center gap-1">
+            <button
+              onClick={() => {
+                navigator.clipboard?.writeText(message.content).then(() => {
+                  setCopied(true)
+                  setTimeout(() => setCopied(false), 1200)
+                })
+              }}
+              className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground opacity-0 transition hover:bg-white/[0.06] hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+            >
+              {copied ? <Check className="size-3" /> : <Copy className="size-3" />} {copied ? "Copied" : "Copy"}
+            </button>
+            <FeedbackButtons message={message} />
+          </div>
         )}
       </div>
+    </div>
+  )
+}
+
+const FEEDBACK_REASONS: { code: FeedbackReasonCode; label: string }[] = [
+  { code: "wrong_fact", label: "Wrong fact" },
+  { code: "misread_page", label: "Misread the page" },
+  { code: "bad_action", label: "Bad/unsafe action" },
+  { code: "other", label: "Other" },
+]
+
+/** Thumbs up/down on a reply. Up sends right away; down opens reason chips + an optional note first. */
+function FeedbackButtons({ message }: { message: Message }) {
+  const [open, setOpen] = useState(false)
+  const [reason, setReason] = useState<FeedbackReasonCode | null>(null)
+  const [note, setNote] = useState("")
+
+  if (message.feedback) {
+    return (
+      <span className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground opacity-0 transition group-hover:opacity-100">
+        {message.feedback === "up" ? <ThumbsUp className="size-3 fill-current" /> : <ThumbsDown className="size-3 fill-current" />} Thanks for the
+        feedback
+      </span>
+    )
+  }
+
+  return (
+    <div className="relative opacity-0 transition focus-within:opacity-100 group-hover:opacity-100">
+      <div className="flex items-center gap-0.5">
+        <button
+          onClick={() => submitDevonAiFeedback(message.id, "up")}
+          title="Good reply"
+          className="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
+        >
+          <ThumbsUp className="size-3" />
+        </button>
+        <button
+          onClick={() => setOpen((v) => !v)}
+          title="Something's wrong with this reply"
+          aria-expanded={open}
+          className={cn("grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-white/[0.06] hover:text-foreground", open && "bg-white/[0.08] text-foreground")}
+        >
+          <ThumbsDown className="size-3" />
+        </button>
+      </div>
+      {open && (
+        <div className="absolute left-0 top-full z-10 mt-1 w-72 rounded-lg bg-toolbar p-2 shadow-xl ring-1 ring-border">
+          <div className="flex flex-wrap gap-1">
+            {FEEDBACK_REASONS.map((r) => (
+              <button
+                key={r.code}
+                onClick={() => setReason(r.code)}
+                className={cn(
+                  "rounded-full px-2 py-0.5 text-[11px] ring-1 transition",
+                  reason === r.code ? "bg-primary/20 text-foreground ring-primary/40" : "text-muted-foreground ring-border hover:text-foreground",
+                )}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            maxLength={300}
+            placeholder="Add a note (optional)"
+            className="mt-1.5 w-full rounded-md bg-white/[0.04] px-2 py-1 text-[11px] outline-none ring-1 ring-border placeholder:text-muted-foreground focus:ring-primary/50"
+          />
+          <div className="mt-1.5 flex justify-end gap-1.5">
+            <Button size="sm" variant="ghost" className="h-6 rounded-full px-2.5 text-[11px]" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="h-6 rounded-full px-2.5 text-[11px]"
+              disabled={!reason}
+              onClick={() => {
+                submitDevonAiFeedback(message.id, "down", reason ?? undefined, note)
+                setOpen(false)
+              }}
+            >
+              Send
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

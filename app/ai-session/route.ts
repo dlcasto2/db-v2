@@ -24,7 +24,7 @@ function jsonResponse(data: unknown, status = 200): Response {
 export async function POST(request: Request): Promise<Response> {
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>
   const conversationId = request.headers.get("makers-conversation-id") || ""
-  if (!conversationId || /^(d[qt]|acct)-/.test(conversationId)) {
+  if (!conversationId || /^(d[qft]|acct)-/.test(conversationId)) {
     return jsonResponse({ status: "error", message: "Send the chat ID in the makers-conversation-id header" }, 400)
   }
 
