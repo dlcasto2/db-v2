@@ -1997,6 +1997,18 @@ export async function GET(request: NextRequest) {
   const sub = subpathResponse(request, "GET")
   if (sub) return sub
   if (request.nextUrl.searchParams.get("clearCookies") === "1") return clearJarCookies(request)
+
+  // A strict-IdP sign-in was blocked client-side instead of being attempted
+  // (see isStrictIdentityUrl in lib/proxy-utils.ts) — just note it happened,
+  // so it's visible which identity providers visitors actually hit. Never
+  // fetches the identity provider itself.
+  if (request.nextUrl.searchParams.get("idpBlocked") === "1") {
+    const blocked = request.nextUrl.searchParams.get("url") || ""
+    const ref = request.nextUrl.searchParams.get("ref") || ""
+    console.log(`[proxy] strict-IdP sign-in blocked: ${blocked}${ref ? ` (referrer: ${ref})` : ""}`)
+    return new NextResponse(null, { status: 204 })
+  }
+
   const targetUrl = request.nextUrl.searchParams.get("url")
   if (!targetUrl) {
     return NextResponse.json({ error: "URL parameter is required" }, { status: 400 })
