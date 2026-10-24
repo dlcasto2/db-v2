@@ -37,35 +37,15 @@ function decodeEntities(text: string): string {
 // executing them (SVG and XML can carry scripts) or downloading them
 const TEXTUAL_TYPE = /^(text\/|application\/(json|javascript|x-javascript|ecmascript|xml|typescript|ld\+json|manifest\+json))/i
 
-/**
- * Hosts whose interactive sign-in page refuses to render inside ANY iframe —
- * a deliberate anti-clickjacking protection on their own end, not something
- * Devon's proxy can route around. Every page Devon shows lives in a
- * same-origin frame (see ProxiedFrame in proxy-browser.tsx), so loading one
- * of these there never shows the real sign-in form, only a generic
- * "something went wrong" page. Worse, even if it did render, that frame's
- * origin genuinely IS Devon's (not spoofed — that's what lets its
- * history.replaceState trick work at all), so a redirect_uri the page builds
- * from window.location.origin would point at Devon, not the real site.
- * Neither problem is fixable inside the proxy; isStrictIdentityUrl's callers
- * detect this ahead of time and offer the real site in an unproxied tab
- * instead of attempting to load it here.
- */
-export const STRICT_IDENTITY_HOSTS = [
-  "login.microsoftonline.com",
-  "login.live.com",
-  "login.microsoft.com",
-  "accounts.google.com",
-  "appleid.apple.com",
-]
-
-export function isStrictIdentityUrl(url: string): boolean {
-  try {
-    return STRICT_IDENTITY_HOSTS.includes(new URL(url).hostname.toLowerCase())
-  } catch {
-    return false
-  }
-}
+// Identity-provider detection lives in its own import-free module so it can
+// be unit-tested directly; re-exported so callers keep importing from here.
+export {
+  STRICT_IDENTITY_HOSTS,
+  directIdentityUrl,
+  identityHandoff,
+  isStrictIdentityUrl,
+  type IdentityHandoff,
+} from "@/lib/identity-hosts"
 
 /**
  * Best-effort, fire-and-forget note that a sign-in to `idpUrl` was blocked
