@@ -10,6 +10,11 @@
     "skipLibCheck": true,
     "strict": true,
     "noEmit": true,
+    // Lets a relative import spell its real ".ts" extension (e.g.
+    // cloud-functions/_auth/config.ts importing "./core.ts") — Next's own
+    // bundler doesn't need this, but Node's native loader does when a file
+    // is run directly, as cloud-functions/_auth/config.test.mjs does.
+    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",

@@ -8,7 +8,7 @@
     "lint": "next lint",
     "start": "next start",
     "postinstall": "node scripts/copy-vendor.mjs",
-    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test lib/*.test.mjs"
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test lib/*.test.mjs cloud-functions/**/*.test.mjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.296",

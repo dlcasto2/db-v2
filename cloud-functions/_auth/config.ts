@@ -19,10 +19,22 @@
  */
 
 import type { AgentMemory } from "@edgeone/types"
-import { randomToken, signToken, verifyToken } from "./core"
+// ".js" (not ".ts"): resolves to core.ts under TS's bundler/nodenext rules,
+// and — unlike a bare "./core" — is also resolvable by Node's own ESM loader
+// when this file is run directly, e.g. by `node --test` (see config.test.mjs).
+import { randomToken, signToken, verifyToken } from "./core.ts"
 
 type Env = Record<string, string | undefined>
-type Store = Omit<AgentMemory, "langgraphCheckpointer" | "langgraphStore">
+/**
+ * Only the three message methods the sync store actually calls. EdgeOne's
+ * real `context.agent.store` (a full AgentMemory) satisfies this trivially;
+ * narrowing to just these lets Vercel's Redis-backed store
+ * (lib/devon-ai/server/store.ts's createAiStore(), written against the same
+ * Pick<AgentMemory, ...> convention as agents/_mailbox.ts and friends) stand
+ * in for it too, with no change to readSyncRaw/writeSyncRaw themselves — see
+ * app/account-sync/route.ts.
+ */
+type Store = Pick<AgentMemory, "getMessages" | "appendMessage" | "clearMessages">
 
 export const SESSION_COOKIE = "devon_account"
 export const OAUTH_COOKIE = "devon_oauth"

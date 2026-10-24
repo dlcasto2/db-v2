@@ -87,7 +87,9 @@ Devon runs anywhere Next.js runs, and it is currently deployed on both **EdgeOne
 | `lib/page-archiver.ts` | Offline ZIP snapshots |
 | `lib/devtools.ts`, `lib/diagnostics.ts`, `lib/media.ts` | Eruda, page report data, media detection |
 | `lib/session-manager.ts` | Tabs, bookmarks and history in local storage |
-| `lib/account.ts`, `cloud-functions/auth-*`, `cloud-functions/account-sync/`, `cloud-functions/_auth/` | Auth0 (OIDC) sign-in and cross-device sync (`/auth-login`, `/auth-callback`, `/auth-me`, `/auth-logout`, `/account-sync`) |
+| `lib/account.ts`, `cloud-functions/_auth/` | Account client, and the OIDC/session logic shared by both backends below (`authConfig`, cookie signing, `readSyncRaw`/`writeSyncRaw`) — written against `process.env` and Web `Request`/`Headers`, not EdgeOne itself, so both backends use it unchanged |
+| `cloud-functions/auth-*`, `cloud-functions/account-sync/` | Auth0 (OIDC) sign-in and cross-device sync, **on EdgeOne** (`/auth-login`, `/auth-callback`, `/auth-me`, `/auth-logout`, `/account-sync`) |
+| `app/auth-*/route.ts`, `app/account-sync/route.ts` | Same routes, **on Vercel** — against `lib/devon-ai/server/store.ts` (Redis) instead of EdgeOne's `context.agent.store` |
 | `lib/games.ts` | The list of games |
 | `components/apps-page.tsx`, `lib/apps.ts` | The Apps page and the list of apps |
 | `components/devon-ai-page.tsx`, `lib/devon-ai/` | Devon AI's chat UI, its backend calls, chat state and browser storage |
@@ -205,7 +207,7 @@ Without Redis, Devon AI still answers each message — quota, chat history, sess
 
 ## Accounts
 
-Sign in to Devon to sync your **bookmarks, history and settings** across devices. Sign-in goes through **Auth0** (an OpenID Connect provider), which can front Google and other logins. Like Devon AI, this runs on EdgeOne (the cloud functions under `cloud-functions/`); where it isn't set up, the sign-in control simply doesn't appear and Devon keeps everything in the browser as before.
+Sign in to Devon to sync your **bookmarks, history and settings** across devices. Sign-in goes through **Auth0** (an OpenID Connect provider), which can front Google and other logins. Like Devon AI, this has two backends, picked by where Devon is deployed, not by anything in the request: **EdgeOne** (`cloud-functions/auth-*`, `cloud-functions/account-sync/`), against the Makers store, and **everywhere else, including Vercel** (`app/auth-*/route.ts`, `app/account-sync/route.ts`), against Redis — see "Vercel setup" below. The OIDC/session logic itself (`cloud-functions/_auth/`) is shared unchanged by both; only the per-user data store differs. Where neither is set up, the sign-in control simply doesn't appear and Devon keeps everything in the browser as before.
 
 This signs you in to **Devon**, on Auth0's own login screen — it does **not** log you in to Google (or anything else) on sites you open through the proxy. A proxy can only keep you "signed in" to a site by passing your password and session through Devon's server, which on a shared deployment would collect every visitor's login; providers block it too. So the account is Devon's own. No provider token ever reaches the browser, and the only thing the browser carries is a signed session cookie.
 
@@ -214,7 +216,7 @@ To offer "Sign in with Google", add Google as a **social connection** in Auth0 a
 ### How it works
 
 - **Sign-in** is OpenID Connect with PKCE. `/auth-login` creates the CSRF state, nonce and PKCE verifier, keeps them in a short-lived signed `HttpOnly` cookie, and sends you to Auth0's `/authorize`. `/auth-callback` checks the state, swaps the code for tokens **server-to-server** at Auth0's `/oauth/token` (the client secret and verifier never touch the browser), reads your identity from the ID token (checking issuer, audience, expiry and nonce), and sets Devon's own signed session cookie.
-- **Sync** (`/account-sync`) stores your bookmarks/history/settings in the Makers store under a namespace derived from a SHA-256 of your subject (`sub`) — taken from the session cookie, never from anything the browser sends — so an account can only ever read or write its own data. On sign-in the browser's copy and the server's are merged (union by id, newest wins; history also de-duplicated by URL); later changes are pushed up, debounced.
+- **Sync** (`/account-sync`) stores your bookmarks/history/settings — in the Makers store on EdgeOne, in Redis on Vercel — under a namespace derived from a SHA-256 of your subject (`sub`) — taken from the session cookie, never from anything the browser sends — so an account can only ever read or write its own data. On sign-in the browser's copy and the server's are merged (union by id, newest wins; history also de-duplicated by URL); later changes are pushed up, debounced.
 - The session cookie is signed with HMAC-SHA256; a tampered or expired cookie is rejected.
 
 ### Setup
@@ -222,7 +224,9 @@ To offer "Sign in with Google", add Google as a **social connection** in Auth0 a
 1. In the [Auth0 dashboard](https://manage.auth0.com/), create an **Application** of type **Regular Web Application**.
 2. In its settings, add an **Allowed Callback URL** for each host Devon runs on: `https://<your-host>/auth-callback` (for example `https://db-v5.edgeone.dev/auth-callback`). Add the host's root to **Allowed Logout URLs** too.
 3. (Optional) Under **Authentication → Social**, add a **Google** connection and enable it for this application, so the login screen offers "Continue with Google".
-4. Set these in the EdgeOne project's environment variables, then redeploy:
+4. Set these variables on whichever host(s) Devon runs on, then redeploy. The three `DEVON_AUTH0_*` values are the same everywhere a given Auth0 application is used; set them once per host.
+
+**On EdgeOne**, in the project's environment variables:
 
 | Variable | What it is |
 | --- | --- |
@@ -232,7 +236,9 @@ To offer "Sign in with Google", add Google as a **social connection** in Auth0 a
 | `DEVON_AUTH_SECRET` | A random string used to sign the session cookie. Optional — falls back to the client secret — but setting your own means rotating the client secret doesn't sign everyone out. |
 | `DEVON_PUBLIC_ORIGIN` | Optional. The address browsers use, e.g. `https://db-v5.edgeone.dev`. Only the OAuth redirect URI needs an absolute address, and the Devon page states its own origin when it sends you to `/auth-login`, so this normally isn't needed. Set it to pin the value regardless of what the browser says. |
 
-`/auth-me` reports `{"enabled":true}` once the three `DEVON_AUTH0_*` values are set, and the sign-in control appears.
+**On Vercel**, in the project's environment variables: the same four `DEVON_AUTH0_*`/`DEVON_AUTH_SECRET` variables above, plus Redis for `/account-sync` to actually persist anything — the same `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` (or `KV_REST_API_URL`/`KV_REST_API_TOKEN`) credentials Devon AI's chat history already uses on Vercel (see "Vercel setup" above); if Devon AI is already set up there, sign-in and sync share that same database with no extra setup. `DEVON_PUBLIC_ORIGIN` is rarely needed here: Vercel reports a request's real public host directly, unlike EdgeOne's internal one (see below), so the automatic detection already gets it right.
+
+`/auth-me` reports `{"enabled":true}` once the three `DEVON_AUTH0_*` values are set, and the sign-in control appears. Without Redis configured on Vercel, sign-in still works, but `/account-sync` reports itself unavailable and bookmarks/history/settings stay local to each browser, same as a deployment with no account backend set up at all.
 
 **On hosts that hide the public address.** EdgeOne runs these functions behind its CDN and reports an internal host (`…pages-scf….qcloudteo.com`) as the request's origin — it sends no `X-Forwarded-Host` either. Building the OAuth redirect URI from that gets the login rejected for a callback mismatch. So Devon's page states its own origin on the way to `/auth-login`, and that value is carried through the signed state cookie to the token exchange. It is used *only* for the redirect URI, which Auth0 checks against the application's Allowed Callback URLs, so a made-up one is refused rather than followed; every redirect Devon sends a visitor is relative, so there's no origin to point elsewhere. The `origin` field in `/auth-me` shows what the server would work out on its own, which is useful for spotting this, and `DEVON_PUBLIC_ORIGIN` pins it if you'd rather not rely on the page. Register callback URLs against your **stable** host, not EdgeOne's per-build `*-xxxx.edgeone.app` preview host, which changes each deploy.
 
