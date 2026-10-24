@@ -171,6 +171,11 @@ export class ExtensionHost {
   private alarms = new Map<string, Map<string, { timer: number; info: Json }>>()
   private tabIds = new Map<string, number>()
   private nextTabId = 1
+  // declarativeNetRequest rules are stored per extension but never enforced
+  // (see declarativeNetRequest in chromeApi): there's no request pipeline
+  // here for them to hook into.
+  private dynamicRules = new Map<string, Json[]>()
+  private sessionRules = new Map<string, Json[]>()
 
   constructor(private callbacks: HostCallbacks) {}
 
@@ -608,6 +613,13 @@ export class ExtensionHost {
   private tabKeyOf(id: number): string | undefined {
     for (const [key, n] of this.tabIds) if (n === id) return key
     return undefined
+  }
+
+  /** Applies a declarativeNetRequest updateDynamicRules/updateSessionRules call to stored rules */
+  private updateRuleSet(store: Map<string, Json[]>, extId: string, opts: { addRules?: Json[]; removeRuleIds?: number[] }) {
+    const removeIds = new Set(opts.removeRuleIds ?? [])
+    const kept = (store.get(extId) ?? []).filter((rule) => !removeIds.has(rule.id))
+    store.set(extId, opts.addRules?.length ? [...kept, ...opts.addRules] : kept)
   }
 
   private tabObject(info: TabInfo, index: number) {
@@ -1622,6 +1634,40 @@ export class ExtensionHost {
           onHeadersReceived: noopEvent(),
           onCompleted: noopEvent(),
           onErrorOccurred: noopEvent(),
+        },
+        // Rules are accepted and stored but never actually enforced: there's no
+        // request pipeline here for them to hook into. Extensions that register
+        // rules and move on work fine; ones that depend on the blocking actually
+        // happening won't see it take effect.
+        declarativeNetRequest: {
+          MAX_NUMBER_OF_DYNAMIC_AND_SESSION_RULES: 30000,
+          getDynamicRules: (_o: unknown, callback?: unknown) => ok(callback, () => this.dynamicRules.get(ext.id) ?? []),
+          getSessionRules: (_o: unknown, callback?: unknown) => ok(callback, () => this.sessionRules.get(ext.id) ?? []),
+          getEnabledRulesets: (callback?: unknown) => ok(callback, () => []),
+          updateDynamicRules: (opts: { addRules?: Json[]; removeRuleIds?: number[] } = {}, callback?: unknown) =>
+            ok(callback, () => {
+              this.updateRuleSet(this.dynamicRules, ext.id, opts)
+              return undefined
+            }),
+          updateSessionRules: (opts: { addRules?: Json[]; removeRuleIds?: number[] } = {}, callback?: unknown) =>
+            ok(callback, () => {
+              this.updateRuleSet(this.sessionRules, ext.id, opts)
+              return undefined
+            }),
+          updateEnabledRulesets: (_o: unknown, callback?: unknown) => ok(callback),
+          isRegexSupported: (_o: unknown, callback?: unknown) => ok(callback, () => ({ isSupported: false })),
+          onRuleMatchedDebug: noopEvent(),
+        },
+        // Chrome's debugger API attaches via the DevTools protocol, which a
+        // proxied page can't offer. Extensions that gate debugger use behind a
+        // try/catch keep working with it off; ones that depend on it won't.
+        debugger: {
+          attach: () => P.reject(new Error("The debugger API isn't available in Devon")),
+          detach: () => P.reject(new Error("The debugger API isn't available in Devon")),
+          sendCommand: () => P.reject(new Error("The debugger API isn't available in Devon")),
+          getTargets: (callback?: unknown) => ok(callback, () => []),
+          onEvent: noopEvent(),
+          onDetach: noopEvent(),
         },
         sidePanel: {
           open: (_o: unknown, callback?: unknown) => ok(callback),
