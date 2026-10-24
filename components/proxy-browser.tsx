@@ -21,6 +21,7 @@ import {
   Clock,
   Download,
   EllipsisVertical,
+  ExternalLink,
   FlaskConical,
   Gamepad2,
   Home,
@@ -45,7 +46,7 @@ import {
   WifiOff,
   X,
 } from "lucide-react"
-import { fetchThroughProxy, formatUrl, isSearchInput, resolveSearchUrl } from "@/lib/proxy-utils"
+import { fetchThroughProxy, formatUrl, isSearchInput, isStrictIdentityUrl, reportIdpBlock, resolveSearchUrl } from "@/lib/proxy-utils"
 import { SessionManager, type BookmarkItem, type HistoryItem } from "@/lib/session-manager"
 import {
   fetchAccount,
@@ -117,6 +118,14 @@ interface Tab {
   isSecure?: boolean
   /** The frame navigated somewhere the proxy couldn't intercept */
   leftProxy?: boolean
+  /**
+   * Navigation landed on a strict identity provider's sign-in page (see
+   * isStrictIdentityUrl) — never fetched/rendered, since it can only ever
+   * show a dead-end error inside Devon's frame. destinationUrl is the real
+   * site the user was actually trying to sign into, offered as an unproxied
+   * tab instead.
+   */
+  blockedSignIn?: { idpUrl: string; destinationUrl: string }
 }
 
 /**
@@ -532,6 +541,7 @@ export function ProxyBrowser() {
               frameSrc: undefined,
               frameType: undefined,
               leftProxy: undefined,
+              blockedSignIn: undefined,
               isLoading: false,
               error: undefined,
               errorDetails: undefined,
@@ -553,6 +563,41 @@ export function ProxyBrowser() {
       const formattedUrl = isSearchInput(trimmed) ? await resolveSearchUrl(trimmed) : formatUrl(trimmed)
       setPageErrors((prev) => (prev[tabId]?.length ? { ...prev, [tabId]: [] } : prev))
       setPageActivity((prev) => (prev[tabId]?.length ? { ...prev, [tabId]: [] } : prev))
+
+      // Microsoft/Google/Apple's sign-in pages refuse to render inside any
+      // iframe — Devon's pages always live in one, so this would only ever
+      // reach a dead-end error, never the real form (see isStrictIdentityUrl).
+      // Offer the site the user was actually trying to sign into instead,
+      // opened as a real, unproxied tab.
+      if (isStrictIdentityUrl(formattedUrl)) {
+        const previousUrl = tabsRef.current.find((t) => t.id === tabId)?.url
+        const destinationUrl = previousUrl && !isStrictIdentityUrl(previousUrl) ? previousUrl : formattedUrl
+        reportIdpBlock(formattedUrl, previousUrl)
+        controllersRef.current.get(tabId)?.abort()
+        controllersRef.current.delete(tabId)
+        releaseBlob(tabId)
+        setTabs((prev) =>
+          prev.map((tab) =>
+            tab.id === tabId
+              ? {
+                  ...tab,
+                  url: formattedUrl,
+                  title: `Sign in blocked - ${hostnameOf(formattedUrl)}`,
+                  isLoading: false,
+                  content: undefined,
+                  frameSrc: undefined,
+                  frameType: undefined,
+                  leftProxy: undefined,
+                  error: `${hostnameOf(formattedUrl)}'s sign-in page can't render inside Devon (blocks embedding)`,
+                  errorDetails: undefined,
+                  blockedSignIn: { idpUrl: formattedUrl, destinationUrl },
+                  isSecure: formattedUrl.startsWith("https://"),
+                }
+              : tab,
+          ),
+        )
+        return
+      }
 
       // Userscript links (Greasy Fork "Install" buttons etc.) offer to install instead of opening
       if (historyMode === "push" && request.method !== "POST" && /\.user\.js(\?|#|$)/i.test(formattedUrl.split("#")[0])) {
@@ -583,6 +628,7 @@ export function ProxyBrowser() {
                 frameSrc: undefined,
                 frameType: undefined,
                 leftProxy: undefined,
+                blockedSignIn: undefined,
               }
             : tab,
         ),
@@ -602,6 +648,36 @@ export function ProxyBrowser() {
         if (result.frameSrc) blobUrlsRef.current.set(tabId, result.frameSrc)
 
         const finalUrl = result.finalUrl
+
+        // A server-side redirect chain landed on one of these — the client
+        // never asked for it directly (isStrictIdentityUrl above would have
+        // caught that), but the same dead end applies: don't render whatever
+        // generic page it sent back.
+        if (isStrictIdentityUrl(finalUrl)) {
+          releaseBlob(tabId)
+          reportIdpBlock(finalUrl, formattedUrl)
+          setTabs((prev) =>
+            prev.map((tab) =>
+              tab.id === tabId
+                ? {
+                    ...tab,
+                    url: finalUrl,
+                    title: `Sign in blocked - ${hostnameOf(finalUrl)}`,
+                    isLoading: false,
+                    content: undefined,
+                    frameSrc: undefined,
+                    frameType: undefined,
+                    leftProxy: undefined,
+                    error: `${hostnameOf(finalUrl)}'s sign-in page can't render inside Devon (blocks embedding)`,
+                    errorDetails: undefined,
+                    blockedSignIn: { idpUrl: finalUrl, destinationUrl: formattedUrl },
+                    isSecure: finalUrl.startsWith("https://"),
+                  }
+                : tab,
+            ),
+          )
+          return
+        }
 
         // Updated by tab id, so a slow page can't land in whichever tab is active now
         setTabs((prev) =>
@@ -634,6 +710,7 @@ export function ProxyBrowser() {
               isLoading: false,
               error: undefined,
               errorDetails: undefined,
+              blockedSignIn: undefined,
               history,
               historyIndex,
               isSecure: finalUrl.startsWith("https://"),
@@ -661,6 +738,7 @@ export function ProxyBrowser() {
                   isLoading: false,
                   error: errorMessage,
                   errorDetails,
+                  blockedSignIn: undefined,
                   title: aborted ? hostnameOf(formattedUrl) : "Error - " + hostnameOf(formattedUrl),
                   isSecure: false,
                 }
@@ -967,6 +1045,7 @@ export function ProxyBrowser() {
               frameType: undefined,
               error: undefined,
               errorDetails: undefined,
+              blockedSignIn: undefined,
               isSecure: undefined,
             }
           : tab,
@@ -1950,6 +2029,33 @@ export function ProxyBrowser() {
                 gameId={parseGamesUrl(activeTab.url) ?? ""}
                 onOpen={(id) => navigate(activeTab.id, id ? `${GAMES_URL}/${id}` : GAMES_URL, "push")}
               />
+            </div>
+          ) : activeTab?.blockedSignIn ? (
+            <div className="flex flex-1 items-center justify-center overflow-auto p-6">
+              <div className="w-full max-w-md">
+                <span className="mb-5 grid size-12 place-items-center rounded-2xl bg-amber-400/15 text-amber-400">
+                  <Lock className="size-6" />
+                </span>
+                <h2 className="text-xl font-semibold tracking-tight">Sign-in can&apos;t happen inside Devon</h2>
+                <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
+                  {hostnameOf(activeTab.blockedSignIn.idpUrl)}
+                </p>
+                <p className="mt-4 text-sm text-foreground/80">
+                  {hostnameOf(activeTab.blockedSignIn.idpUrl)}&apos;s sign-in page blocks being embedded in any
+                  iframe, which is how every page in Devon is shown — this isn&apos;t a bug in Devon, it&apos;s a
+                  deliberate anti-clickjacking protection on their end, and there&apos;s no way around it from here.
+                </p>
+                <div className="mt-6 flex gap-2">
+                  <Button asChild className="rounded-full px-5">
+                    <a href={activeTab.blockedSignIn.destinationUrl} target="_blank" rel="noopener noreferrer">
+                      <ExternalLink /> Open {hostnameOf(activeTab.blockedSignIn.destinationUrl)} in my browser
+                    </a>
+                  </Button>
+                  <Button onClick={goHome} variant="ghost" className="rounded-full px-5">
+                    New tab page
+                  </Button>
+                </div>
+              </div>
             </div>
           ) : activeTab?.error ? (
             <div className="flex flex-1 items-center justify-center overflow-auto p-6">

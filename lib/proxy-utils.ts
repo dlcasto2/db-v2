@@ -37,6 +37,53 @@ function decodeEntities(text: string): string {
 // executing them (SVG and XML can carry scripts) or downloading them
 const TEXTUAL_TYPE = /^(text\/|application\/(json|javascript|x-javascript|ecmascript|xml|typescript|ld\+json|manifest\+json))/i
 
+/**
+ * Hosts whose interactive sign-in page refuses to render inside ANY iframe —
+ * a deliberate anti-clickjacking protection on their own end, not something
+ * Devon's proxy can route around. Every page Devon shows lives in a
+ * same-origin frame (see ProxiedFrame in proxy-browser.tsx), so loading one
+ * of these there never shows the real sign-in form, only a generic
+ * "something went wrong" page. Worse, even if it did render, that frame's
+ * origin genuinely IS Devon's (not spoofed — that's what lets its
+ * history.replaceState trick work at all), so a redirect_uri the page builds
+ * from window.location.origin would point at Devon, not the real site.
+ * Neither problem is fixable inside the proxy; isStrictIdentityUrl's callers
+ * detect this ahead of time and offer the real site in an unproxied tab
+ * instead of attempting to load it here.
+ */
+export const STRICT_IDENTITY_HOSTS = [
+  "login.microsoftonline.com",
+  "login.live.com",
+  "login.microsoft.com",
+  "accounts.google.com",
+  "appleid.apple.com",
+]
+
+export function isStrictIdentityUrl(url: string): boolean {
+  try {
+    return STRICT_IDENTITY_HOSTS.includes(new URL(url).hostname.toLowerCase())
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Best-effort, fire-and-forget note that a sign-in to `idpUrl` was blocked
+ * (see isStrictIdentityUrl) instead of attempted, so it shows up in the
+ * server's own logs — which identity providers visitors actually hit, and
+ * from where — without building a whole analytics pipeline for it. Never
+ * contacts the identity provider itself.
+ */
+export function reportIdpBlock(idpUrl: string, referrer?: string) {
+  try {
+    const params = new URLSearchParams({ idpBlocked: "1", url: idpUrl })
+    if (referrer) params.set("ref", referrer)
+    void fetch(`/api/proxy?${params.toString()}`, { keepalive: true }).catch(() => {})
+  } catch {
+    // best-effort only — never let a logging call break navigation
+  }
+}
+
 export async function fetchThroughProxy(url: string, options: ProxyRequestOptions = {}): Promise<ProxyResponse> {
   const { method = "GET", body, signal } = options
 
