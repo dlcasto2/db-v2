@@ -1,3 +1,5 @@
+import { DEFAULT_ENGINE } from "@/lib/search-engines"
+
 export interface ProxyResponse {
   /** HTML (already rewritten by the proxy) to render via srcDoc */
   content?: string
@@ -113,6 +115,34 @@ export function isValidUrl(string: string): boolean {
   }
 }
 
+/** Whether what was typed is a search rather than an address */
+export function isSearchInput(input: string): boolean {
+  const trimmed = input.trim()
+  if (/^https?:\/\//i.test(trimmed) && isValidUrl(trimmed)) return false
+  return !trimmed.includes(".") || /\s/.test(trimmed)
+}
+
+/**
+ * The results page to open for a search.
+ *
+ * Which engine answers depends on where Devon is deployed — engines refuse
+ * datacenter addresses, and not the same ones — so the server picks (and
+ * remembers) one that actually answers. If it can't be asked, the default
+ * engine stands in, which is no worse than not asking at all.
+ */
+export async function resolveSearchUrl(query: string, signal?: AbortSignal): Promise<string> {
+  try {
+    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`, { signal, cache: "no-store" })
+    if (res.ok) {
+      const data = (await res.json()) as { url?: unknown }
+      if (typeof data?.url === "string" && data.url) return data.url
+    }
+  } catch {
+    // offline, or no /api/search on this deployment
+  }
+  return DEFAULT_ENGINE.url(query)
+}
+
 export function formatUrl(input: string): string {
   const trimmed = input.trim()
 
@@ -121,9 +151,11 @@ export function formatUrl(input: string): string {
     return trimmed
   }
 
-  // If it looks like a search query, use a search engine
-  if (!trimmed.includes(".") || /\s/.test(trimmed)) {
-    return `https://duckduckgo.com/?ia=web&q=${encodeURIComponent(trimmed)}`
+  // If it looks like a search query, use a search engine. This is the default
+  // one; a real navigation resolves the engine first (see resolveSearchUrl),
+  // and this stands in when that can't be reached.
+  if (isSearchInput(trimmed)) {
+    return DEFAULT_ENGINE.url(trimmed)
   }
 
   return `https://${trimmed}`
