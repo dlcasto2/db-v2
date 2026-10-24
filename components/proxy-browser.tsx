@@ -123,9 +123,14 @@ interface Tab {
    * isStrictIdentityUrl) — never fetched/rendered, since it can only ever
    * show a dead-end error inside Devon's frame. destinationUrl is the real
    * site the user was actually trying to sign into, offered as an unproxied
-   * tab instead.
+   * tab instead — or null when that site isn't known (e.g. the IdP URL was
+   * navigated to directly, with no prior page to infer it from). It must
+   * never fall back to idpUrl itself: that URL carries a redirect_uri baked
+   * in from Devon's own origin, which Microsoft/Google/Apple never have
+   * registered, so opening it for real reproduces the exact sign-in error
+   * (AADSTS50011 and the like) this interstitial exists to avoid.
    */
-  blockedSignIn?: { idpUrl: string; destinationUrl: string }
+  blockedSignIn?: { idpUrl: string; destinationUrl: string | null }
 }
 
 /**
@@ -571,7 +576,11 @@ export function ProxyBrowser() {
       // opened as a real, unproxied tab.
       if (isStrictIdentityUrl(formattedUrl)) {
         const previousUrl = tabsRef.current.find((t) => t.id === tabId)?.url
-        const destinationUrl = previousUrl && !isStrictIdentityUrl(previousUrl) ? previousUrl : formattedUrl
+        // Never fall back to formattedUrl itself here — it's the IdP URL
+        // that was just blocked, redirect_uri and all, so opening it for
+        // real would only reproduce the error (see the Tab.blockedSignIn
+        // doc comment). Null means "destination unknown"; the UI handles that.
+        const destinationUrl = previousUrl && !isStrictIdentityUrl(previousUrl) ? previousUrl : null
         reportIdpBlock(formattedUrl, previousUrl)
         controllersRef.current.get(tabId)?.abort()
         controllersRef.current.delete(tabId)
@@ -2045,12 +2054,21 @@ export function ProxyBrowser() {
                   iframe, which is how every page in Devon is shown — this isn&apos;t a bug in Devon, it&apos;s a
                   deliberate anti-clickjacking protection on their end, and there&apos;s no way around it from here.
                 </p>
+                {!activeTab.blockedSignIn.destinationUrl && (
+                  <p className="mt-2 text-sm text-foreground/80">
+                    Devon can&apos;t tell which site you were trying to reach, so there&apos;s no safe link to hand
+                    you here — opening the sign-in page itself would just repeat the same error for real, instead of
+                    blocking it. Open the site directly in a new tab and sign in from there.
+                  </p>
+                )}
                 <div className="mt-6 flex gap-2">
-                  <Button asChild className="rounded-full px-5">
-                    <a href={activeTab.blockedSignIn.destinationUrl} target="_blank" rel="noopener noreferrer">
-                      <ExternalLink /> Open {hostnameOf(activeTab.blockedSignIn.destinationUrl)} in my browser
-                    </a>
-                  </Button>
+                  {activeTab.blockedSignIn.destinationUrl && (
+                    <Button asChild className="rounded-full px-5">
+                      <a href={activeTab.blockedSignIn.destinationUrl} target="_blank" rel="noopener noreferrer">
+                        <ExternalLink /> Open {hostnameOf(activeTab.blockedSignIn.destinationUrl)} in my browser
+                      </a>
+                    </Button>
+                  )}
                   <Button onClick={goHome} variant="ghost" className="rounded-full px-5">
                     New tab page
                   </Button>
