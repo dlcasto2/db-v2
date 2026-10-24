@@ -38,7 +38,11 @@ interface CreateChatStreamOptions {
   signal?: AbortSignal
   logger: Logger
   conversationId: string
-  store: AgentMemory
+  // Only appendMessage is called (saving the reply at the end of the run).
+  // Narrowed to a Pick so a store implementing just this slice — e.g. the
+  // Redis-backed one Devon AI's Vercel deployment uses — can be passed too;
+  // EdgeOne's real store already satisfies this, so nothing changes for it.
+  store: Pick<AgentMemory, "appendMessage">
   botMsgId?: string
   userId?: string
   quota: QuotaStatus
