@@ -25,7 +25,12 @@ export interface StreamChannel {
 
 interface DevonToolsContext {
   channel: StreamChannel
-  store: AgentMemory
+  // Only these are actually called (via waitForResult and saveSession below).
+  // Narrowed to a Pick, not the full AgentMemory, so a store that only
+  // implements this slice — such as the Redis-backed one Devon AI's Vercel
+  // deployment uses (lib/devon-ai/server/store.ts) — can be passed here too.
+  // EdgeOne's real store already satisfies this; nothing changes for it.
+  store: Pick<AgentMemory, "getMessages" | "deleteMessage" | "clearMessages" | "state">
   conversationId: string
   signal?: AbortSignal
   /** Shared, mutable: tools update it and save it */

@@ -24,6 +24,17 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  // The Claude Agent SDK (app/ai-chat/route.ts) runs the Claude CLI as a
+  // subprocess, whose native binary is resolved at runtime rather than
+  // imported, so Vercel's build-time file trace misses it unless told.
+  // Without this, Devon AI's chat on Vercel fails at the first message with
+  // an ENOENT for the CLI binary, not at deploy time.
+  outputFileTracingIncludes: {
+    "app/ai-chat/route": [
+      "./node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/**",
+      "./node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl/**",
+    ],
+  },
 }
 
 export default nextConfig

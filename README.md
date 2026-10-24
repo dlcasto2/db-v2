@@ -57,7 +57,7 @@ pnpm start       # serve the production build
 
 ## Deploying
 
-Devon runs anywhere Next.js runs, and it is currently deployed on **EdgeOne Pages**. Devon AI needs EdgeOne Makers agents (the `agents/` and `cloud-functions/` folders, configured in `edgeone.json`); on other hosts everything else works and Devon AI says it isn't deployed.
+Devon runs anywhere Next.js runs, and it is currently deployed on both **EdgeOne Pages** and **Vercel**. Devon AI's chat has two independent backends: EdgeOne Makers agents (the `agents/` and `cloud-functions/` folders, configured in `edgeone.json`) on EdgeOne, and the `app/ai-*/route.ts` routes (backed by Redis, see "Devon AI" below) everywhere else, including Vercel. On a host with neither set up, Devon AI says it isn't deployed; everything else works regardless.
 
 - `app/api/proxy` is a serverless function with `maxDuration = 60`.
 - EdgeOne caps a response at about 4 MB. The proxy works around this by compressing responses and splitting big scripts into slices.
@@ -92,8 +92,10 @@ Devon runs anywhere Next.js runs, and it is currently deployed on **EdgeOne Page
 | `components/apps-page.tsx`, `lib/apps.ts` | The Apps page and the list of apps |
 | `components/devon-ai-page.tsx`, `lib/devon-ai/` | Devon AI's chat UI, its backend calls, chat state and browser storage |
 | `agents/ai-chat/`, `agents/ai-stop/`, `agents/_quota.ts`, `agents/_model.ts` | Devon AI's EdgeOne agent routes (`/ai-chat`, `/ai-stop`), daily limit and model settings |
-| `agents/ai-chat/_devon-tools.ts`, `agents/_mailbox.ts`, `agents/_session.ts` | Page and tab tools, how their results come back, and the session state |
-| `cloud-functions/ai-*` | Devon AI's chat history, chat list, delete, page results and session (`/ai-history`, `/ai-conversations`, `/ai-delete-conversation`, `/ai-page-result`, `/ai-session`) |
+| `agents/ai-chat/_devon-tools.ts`, `agents/_mailbox.ts`, `agents/_session.ts` | Page and tab tools, how their results come back, and the session state. Written against `Pick<AgentMemory, ...>` shapes, not EdgeOne itself, so `app/ai-chat/route.ts` reuses them unchanged against a Redis store on Vercel |
+| `cloud-functions/ai-*` | Devon AI's EdgeOne chat history, chat list, delete, page results and session (`/ai-history`, `/ai-conversations`, `/ai-delete-conversation`, `/ai-page-result`, `/ai-session`) |
+| `app/ai-chat/`, `app/ai-stop/`, `app/ai-history/`, `app/ai-conversations/`, `app/ai-delete-conversation/`, `app/ai-page-result/`, `app/ai-session/` | Devon AI's Vercel-native routes — same paths and request/response shapes as the EdgeOne ones above, so `lib/devon-ai/` doesn't change; each has a comment pointing at its EdgeOne counterpart |
+| `lib/devon-ai/server/store.ts`, `lib/devon-ai/server/kv.ts` | The Redis-backed store the Vercel routes use in place of EdgeOne's `context.store` |
 | `lib/devon-ai/page-actions.ts`, `lib/devon-ai/page-executor.ts` | Reading and acting on pages in the browser, and running the page tools against Devon's tabs |
 | `.claude/skills/` | Skills Devon AI's agent can load |
 | `components/prompt-gen-page.tsx`, `lib/prompt-gen.ts` | Prompt Gen |
@@ -141,7 +143,12 @@ addresses even where the results page doesn't, so they're left alone.
 
 ## Devon AI
 
-Devon AI is the [Claude Agent Starter](https://github.com/TencentEdgeOne/claude-agent-starter-node) (MIT) brought into Devon: the Claude Agent SDK running as an EdgeOne Makers agent, with EdgeOne's sandbox tools (shell commands, files, a code interpreter and a headless browser) and the platform's conversation store. Devon's version adds:
+Devon AI is the [Claude Agent Starter](https://github.com/TencentEdgeOne/claude-agent-starter-node) (MIT) brought into Devon: the Claude Agent SDK, with Devon's own page tools and the platform's conversation store. It has two backends, picked by where Devon is deployed, not by anything in the request:
+
+- **On EdgeOne** (`agents/`, `cloud-functions/ai-*`): runs as an EdgeOne Makers agent, with EdgeOne's sandbox tools (shell commands, files, a code interpreter and a headless browser) on top of the page tools below, and EdgeOne's own conversation store.
+- **Everywhere else, including Vercel** (`app/ai-*/route.ts`): the same Claude Agent SDK call and the same page tools, backed by Redis instead of EdgeOne's store (see "Vercel setup" below) — **without** the sandbox tools or project skills, since those come from EdgeOne's own isolated-VM runtime and running shell commands directly in another host's serverless function would reach that function's real environment, not an isolated sandbox. It also doesn't resume the Claude CLI's own session between turns (EdgeOne-specific); instead each turn's prompt includes a short plain-text recap of recent messages, which covers ordinary multi-turn chat but not the model's own prior tool-call reasoning.
+
+Devon's version adds, on both backends:
 
 - **Side panel:** the ✦ toolbar button opens Devon AI next to the page, so you can watch it work.
 - **Page actions:** Devon AI can use the tabs you have open — list, open and switch tabs; read a page (its text and its links, buttons and fields, numbered); click, type, choose dropdown options, scroll, and go to an address, back or forward. It works on the visible site tab (or the last one you used), outlines each element it touches, and shows a "Devon AI is using this tab" bar with a Stop button.
@@ -153,7 +160,11 @@ Devon AI is the [Claude Agent Starter](https://github.com/TencentEdgeOne/claude-
 - **A daily limit per visitor**, counted on the server so refreshing, new chats or new tabs don't reset it. See below.
 - Chats keep streaming when you switch tabs, and links in replies open in a new Devon tab.
 
-Routes: `POST /ai-chat` (SSE stream, needs the `makers-conversation-id` header), `POST /ai-stop`, `POST /ai-history`, `POST /ai-conversations`, `POST /ai-delete-conversation`, `POST /ai-page-result` (page action results), `POST /ai-session` (read or clear a chat's session; chat ID in the header). Agent runs may take up to 600 s (`edgeone.json`), since page tasks can wait on your permission.
+Routes (same on both backends, so the client — `lib/devon-ai/`  — doesn't know or care which one answers): `POST /ai-chat` (SSE stream, needs the `makers-conversation-id` header), `POST /ai-stop`, `POST /ai-history`, `POST /ai-conversations`, `POST /ai-delete-conversation`, `POST /ai-page-result` (page action results), `POST /ai-session` (read or clear a chat's session; chat ID in the header). On EdgeOne, agent runs may take up to 600 s (`edgeone.json`), since page tasks can wait on your permission; on Vercel, `app/ai-chat/route.ts` sets `maxDuration = 300`, but your Vercel plan's own function-duration limit may cap that lower.
+
+Without a model key, Devon AI shows "isn't set up on this site yet". A visitor is identified by an ID kept in their browser's local storage; the counts themselves are stored on the server, so they can't be reset from the page. `DEVON_*` variables are never passed to the agent's Claude process.
+
+### EdgeOne setup
 
 Set these in the EdgeOne project's environment variables, then redeploy:
 
@@ -167,9 +178,23 @@ Set these in the EdgeOne project's environment variables, then redeploy:
 | `DEVON_AI_IP_DAILY_LIMIT` | Optional shared cap per network address per day (default `0` = off). It stops people dodging the visitor limit with private windows, but everyone on one school or office network shares it, so set it well above the visitor limit. |
 | `WSA_API_KEY` | Only for the agent's web search tool ([how to get one](https://pages.edgeone.ai/document/sandbox-network-search-tool)). |
 
-Without a model key, Devon AI shows "isn't set up on this site yet". A visitor is identified by an ID kept in their browser's local storage; the counts themselves are stored on the server (as small hashed entries in the conversation store), so they can't be reset from the page. `DEVON_*` variables are never passed to the agent's Claude process.
+Counts live as small hashed entries in EdgeOne's conversation store.
 
 To run the agent locally, use the EdgeOne CLI: `npm i -g edgeone`, `edgeone makers link`, then `edgeone makers dev` (serves the site and the agent routes together). `pnpm dev` runs the site without the agent routes.
+
+### Vercel setup
+
+`app/ai-*/route.ts` need somewhere durable to keep quota counts, chat history, session state and page-action results — Vercel has nothing built in for that, so they use Redis (`lib/devon-ai/server/`). Set these in the Vercel project's environment variables, then redeploy:
+
+| Variable | Meaning |
+| --- | --- |
+| `ANTHROPIC_API_KEY` | Call the Anthropic API directly (defaults to `claude-haiku-5-5`; set `CLAUDE_MODEL` to change it), or set `AI_GATEWAY_API_KEY` + `AI_GATEWAY_BASE_URL` (and optionally `AI_GATEWAY_MODEL`) to use a gateway instead — same variables as EdgeOne above. |
+| `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | A Redis database's REST credentials. Add "Upstash for Redis" from Vercel's Storage/Marketplace tab (sets these for you), or create one directly at [upstash.com](https://upstash.com) (there's a free tier) and paste its REST URL and token in. `KV_REST_API_URL`/`KV_REST_API_TOKEN` (the older Vercel KV naming) also work. |
+| `DEVON_AI_DAILY_LIMIT`, `DEVON_AI_IP_DAILY_LIMIT` | Same as EdgeOne above. |
+
+Without Redis, Devon AI still answers each message — quota, chat history, session state and the conversation list just don't persist between requests (`lib/devon-ai/server/kv.ts` returns `null` and every caller degrades the same way the EdgeOne agents already do when their own store hiccups). **Not available on Vercel** (see the backend comparison above): EdgeOne's sandbox tools (shell, files, code interpreter, headless browser), project skills, and Claude CLI session resume (recent turns are recapped in the prompt as plain text instead — see `app/ai-chat/route.ts`).
+
+`next.config.mjs`'s `outputFileTracingIncludes` bundles the Claude CLI's native binary (`@anthropic-ai/claude-agent-sdk-linux-x64*`) with the `ai-chat` function — Vercel's build-time file trace misses it otherwise, since the SDK resolves it at runtime rather than importing it.
 
 ## Accounts
 
