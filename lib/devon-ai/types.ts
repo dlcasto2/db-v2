@@ -46,6 +46,8 @@ export interface Message {
   streaming?: boolean
   /** The reply failed; content holds the reason */
   failed?: boolean
+  /** The visitor's thumbs up/down on this reply, once sent */
+  feedback?: FeedbackRating
 }
 
 export interface ConversationSummary {
@@ -87,7 +89,8 @@ export interface SessionState {
   task: string
   steps: { text: string; done: boolean }[]
   notes: string[]
-  pages: { url: string; title: string; at: number }[]
+  openQuestions: string[]
+  pages: { url: string; title: string; at: number; state?: string }[]
   updatedAt: number
 }
 
@@ -102,4 +105,9 @@ export interface PendingApproval {
   callId: string
   site: string
   description: string
+  /** Looks hard to undo (buying, paying, deleting, sending…) — always asked fresh, even on an already-allowed site */
+  irreversible: boolean
 }
+
+export type FeedbackRating = "up" | "down"
+export type FeedbackReasonCode = "wrong_fact" | "misread_page" | "bad_action" | "other"

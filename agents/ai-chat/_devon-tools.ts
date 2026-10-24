@@ -147,8 +147,11 @@ export function createDevonTools(ctx: DevonToolsContext) {
     ),
     tool(
       "session_update",
-      "Update this chat's session state, which the user sees in the Session panel and which is shown to you in <devon_session> every turn. " +
-        "For multi-step work: set the task and steps first, mark steps complete as you go, and add notes for facts worth keeping (found prices, names, decisions). " +
+      "Update this chat's session state, which the user sees in the Session panel and which is shown to you in <devon_session> every turn — this is your durable memory for the task, separate from the conversation transcript. " +
+        "For multi-step work: set the task and steps first, and work through them one at a time. " +
+        "Only mark a step complete after its own tool result confirms the expected change actually happened (a page_click/page_type/page_select result says what changed, or that nothing did) — not just because you called the tool. " +
+        "Use add_notes for settled facts worth keeping (prices, names, decisions) and add_open_questions for things you haven't resolved yet and should come back to (remove them with remove_open_questions once answered). " +
+        "Use page_state for a short snapshot of where things stand on the page you just acted on (e.g. \"cart: 2 items, $45.98\", \"logged in as J. Doe\") — it's kept with that page so you (or a later turn) can pick up without re-reading everything. " +
         "Step and note numbers are 1-based. Setting steps replaces the list.",
       {
         task: z.string().max(300).optional(),
@@ -156,6 +159,9 @@ export function createDevonTools(ctx: DevonToolsContext) {
         complete_steps: z.array(z.number().int().positive()).optional(),
         add_notes: z.array(z.string().max(300)).max(10).optional(),
         remove_notes: z.array(z.number().int().positive()).optional(),
+        add_open_questions: z.array(z.string().max(200)).max(10).optional(),
+        remove_open_questions: z.array(z.number().int().positive()).optional(),
+        page_state: z.string().max(200).optional(),
       },
       async (args) => {
         ctx.session.current = applySessionUpdate(ctx.session.current, args)
@@ -163,7 +169,8 @@ export function createDevonTools(ctx: DevonToolsContext) {
         ctx.channel.send("session", { session: ctx.session.current })
         const s = ctx.session.current
         return text(
-          `Session saved. Task: ${s.task || "(none)"}; steps: ${s.steps.map((x, i) => `${i + 1}${x.done ? "✓" : ""}`).join(" ") || "none"}; notes: ${s.notes.length}.`,
+          `Session saved. Task: ${s.task || "(none)"}; steps: ${s.steps.map((x, i) => `${i + 1}${x.done ? "✓" : ""}`).join(" ") || "none"}; ` +
+            `notes: ${s.notes.length}; open questions: ${s.openQuestions.length}.`,
         )
       },
     ),

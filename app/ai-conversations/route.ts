@@ -46,7 +46,7 @@ export async function POST(request: Request): Promise<Response> {
     const store = createAiStore("")
     const result = await store.listConversations({ userId, limit, order, after })
     const conversations = result.items
-      .filter((c) => !/^(d[qt]|acct)-/.test(c.id))
+      .filter((c) => !/^(d[qft]|acct)-/.test(c.id))
       .map((c) => ({
         id: c.id,
         title: titleFrom(c.firstUserMessage),

@@ -32,7 +32,7 @@ export async function POST(request: Request): Promise<Response> {
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>
   const conversationId = clip(body.conversation_id ?? body.conversationId, 64).trim()
   const callId = clip(body.call_id ?? body.callId, 64)
-  if (!conversationId || /^(d[qt]|acct)-/.test(conversationId) || !UUID_RE.test(callId)) {
+  if (!conversationId || /^(d[qft]|acct)-/.test(conversationId) || !UUID_RE.test(callId)) {
     return jsonResponse({ status: "error", message: "conversation_id and a valid call_id are required" }, 400)
   }
 

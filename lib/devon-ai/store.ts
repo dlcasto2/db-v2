@@ -24,11 +24,12 @@ import {
   fetchConversationHistory,
   fetchSession,
   listConversations,
+  postFeedback,
   postPageResult,
   sendMessageStream,
   stopAgent,
 } from "@/lib/devon-ai/api"
-import { type PageActionRequest, type PageHost, runPageAction, siteOf } from "@/lib/devon-ai/page-executor"
+import { looksIrreversible, type PageActionRequest, type PageHost, runPageAction, siteOf } from "@/lib/devon-ai/page-executor"
 import {
   base64ToBlob,
   createObjectUrl,
@@ -45,6 +46,7 @@ import type {
   ActionStep,
   BrowserSession,
   ConversationSummary,
+  FeedbackReasonCode,
   ImageAttachment,
   ImageSsePayload,
   Message,
@@ -477,7 +479,11 @@ function browserSession(): BrowserSession | undefined {
 }
 
 function askApproval(callId: string, site: string, description: string, conversationId: string): Promise<boolean> {
-  if (sitesFor(conversationId).includes(site)) return Promise.resolve(true)
+  const irreversible = looksIrreversible(description)
+  // A standing "allow this site" doesn't cover something that looks hard to
+  // undo (buying, paying, deleting…) — that always gets a fresh prompt, even
+  // later in the same chat on a site the visitor already trusted for clicks.
+  if (!irreversible && sitesFor(conversationId).includes(site)) return Promise.resolve(true)
   if (runStopped) return Promise.resolve(false)
   approvalResolve?.(false)
   return new Promise((resolve) => {
@@ -486,7 +492,7 @@ function askApproval(callId: string, site: string, description: string, conversa
       set({ approval: null })
       resolve(ok)
     }
-    set({ approval: { callId, site, description } })
+    set({ approval: { callId, site, description, irreversible } })
   })
 }
 
@@ -494,7 +500,8 @@ function askApproval(callId: string, site: string, description: string, conversa
 export function respondDevonAiApproval(choice: "once" | "site" | "deny") {
   const pending = state.approval
   if (!pending || !approvalResolve) return
-  if (choice === "site") writeSites(state.conversationId, [...new Set([...state.allowedSites, pending.site])])
+  // Don't let "allow on this site" quietly cover future irreversible actions either
+  if (choice === "site" && !pending.irreversible) writeSites(state.conversationId, [...new Set([...state.allowedSites, pending.site])])
   approvalResolve(choice !== "deny")
 }
 
@@ -772,4 +779,31 @@ export function setDevonAiDraft(text: string) {
 
 export function dismissDevonAiBanner() {
   set({ banner: null })
+}
+
+// ---------------------------------------------------------------------------
+// Feedback (thumbs up/down on a reply)
+// ---------------------------------------------------------------------------
+
+/** A rough, informational-only label for the review digest — not trusted for anything else */
+function taskTypeOf(message: Message): string {
+  const actions = message.actions ?? []
+  if (actions.some((a) => /^(tool:)?(page_|tab_)/i.test(a.id))) return "page_tools"
+  if (actions.length) return "other_tools"
+  return "chat"
+}
+
+/** Mark a reply up/down; `reason`/`note` only apply to a down vote. Fire-and-forget. */
+export function submitDevonAiFeedback(messageId: string, rating: "up" | "down", reason?: FeedbackReasonCode, note?: string) {
+  const message = state.messages.find((m) => m.id === messageId && m.role === "assistant")
+  if (!message || message.feedback) return
+  updateBot((m) => ({ ...m, feedback: rating }), messageId)
+  void postFeedback({
+    conversationId: state.conversationId,
+    messageId,
+    rating,
+    ...(reason ? { reason } : {}),
+    ...(note?.trim() ? { note: note.trim() } : {}),
+    taskType: taskTypeOf(message),
+  })
 }

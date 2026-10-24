@@ -23,7 +23,7 @@ export async function POST(request: Request): Promise<Response> {
   const conversationId = (typeof body.conversation_id === "string" ? body.conversation_id : typeof body.conversationId === "string" ? body.conversationId : "").trim()
   const userId = (typeof body.user_id === "string" ? body.user_id : typeof body.userId === "string" ? body.userId : "").trim()
 
-  if (!conversationId || /^(d[qt]|acct)-/.test(conversationId)) {
+  if (!conversationId || /^(d[qft]|acct)-/.test(conversationId)) {
     logger.error("Missing conversationId")
     return jsonResponse({ status: "error", message: "conversation_id is required" }, 400)
   }

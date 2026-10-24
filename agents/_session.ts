@@ -16,9 +16,14 @@ export const SESSION_KEY = "devon_session"
 export interface SessionState {
   task: string
   steps: { text: string; done: boolean }[]
+  /** Durable facts worth keeping — prices, names, decisions */
   notes: string[]
-  /** Pages Devon AI has read or acted on in this chat, newest first */
-  pages: { url: string; title: string; at: number }[]
+  /** Unresolved questions to come back to, separate from settled facts */
+  openQuestions: string[]
+  /** Pages Devon AI has read or acted on in this chat, newest first. `state` is
+   *  a short snapshot of what was true there last ("cart: 2 items, $45.98"),
+   *  set via session_update's page_state and applied to the most recent page. */
+  pages: { url: string; title: string; at: number; state?: string }[]
   updatedAt: number
 }
 
@@ -35,10 +40,10 @@ export interface BrowserSession {
   target: string | null
 }
 
-const LIMITS = { task: 300, steps: 20, step: 200, notes: 30, note: 300, pages: 12 }
+const LIMITS = { task: 300, steps: 20, step: 200, notes: 30, note: 300, openQuestions: 15, openQuestion: 200, pages: 12, pageState: 200 }
 
 export function emptySession(): SessionState {
-  return { task: "", steps: [], notes: [], pages: [], updatedAt: 0 }
+  return { task: "", steps: [], notes: [], openQuestions: [], pages: [], updatedAt: 0 }
 }
 
 function clip(s: unknown, max: number): string {
@@ -58,11 +63,17 @@ export function normalizeSession(raw: unknown): SessionState {
       .slice(0, LIMITS.steps)
   }
   if (Array.isArray(r.notes)) s.notes = r.notes.map((n) => clip(n, LIMITS.note)).filter(Boolean).slice(-LIMITS.notes)
+  if (Array.isArray(r.openQuestions)) {
+    s.openQuestions = r.openQuestions.map((n) => clip(n, LIMITS.openQuestion)).filter(Boolean).slice(-LIMITS.openQuestions)
+  }
   if (Array.isArray(r.pages)) {
     s.pages = r.pages
       .map((p) => (p && typeof p === "object" ? p as Record<string, unknown> : null))
       .filter((p): p is Record<string, unknown> => Boolean(p && typeof p.url === "string"))
-      .map((p) => ({ url: clip(p.url, 500), title: clip(p.title, 150), at: Number(p.at) || 0 }))
+      .map((p) => {
+        const state = clip(p.state, LIMITS.pageState)
+        return { url: clip(p.url, 500), title: clip(p.title, 150), at: Number(p.at) || 0, ...(state ? { state } : {}) }
+      })
       .slice(0, LIMITS.pages)
   }
   s.updatedAt = Number(r.updatedAt) || 0
@@ -75,11 +86,15 @@ export interface SessionUpdate {
   complete_steps?: number[]
   add_notes?: string[]
   remove_notes?: number[]
+  add_open_questions?: string[]
+  remove_open_questions?: number[]
+  /** A short snapshot of where things stand on the page just acted on (e.g. "cart: 2 items, $45.98") */
+  page_state?: string
 }
 
 /** Applies a session_update call; step and note numbers are 1-based, as shown to the model */
 export function applySessionUpdate(state: SessionState, update: SessionUpdate): SessionState {
-  const next: SessionState = { ...state, steps: [...state.steps], notes: [...state.notes] }
+  const next: SessionState = { ...state, steps: [...state.steps], notes: [...state.notes], openQuestions: [...state.openQuestions], pages: [...state.pages] }
   if (typeof update.task === "string") next.task = clip(update.task, LIMITS.task)
   if (Array.isArray(update.steps)) {
     next.steps = update.steps.map((t) => ({ text: clip(t, LIMITS.step), done: false })).filter((x) => x.text).slice(0, LIMITS.steps)
@@ -97,14 +112,29 @@ export function applySessionUpdate(state: SessionState, update: SessionUpdate): 
     if (text && !next.notes.includes(text)) next.notes.push(text)
   }
   next.notes = next.notes.slice(-LIMITS.notes)
+  if (update.remove_open_questions?.length) {
+    const drop = new Set(update.remove_open_questions.map((n) => n - 1))
+    next.openQuestions = next.openQuestions.filter((_, i) => !drop.has(i))
+  }
+  for (const q of update.add_open_questions ?? []) {
+    const text = clip(q, LIMITS.openQuestion)
+    if (text && !next.openQuestions.includes(text)) next.openQuestions.push(text)
+  }
+  next.openQuestions = next.openQuestions.slice(-LIMITS.openQuestions)
+  if (typeof update.page_state === "string" && next.pages.length) {
+    const state = clip(update.page_state, LIMITS.pageState)
+    next.pages[0] = { ...next.pages[0], ...(state ? { state } : { state: undefined }) }
+  }
   next.updatedAt = Date.now()
   return next
 }
 
-/** Remembers a page Devon AI used (newest first, one entry per URL) */
+/** Remembers a page Devon AI used (newest first, one entry per URL); keeps its last state note if any */
 export function recordPage(state: SessionState, page: { url: string; title: string }): SessionState {
   if (!/^https?:\/\//i.test(page.url)) return state
-  const pages = [{ url: clip(page.url, 500), title: clip(page.title, 150), at: Date.now() }, ...state.pages.filter((p) => p.url !== page.url)]
+  const prior = state.pages.find((p) => p.url === page.url)
+  const entry = { url: clip(page.url, 500), title: clip(page.title, 150), at: Date.now(), ...(prior?.state ? { state: prior.state } : {}) }
+  const pages = [entry, ...state.pages.filter((p) => p.url !== page.url)]
   return { ...state, pages: pages.slice(0, LIMITS.pages), updatedAt: Date.now() }
 }
 
@@ -143,9 +173,13 @@ export function sessionBlock(state: SessionState, browser: BrowserSession | null
     lines.push("Notes:")
     state.notes.forEach((n, i) => lines.push(`${i + 1}. ${n}`))
   }
+  if (state.openQuestions.length) {
+    lines.push("Open questions (unresolved — come back to these):")
+    state.openQuestions.forEach((q, i) => lines.push(`${i + 1}. ${q}`))
+  }
   if (state.pages.length) {
-    lines.push("Pages used in this chat:")
-    for (const p of state.pages.slice(0, 6)) lines.push(`- ${p.title || p.url} — ${p.url}`)
+    lines.push("Pages used in this chat (most recent first; state = what was true there last):")
+    for (const p of state.pages.slice(0, 6)) lines.push(`- ${p.title || p.url} — ${p.url}${p.state ? ` (state: ${p.state})` : ""}`)
   }
   lines.push("</devon_session>")
   return lines.join("\n")
