@@ -290,7 +290,7 @@ OUT_DIR=<path to Devon>/public/games/eaglercraft node build-devon.mjs
 - **YouTube:** videos won't play on youtube.com itself, because YouTube ties video URLs to the IP address that requested them. Use `devon://apps/youtube` to watch and download instead.
 - **WebSockets:** WebSockets aren't proxied. Sites that need them for real-time features, such as some multiplayer games, may not work.
 - **Anti-bot protection:** sites using it (for example HUMAN/PerimeterX) may block proxied requests.
-- **Extensions:** Chrome APIs that need browser internals, such as `webRequest`, `declarativeNetRequest` and `debugger`, aren't available to extensions.
+- **Extensions:** Chrome APIs that need real browser internals aren't backed by anything real. `webRequest`, `declarativeNetRequest` and `debugger` exist on `chrome.*` so extensions that merely check for or call them don't throw, but none of them actually intercepts or blocks a request, and `debugger.attach` rejects outright (there's no DevTools protocol to attach to). An ad blocker built on `declarativeNetRequest` installs cleanly but won't block anything.
 
 
 ## Page safety check
