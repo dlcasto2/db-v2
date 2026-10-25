@@ -5,41 +5,51 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Go Fish: Discard Pile Edition</title>
 <style>
-:root{--bg:#e8efe6;--felt:#2f6b4f;--felt2:#265a42;--ink:#1d2a24;--panel:#f6f8f4;--accent:#c4492f;--muted:#5b6b62;--card:#fffdf8;--red:#c4301f;--blk:#1d2a24;
-box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1a15;--felt:#1f4a37;--felt2:#183a2b;--ink:#e6efe9;--panel:#18261f;--muted:#9bb0a4}}
-:root[data-theme="dark"]{--bg:#0f1a15;--felt:#1f4a37;--felt2:#183a2b;--ink:#e6efe9;--panel:#18261f;--muted:#9bb0a4}
+/* Colors lifted straight from Devon's own app/globals.css (--background, --card,
+   --primary "periwinkle accent", --destructive, --border, --radius, …) so this
+   reads as one of Devon's own apps instead of a page dropped in from outside. */
+:root{
+  --bg:oklch(0.155 0.006 270);--ink:oklch(0.93 0.005 270);--muted:oklch(0.68 0.012 270);
+  --card:oklch(0.2 0.008 270);--card2:oklch(0.255 0.009 270);--popover:oklch(0.215 0.009 270);
+  --toolbar:oklch(0.215 0.009 270);--border:oklch(1 0 0 / 0.08);
+  --primary:oklch(0.7 0.15 272);--primary-fg:oklch(0.16 0.02 272);
+  --red:oklch(0.64 0.2 22);--face:oklch(0.97 0.004 270);--face-ink:oklch(0.2 0.01 270);
+  --ring:oklch(0.7 0.15 272 / 0.6);
+  box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)
+}
 *{box-sizing:border-box}
-html{scroll-padding-top:env(safe-area-inset-top,0px)}
-body{margin:0;background:var(--bg);color:var(--ink);font-family:"Trebuchet MS",Verdana,sans-serif;line-height:1.4}
-main{max-width:760px;margin:0 auto;padding:14px}
-h1{font:700 1.6rem Georgia,"Times New Roman",serif;margin:4px 0 2px}
-.sub{color:var(--muted);margin:0 0 12px;font-size:.9rem}
-.table{background:radial-gradient(circle at 50% 40%,var(--felt),var(--felt2));border-radius:18px;padding:14px;color:#f2f7f3}
+html{scroll-padding-top:env(safe-area-inset-top,0px);color-scheme:dark}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:ui-sans-serif,-apple-system,"Segoe UI",Roboto,Geist,Helvetica,Arial,sans-serif;line-height:1.45}
+main{max-width:760px;margin:0 auto;padding:16px}
+h1{font:600 1.45rem/1.25 inherit;letter-spacing:-0.01em;margin:4px 0 2px}
+.sub{color:var(--muted);margin:0 0 14px;font-size:.88rem}
+.table{background:var(--toolbar);border:1px solid var(--border);border-radius:18px;padding:16px;color:var(--ink)}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .lbl{font-size:.85rem;opacity:.9;margin:6px 0}
-.card{width:52px;height:74px;border-radius:7px;background:var(--card);border:1px solid #0003;display:inline-flex;flex-direction:column;align-items:center;justify-content:center;font:700 1.15rem Georgia,serif;position:relative;color:var(--blk);padding:0;margin:0}
+.card{width:52px;height:74px;border-radius:10px;background:var(--face);border:1px solid oklch(0 0 0 / 0.12);box-shadow:0 1px 2px oklch(0 0 0 / 0.25);display:inline-flex;flex-direction:column;align-items:center;justify-content:center;font:700 1.1rem inherit;position:relative;color:var(--face-ink);padding:0;margin:0}
 .card.r{color:var(--red)}
-.card small{font-size:1.2rem;line-height:1}
-.card.back{background:repeating-linear-gradient(45deg,#6b2f2a,#6b2f2a 5px,#8a3d36 5px,#8a3d36 10px);border:3px solid var(--card)}
-.card.empty{background:transparent;border:2px dashed #fff6;color:#fff9;font:400 .75rem sans-serif}
+.card small{font-size:1.15rem;line-height:1}
+.card.back{background:linear-gradient(135deg,var(--primary),oklch(0.55 0.16 272));border:2px solid oklch(1 0 0 / 0.25);box-shadow:inset 0 0 0 3px oklch(0 0 0 / 0.15)}
+.card.empty{background:transparent;border:1.5px dashed var(--border);color:var(--muted);font:400 .75rem inherit}
 .hand .card{cursor:pointer;transition:transform .12s}
 .hand .card:hover{transform:translateY(-5px)}
-.hand .card.sel{transform:translateY(-12px);outline:3px solid #ffd24a}
-.hand .card.hot{outline:3px dashed #ffd24a}
-.piles{display:flex;gap:22px;justify-content:center;margin:12px 0}
-.pile{text-align:center;font-size:.8rem}
-.pile .card{width:62px;height:88px;font-size:1.3rem}
-button.act{font:700 .95rem "Trebuchet MS",Verdana,sans-serif;background:var(--accent);color:#fff;border:0;border-radius:10px;padding:10px 14px;cursor:pointer}
-button.act.alt{background:#2b3f35;border:1px solid #fff5}
-button:focus-visible,.card:focus-visible{outline:3px solid #ffd24a;outline-offset:2px}
-.status{background:#0003;border-radius:10px;padding:10px 12px;margin:8px 0;min-height:44px}
+.hand .card.sel{transform:translateY(-12px);outline:3px solid var(--primary)}
+.hand .card.hot{outline:3px dashed var(--primary)}
+.piles{display:flex;gap:22px;justify-content:center;margin:14px 0}
+.pile{text-align:center;font-size:.8rem;color:var(--muted)}
+.pile .card{width:62px;height:88px;font-size:1.25rem}
+button.act{font:600 .92rem inherit;background:var(--primary);color:var(--primary-fg);border:0;border-radius:999px;padding:10px 16px;cursor:pointer;transition:opacity .12s}
+button.act:hover{opacity:.9}
+button.act.alt{background:var(--card2);color:var(--ink);border:1px solid var(--border)}
+button:focus-visible,.card:focus-visible{outline:2px solid var(--ring);outline-offset:2px}
+.status{background:var(--popover);border:1px solid var(--border);border-radius:12px;padding:10px 14px;margin:10px 0;min-height:44px}
 .books{font-size:.85rem}
-.chip{background:var(--card);color:var(--ink);border-radius:5px;padding:1px 7px;font-weight:700;margin-right:4px;display:inline-block}
-.log{background:var(--panel);border-radius:12px;padding:10px 14px;margin-top:12px;font-size:.88rem;max-height:170px;overflow-y:auto;overflow-x:hidden}
+.chip{background:var(--card2);color:var(--ink);border-radius:999px;padding:2px 9px;font-weight:600;margin-right:4px;display:inline-block;font-size:.82em}
+.log{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin-top:14px;font-size:.87rem;max-height:170px;overflow-y:auto;overflow-x:hidden;color:var(--muted)}
 .log p{margin:3px 0}
-.rules{margin-top:12px;color:var(--muted);font-size:.85rem}
-.rules summary{cursor:pointer;font-weight:700;color:var(--ink)}
+.log p:last-child{color:var(--ink)}
+.rules{margin-top:14px;color:var(--muted);font-size:.85rem}
+.rules summary{cursor:pointer;font-weight:600;color:var(--ink)}
 .score{display:flex;justify-content:space-between;gap:10px}
 </style>
 </head>
