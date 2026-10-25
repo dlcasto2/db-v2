@@ -11,6 +11,7 @@
 import vm from "node:vm"
 import { createHash } from "node:crypto"
 import { Innertube, Platform, YTNodes, type Types } from "youtubei.js"
+import { describeIfUnreachable, UNREACHABLE_PREFIX } from "./youtube-network-error"
 
 /**
  * A stray error from a background timer or socket (a probe aborted after its
@@ -310,6 +311,8 @@ const keyOf = (cookie: string) => (cookie ? createHash("sha256").update(cookie).
 /** YouTube's bot check. It's about the server's IP, so every client gets it. */
 export const BOT_CHECK_RE = /not a bot|sign in to confirm|confirm you.re not|unusual traffic|LOGIN_REQUIRED/i
 
+export { describeIfUnreachable, UNREACHABLE_PREFIX } from "./youtube-network-error"
+
 type Fetch = typeof fetch
 let proxiedFetch: Promise<Fetch> | null = null
 
@@ -575,7 +578,12 @@ export class YTError extends Error {
   constructor(
     message: string,
     public status = 502,
-    /** "bot-check" when YouTube is blocking this server's IP */
+    /**
+     * "bot-check" — YouTube answered and is blocking this server's IP.
+     * "network-unreachable" — this server couldn't reach googlevideo.com at
+     * all (DNS/connect failure); no cookie or client switch fixes that.
+     * "stream-unavailable" — neither of the above; a catch-all.
+     */
     public code?: string,
   ) {
     super(message)
@@ -829,7 +837,9 @@ export async function resolve(id: string, preferred?: string, userCookie = ""): 
       const wave = order.slice(i, i + size)
       const results = await Promise.all(
         wave.map((name) =>
-          withinBudget(resolveWith(id, name, cookie), name).catch((e) => (e instanceof Error ? e.message : String(e))),
+          withinBudget(resolveWith(id, name, cookie), name).catch(
+            (e) => describeIfUnreachable(e) ?? (e instanceof Error ? e.message : String(e)),
+          ),
         ),
       )
       // Keep the preferred order: the first client in the wave that worked wins
@@ -845,9 +855,25 @@ export async function resolve(id: string, preferred?: string, userCookie = ""): 
       i += size
     }
 
+    // Every client hit a DNS/connect failure, not a YouTube refusal — the
+    // server can't reach googlevideo.com at all. Checked before touching the
+    // relay result, so it's judged on its own: a relay that's merely unset
+    // or out of working instances shouldn't be folded into "unreachable" too
+    // (that's a separate, equally real reason worth its own message below).
+    const allClientsUnreachable = reasons.length > 0 && reasons.every((r) => r.startsWith(UNREACHABLE_PREFIX))
+
     // YouTube refused this server: use an Invidious relay if one got through
     const relayed = await relay
     if (typeof relayed !== "string") return remember(relayed)
+
+    if (allClientsUnreachable) {
+      throw new YTError(
+        `This server can't reach ${reasons[0].slice(UNREACHABLE_PREFIX.length)} over the network, and no Invidious relay could stand in either (${relayed}). ` +
+          "That's a network/DNS problem on this deployment, not something a cookie, a different client or a different video fixes — it needs outbound access to *.googlevideo.com, or a reachable Invidious relay (DEVON_INVIDIOUS).",
+        503,
+        "network-unreachable",
+      )
+    }
     reasons.push(relayed)
 
     if (left() <= 1500 && !reasons.some((r) => BOT_CHECK_RE.test(r) || /HTTP 403/.test(r))) {

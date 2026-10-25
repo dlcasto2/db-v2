@@ -279,6 +279,10 @@ Server-wide settings (environment variables). Devon reads them from the running 
 
 `/api/youtube/status` shows which of these are set (never the values): for the cookie, which variable it came from, whether it was seen by the running site (`"source":"runtime"`) or the build (`"build"`), how many characters arrived and whether the sign-in cookie is there. `envSeen` lists every `DEVON_*` variable name the host passed in, which shows whether a variable reached Devon at all.
 
+### Network unreachable (not a bot check)
+
+A different failure, and a different fix: if the **host itself** has no outbound DNS/network path to `*.googlevideo.com` (and, for the relay fallback, to the `DEVON_INVIDIOUS` instances), every client fails identically with a connect error, not a YouTube refusal — so no cookie, client or video fixes it. Devon tells these apart (`lib/youtube-network-error.ts` classifies the failure; `resolve()` in `lib/youtube-server.ts` checks it before falling back to the bot-check messaging) and shows a distinct message naming the unreachable host, without the cookie prompt. Watching above still works (the player loads an iframe from the viewer's own connection or through Devon's general-purpose proxy, neither of which goes through this server-to-googlevideo path) — only downloading and the native in-app player need it. This is most often seen on a host whose outbound network doesn't reach Google's domains at all (for example certain regions/providers); there's no setting in Devon that changes the host's own network reachability, short of a working `DEVON_INVIDIOUS` relay or moving the deployment.
+
 ## Games
 
 Games are served straight from `public/games/` and don't go through the proxy.
