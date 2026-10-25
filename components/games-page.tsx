@@ -68,7 +68,8 @@ function GameGrid({ onOpen }: { onOpen: (id: string) => void }) {
   )
 }
 
-function GamePlayer({ game, onBack }: { game: Game; onBack: () => void }) {
+/** Exported so other built-in pages (e.g. the Go Fish app) can reuse the same player chrome for a bundled game-shaped HTML page */
+export function GamePlayer({ game, onBack }: { game: Game; onBack: () => void }) {
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const [state, setState] = useState<"loading" | "ready" | "error">("loading")
   const [error, setError] = useState("")
