@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Go Fish: Discard Pile Edition</title>
+<style>
+:root{--bg:#e8efe6;--felt:#2f6b4f;--felt2:#265a42;--ink:#1d2a24;--panel:#f6f8f4;--accent:#c4492f;--muted:#5b6b62;--card:#fffdf8;--red:#c4301f;--blk:#1d2a24;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1a15;--felt:#1f4a37;--felt2:#183a2b;--ink:#e6efe9;--panel:#18261f;--muted:#9bb0a4}}
+:root[data-theme="dark"]{--bg:#0f1a15;--felt:#1f4a37;--felt2:#183a2b;--ink:#e6efe9;--panel:#18261f;--muted:#9bb0a4}
+*{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Trebuchet MS",Verdana,sans-serif;line-height:1.4}
+main{max-width:760px;margin:0 auto;padding:14px}
+h1{font:700 1.6rem Georgia,"Times New Roman",serif;margin:4px 0 2px}
+.sub{color:var(--muted);margin:0 0 12px;font-size:.9rem}
+.table{background:radial-gradient(circle at 50% 40%,var(--felt),var(--felt2));border-radius:18px;padding:14px;color:#f2f7f3}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.lbl{font-size:.85rem;opacity:.9;margin:6px 0}
+.card{width:52px;height:74px;border-radius:7px;background:var(--card);border:1px solid #0003;display:inline-flex;flex-direction:column;align-items:center;justify-content:center;font:700 1.15rem Georgia,serif;position:relative;color:var(--blk);padding:0;margin:0}
+.card.r{color:var(--red)}
+.card small{font-size:1.2rem;line-height:1}
+.card.back{background:repeating-linear-gradient(45deg,#6b2f2a,#6b2f2a 5px,#8a3d36 5px,#8a3d36 10px);border:3px solid var(--card)}
+.card.empty{background:transparent;border:2px dashed #fff6;color:#fff9;font:400 .75rem sans-serif}
+.hand .card{cursor:pointer;transition:transform .12s}
+.hand .card:hover{transform:translateY(-5px)}
+.hand .card.sel{transform:translateY(-12px);outline:3px solid #ffd24a}
+.hand .card.hot{outline:3px dashed #ffd24a}
+.piles{display:flex;gap:22px;justify-content:center;margin:12px 0}
+.pile{text-align:center;font-size:.8rem}
+.pile .card{width:62px;height:88px;font-size:1.3rem}
+button.act{font:700 .95rem "Trebuchet MS",Verdana,sans-serif;background:var(--accent);color:#fff;border:0;border-radius:10px;padding:10px 14px;cursor:pointer}
+button.act.alt{background:#2b3f35;border:1px solid #fff5}
+button:focus-visible,.card:focus-visible{outline:3px solid #ffd24a;outline-offset:2px}
+.status{background:#0003;border-radius:10px;padding:10px 12px;margin:8px 0;min-height:44px}
+.books{font-size:.85rem}
+.chip{background:var(--card);color:var(--ink);border-radius:5px;padding:1px 7px;font-weight:700;margin-right:4px;display:inline-block}
+.log{background:var(--panel);border-radius:12px;padding:10px 14px;margin-top:12px;font-size:.88rem;max-height:170px;overflow-y:auto;overflow-x:hidden}
+.log p{margin:3px 0}
+.rules{margin-top:12px;color:var(--muted);font-size:.85rem}
+.rules summary{cursor:pointer;font-weight:700;color:var(--ink)}
+.score{display:flex;justify-content:space-between;gap:10px}
+</style>
+</head>
+<body>
+<main>
+<h1>Go Fish: Discard Pile Edition</h1>
+<p class="sub">Collect four of a kind. Every turn ends with a discard, and the discard pile is a second place to fish.</p>
+<div class="table">
+ <div class="score"><div class="lbl" id="cinfo"></div><div class="lbl books" id="cbooks"></div></div>
+ <div class="row hand" id="chand"></div>
+ <div class="piles">
+  <div class="pile"><div class="card back" id="stock"></div><div id="stockn"></div></div>
+  <div class="pile"><div id="disc"></div><div id="discn"></div></div>
+ </div>
+ <div class="status" id="status" aria-live="polite"></div>
+ <div class="row" id="actions"></div>
+ <div class="score"><div class="lbl" id="pinfo"></div><div class="lbl books" id="pbooks"></div></div>
+ <div class="row hand" id="phand"></div>
+</div>
+<div class="log" id="log" aria-label="Game log"></div>
+<details class="rules"><summary>Rules</summary>
+<p>Each player starts with 7 cards. On your turn, pick a card and ask the other player for that rank. If they have any, they hand them all over and you go again.</p>
+<p>If they don't, you go fishing: draw the top card of the stock, or take the top card of the discard pile (you can see it). If you land the rank you asked for, you go again.</p>
+<p>Otherwise your turn ends with a discard: put any card from your hand face up on the discard pile. Once the stock runs out, discards stop and only the pile is left to fish from.</p>
+<p>Four of a kind becomes a book. If your hand empties, you draw 5 new cards. The game ends when all 13 books are made or the stock is gone and someone has no cards. Most books wins.</p></details>
+<p><button class="act" id="new">New game</button></p>
+</main>
+<script>
+const SU=["♠","♥","♦","♣"],RK=["A","2","3","4","5","6","7","8","9","10","J","K","Q"].map((r,i)=>r);
+RK[11]="J";RK[10]="J";
+const NAMES=["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
+let S;
+const $=id=>document.getElementById(id);
+function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.random()*(i+1)|0;[a[i],a[j]]=[a[j],a[i]]}return a}
+function newGame(){
+ const deck=[];for(let r=0;r<13;r++)for(let s=0;s<4;s++)deck.push({r,s});
+ shuffle(deck);
+ S={stock:deck,disc:[],p:[],c:[],pb:[],cb:[],phase:"ask",sel:null,asked:null,log:[],seen:new Set(),over:false};
+ for(let i=0;i<7;i++){S.p.push(S.stock.pop());S.c.push(S.stock.pop())}
+ books("p");books("c");
+ $("log").innerHTML="";
+ say("New game. Your turn: pick a card, then ask for that rank.");
+ render();
+}
+function say(t){S.log.push(t);const p=document.createElement("p");p.textContent=t;$("log").appendChild(p);$("log").scrollTop=1e5}
+function books(w){
+ const h=S[w],cnt={};h.forEach(c=>cnt[c.r]=(cnt[c.r]||0)+1);
+ for(const r in cnt)if(cnt[r]===4){S[w]=S[w].filter(c=>c.r!=r);S[w==="p"?"pb":"cb"].push(+r);S.seen.delete(+r);
+  say((w==="p"?"You made":"Computer made")+" a book of "+NAMES[r]+"s.")}
+}
+function refill(w){
+ if(S[w].length===0&&S.stock.length>0){const n=Math.min(5,S.stock.length);for(let i=0;i<n;i++)S[w].push(S.stock.pop());books(w);
+  say((w==="p"?"Your":"Computer's")+" hand was empty, so "+(w==="p"?"you drew":"it drew")+" "+n+" cards.")}
+}
+function done(){
+ const total=S.pb.length+S.cb.length;
+ if(total===13||(S.stock.length===0&&(S.p.length===0||S.c.length===0))){
+  S.over=true;S.phase="over";
+  const a=S.pb.length,b=S.cb.length;
+  say(a>b?"You win "+a+" to "+b+".":a<b?"Computer wins "+b+" to "+a+".":"Tied at "+a+" books each.");
+  render();return true}
+ return false}
+const cs=c=>NAMES[c.r]+SU[c.s];
+function cardEl(c,tag,cls){const e=document.createElement(tag||"div");e.className="card"+(c.s===1||c.s===2?" r":"")+(cls?" "+cls:"");e.innerHTML="<span>"+NAMES[c.r]+"</span><small>"+SU[c.s]+"</small>";e.setAttribute("aria-label",cs(c));return e}
+function render(){
+ const sorted=[...S.p].sort((a,b)=>a.r-b.r||a.s-b.s);
+ $("cinfo").textContent="Computer: "+S.c.length+" cards";
+ $("pinfo").textContent="You: "+S.p.length+" cards";
+ const bk=a=>a.length?a.sort((x,y)=>x-y).map(r=>'<span class="chip">'+NAMES[r]+'</span>').join(""):"No books yet";
+ $("cbooks").innerHTML="Books: "+bk(S.cb);$("pbooks").innerHTML="Books: "+bk(S.pb);
+ const ch=$("chand");ch.innerHTML="";S.c.forEach(()=>{const d=document.createElement("div");d.className="card back";ch.appendChild(d)});
+ $("stock").className="card back"+(S.stock.length?"":" empty");$("stock").textContent=S.stock.length?"":"Empty";
+ $("stockn").textContent="Stock: "+S.stock.length;
+ const d=$("disc");d.innerHTML="";
+ if(S.disc.length){const t=cardEl(S.disc[S.disc.length-1]);t.style.width="62px";t.style.height="88px";d.appendChild(t)}
+ else{const e=document.createElement("div");e.className="card empty";e.style.cssText="width:62px;height:88px";e.textContent="No discards";d.appendChild(e)}
+ $("discn").textContent="Discard pile: "+S.disc.length;
+ const ph=$("phand");ph.innerHTML="";
+ sorted.forEach(c=>{
+  const e=cardEl(c,"button",(S.phase==="ask"&&S.sel===c.r?"sel":"")+(S.phase==="discard"?" hot":""));
+  e.type="button";e.onclick=()=>pickCard(c);
+  if(S.phase==="busy"||S.phase==="over"||S.phase==="fish")e.disabled=true;
+  ph.appendChild(e)});
+ const act=$("actions");act.innerHTML="";let st="";
+ if(S.phase==="ask"){
+  if(S.sel===null)st="Your turn. Pick a card to ask for its rank.";
+  else{st="Ask the computer for "+NAMES[S.sel]+"s?";
+   const b=btn("Ask for "+NAMES[S.sel]+"s",()=>ask(S.sel));act.appendChild(b)}}
+ else if(S.phase==="fish"){
+  st="Go fish! The computer has no "+NAMES[S.asked]+"s. Where do you fish?";
+  const a=btn("Draw from stock",()=>fish("stock"));if(!S.stock.length)a.disabled=true;act.appendChild(a);
+  const t=S.disc[S.disc.length-1];
+  const b=btn(t?"Take "+cs(t)+" from discards":"Discard pile is empty",()=>fish("disc"),"alt");if(!t)b.disabled=true;act.appendChild(b)}
+ else if(S.phase==="discard")st="Choose a card from your hand to discard.";
+ else if(S.phase==="busy")st="Computer's turn…";
+ else st=S.log[S.log.length-1];
+ $("status").textContent=st;
+}
+function btn(t,f,alt){const b=document.createElement("button");b.className="act"+(alt?" alt":"");b.textContent=t;b.onclick=f;return b}
+function pickCard(c){
+ if(S.phase==="ask"){S.sel=c.r;render()}
+ else if(S.phase==="discard"){
+  S.p.splice(S.p.indexOf(c),1);S.disc.push(c);say("You discarded "+cs(c)+".");
+  endHuman()}
+}
+function ask(r){
+ S.seen.add(r);
+ const got=S.c.filter(c=>c.r===r);
+ if(got.length){
+  S.c=S.c.filter(c=>c.r!==r);S.p.push(...got);
+  say("You asked for "+NAMES[r]+"s and got "+got.length+".");
+  books("p");refill("p");refill("c");S.sel=null;
+  if(done())return;render()
+ }else{
+  say("You asked for "+NAMES[r]+"s. Go fish!");S.asked=r;S.phase="fish";render()}
+}
+function fish(src){
+ let c;
+ if(src==="stock")c=S.stock.pop();else c=S.disc.pop();
+ S.p.push(c);
+ say(src==="stock"?"You drew a card from the stock.":"You took "+cs(c)+" from the discard pile.");
+ books("p");
+ if(c.r===S.asked){say("It's the "+NAMES[c.r]+" you wanted. Go again!");S.phase="ask";S.sel=null;refill("p");if(done())return;render();return}
+ if(S.stock.length>0&&S.p.length>0){S.phase="discard";render()}else endHuman()
+}
+function endHuman(){
+ books("p");S.sel=null;refill("p");
+ if(done())return;
+ S.phase="busy";render();setTimeout(cpu,900)
+}
+function cpu(){
+ if(S.over)return;
+ refill("c");
+ if(S.c.length===0){S.phase="ask";render();return}
+ const cnt={};S.c.forEach(c=>cnt[c.r]=(cnt[c.r]||0)+1);
+ const ranks=Object.keys(cnt).map(Number);
+ const mx=Math.max(...ranks.map(r=>cnt[r]));
+ const best=ranks.filter(r=>cnt[r]===mx);
+ const r=best[Math.random()*best.length|0];
+ const got=S.p.filter(c=>c.r===r);
+ if(got.length){
+  S.p=S.p.filter(c=>c.r!==r);S.c.push(...got);
+  say("Computer asked for "+NAMES[r]+"s and took "+got.length+" from you.");
+  books("c");refill("c");refill("p");
+  if(done())return;render();setTimeout(cpu,1100);return}
+ say("Computer asked for "+NAMES[r]+"s. Go fish!");
+ const top=S.disc[S.disc.length-1];
+ let c;
+ if(top&&(top.r===r||cnt[top.r]>=2||!S.stock.length)){c=S.disc.pop();say("Computer took "+cs(c)+" from the discard pile.")}
+ else if(S.stock.length){c=S.stock.pop();say("Computer drew from the stock.")}
+ if(c){S.c.push(c);books("c")}
+ render();
+ if(c&&c.r===r){say("Computer got the "+NAMES[r]+" it wanted and goes again.");if(done())return;render();setTimeout(cpu,1100);return}
+ setTimeout(()=>{
+  if(S.stock.length>0&&S.c.length>0){
+   const n={};S.c.forEach(x=>n[x.r]=(n[x.r]||0)+1);
+   let pool=S.c.filter(x=>!S.seen.has(x.r));if(!pool.length)pool=S.c;
+   const lo=Math.min(...pool.map(x=>n[x.r]));
+   const opts=pool.filter(x=>n[x.r]===lo);
+   const d=opts[Math.random()*opts.length|0];
+   S.c.splice(S.c.indexOf(d),1);S.disc.push(d);say("Computer discarded "+cs(d)+".")}
+  books("c");refill("c");refill("p");
+  if(done())return;
+  S.phase="ask";S.sel=null;say("Your turn.");render()
+ },900);
+}
+$("new").onclick=newGame;
+newGame();
+</script>
+</body>
+</html>

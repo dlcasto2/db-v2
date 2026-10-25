@@ -1,6 +1,6 @@
 # Devon Browser
 
-A web proxy browser that runs in a browser tab. Devon has tabs, an address bar, bookmarks, history, Chrome extensions, developer tools, built-in Games and an Apps page (YouTube, Devon AI and Prompt Gen). Pages load through Devon's own proxy.
+A web proxy browser that runs in a browser tab. Devon has tabs, an address bar, bookmarks, history, Chrome extensions, developer tools, built-in Games and an Apps page (YouTube, Devon AI, Prompt Gen and Go Fish). Pages load through Devon's own proxy.
 
 **Official links**
 - https://db-v5.edgeone.dev
@@ -29,6 +29,7 @@ Built with Next.js 16 (App Router), TypeScript, Tailwind CSS v4 and shadcn/ui.
   - **YouTube** (`devon://apps/youtube`): search, watch and download. See [YouTube](#youtube).
   - **Devon AI** (`devon://apps/ai`, or the ✦ toolbar button to open it next to a page): a chat assistant that can read and use the page you have open (click, type, choose, scroll, open tabs, with your permission per site), keeps a session state for multi-step tasks, and runs code in a sandbox. See [Devon AI](#devon-ai).
   - **Prompt Gen** (`devon://apps/prompt-gen`): turns a rough idea into ready-to-use prompts, offline.
+  - **Go Fish** (`devon://apps/go-fish`): single-player Go Fish against the computer, with a discard pile.
 - **Games:** open `devon://games`, the Games button on the new tab page, or ⋮ → Games. See [Games](#games).
 
 ### Keyboard shortcuts
@@ -102,6 +103,7 @@ Devon runs anywhere Next.js runs, and it is currently deployed on both **EdgeOne
 | `lib/devon-ai/page-actions.ts`, `lib/devon-ai/page-executor.ts` | Reading and acting on pages in the browser, and running the page tools against Devon's tabs |
 | `.claude/skills/` | Skills Devon AI's agent can load |
 | `components/prompt-gen-page.tsx`, `lib/prompt-gen.ts` | Prompt Gen |
+| `components/go-fish-page.tsx`, `public/apps/go-fish/` | Go Fish |
 | `public/games/` | Game files |
 | `public/devon-frame.html` | Blank same-origin page used for extension frames |
 
@@ -143,6 +145,7 @@ addresses even where the results page doesn't, so they're left alone.
 | Devon AI | `devon://apps/ai` | Chat assistant with sandbox tools and page questions. Needs setup, see [Devon AI](#devon-ai). |
 | YouTube | `devon://apps/youtube` | Search, watch and download YouTube videos. The old `devon://youtube` addresses still open it. |
 | Prompt Gen | `devon://apps/prompt-gen` | Write an idea, pick a type (Ask, Write, Code, Image, Study, Plan), tone and detail, and get three prompts. **Remix** rewords them. Runs entirely in the browser. **Send to Devon AI** puts a prompt in Devon AI's message box. |
+| Go Fish | `devon://apps/go-fish` | A single-player Go Fish against the computer, with a discard pile: on a miss you draw from the stock or take the top discard, and if neither has a card to give your turn ends in a discard instead. Runs entirely in the browser. |
 
 ## Devon AI
 

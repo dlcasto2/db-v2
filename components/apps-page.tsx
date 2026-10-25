@@ -10,6 +10,8 @@ const ART: Record<AppId, string> = {
     "bg-[radial-gradient(circle_at_25%_25%,oklch(0.7_0.15_272/0.5),transparent_60%),radial-gradient(circle_at_85%_80%,oklch(0.62_0.2_25/0.35),transparent_55%)]",
   "prompt-gen":
     "bg-[radial-gradient(circle_at_30%_25%,oklch(0.78_0.12_180/0.5),transparent_60%),radial-gradient(circle_at_80%_85%,oklch(0.65_0.13_220/0.45),transparent_55%)]",
+  "go-fish":
+    "bg-[radial-gradient(circle_at_30%_25%,oklch(0.62_0.14_155/0.5),transparent_60%),radial-gradient(circle_at_80%_85%,oklch(0.45_0.1_155/0.45),transparent_55%)]",
 }
 
 /** The Apps page (devon://apps): Devon's built-in apps, laid out like the Games page */

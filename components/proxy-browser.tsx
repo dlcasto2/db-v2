@@ -76,6 +76,7 @@ import { YOUTUBE_ICON, parseYouTubeUrl, videoIdFromUrl, youTubePageUrl } from "@
 import { AppsPage } from "@/components/apps-page"
 import { DevonAiPage } from "@/components/devon-ai-page"
 import { PromptGenPage } from "@/components/prompt-gen-page"
+import { GoFishPage } from "@/components/go-fish-page"
 import { AI_URL, APPS_URL, appPageInfo, parseAppsUrl } from "@/lib/apps"
 import { askDevonAiAboutPage, registerPageHost, setDevonAiDraft, stopDevonAi, useDevonAiPageWork } from "@/lib/devon-ai/store"
 import type { PageHost, TabInfo } from "@/lib/devon-ai/page-executor"
@@ -503,9 +504,10 @@ export function ProxyBrowser() {
       if (!trimmed) return
 
       // Devon's built-in pages: Games (devon://games, devon://games/<id>), the
-      // Apps page (devon://apps) with Devon AI (devon://apps/ai) and Prompt Gen
-      // (devon://apps/prompt-gen), and YouTube (devon://apps/youtube, …?q=…,
-      // …/watch?v=…; the old devon://youtube addresses still work)
+      // Apps page (devon://apps) with Devon AI (devon://apps/ai), Prompt Gen
+      // (devon://apps/prompt-gen), Go Fish (devon://apps/go-fish), and YouTube
+      // (devon://apps/youtube, …?q=…, …/watch?v=…; the old devon://youtube
+      // addresses still work)
       const gameId = parseGamesUrl(trimmed)
       const appPage = gameId === null ? parseAppsUrl(trimmed) : null
       // A real YouTube video link (youtube.com/watch, youtu.be, shorts, embed,
@@ -2024,6 +2026,8 @@ export function ProxyBrowser() {
                     showDevonAi("this-tab")
                   }}
                 />
+              ) : parseAppsUrl(activeTab.url) === "go-fish" ? (
+                <GoFishPage onOpenApps={() => navigate(activeTab.id, APPS_URL, "push")} />
               ) : (
                 <AppsPage onOpen={(url) => navigate(activeTab.id, url, "push")} />
               )}
