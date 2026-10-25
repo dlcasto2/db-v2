@@ -16,6 +16,7 @@ import {
   RotateCw,
   Search,
   TvMinimalPlay,
+  WifiOff,
   X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -504,6 +505,38 @@ function DownloadUnavailableCard({ message, onRetry }: { message: string; onRetr
   )
 }
 
+/**
+ * errorCode === "network-unreachable": this server can't reach
+ * googlevideo.com at all (a DNS/network problem on the deployment), not
+ * YouTube refusing it — so unlike DownloadUnavailableCard, this doesn't offer
+ * a cookie box. Adding a cookie, trying another client or picking another
+ * video all hit the identical connect failure; none of them fix it.
+ */
+function NetworkUnreachableCard({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="mt-4 rounded-2xl bg-toolbar p-5 text-sm ring-1 ring-border">
+      <div className="flex items-start gap-3">
+        <WifiOff className="mt-0.5 size-5 flex-shrink-0 text-amber-400" />
+        <div className="min-w-0">
+          <p className="font-medium">This server can&apos;t reach YouTube&apos;s video servers</p>
+          <p className="mt-1 break-words text-muted-foreground">{message}</p>
+          <p className="mt-2 text-muted-foreground">
+            That&apos;s a network problem on this Devon deployment, not something to fix from the page — a cookie,
+            a different client or a different video won&apos;t help, since every one hits the same unreachable
+            address. “Direct” playback above still works (it&apos;s your own connection, not this server&apos;s); so
+            does “Through Devon” unless this server can&apos;t reach Google&apos;s other domains either. Downloading
+            needs the host itself to have outbound access to <span className="font-mono">*.googlevideo.com</span>,
+            or a working Invidious relay (<span className="font-mono">DEVON_INVIDIOUS</span>).
+          </p>
+          <Button size="sm" variant="secondary" className="mt-3 rounded-full" onClick={onRetry}>
+            <RotateCw /> Try again
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Cookie box
 // ---------------------------------------------------------------------------
@@ -880,7 +913,9 @@ function WatchView({
         <div className="min-w-0">
           <DevonPlayer id={id} video={video} />
 
-          {error && (errorCode === "bot-check" || errorCode === "stream-unavailable") ? (
+          {error && errorCode === "network-unreachable" ? (
+            <NetworkUnreachableCard message={error} onRetry={() => setAttempt((n) => n + 1)} />
+          ) : error && (errorCode === "bot-check" || errorCode === "stream-unavailable") ? (
             <DownloadUnavailableCard message={error} onRetry={() => setAttempt((n) => n + 1)} />
           ) : error ? (
             <ErrorCard message={error} onRetry={() => setAttempt((n) => n + 1)} />
