@@ -1,6 +1,6 @@
 # Devon Browser
 
-A web proxy browser that runs in a browser tab. Devon has tabs, an address bar, bookmarks, history, Chrome extensions, developer tools, built-in Games and an Apps page (YouTube, Devon AI, Prompt Gen and Go Fish). Pages load through Devon's own proxy.
+A web proxy browser that runs in a browser tab. Devon has tabs, an address bar, bookmarks, history, Chrome extensions, developer tools, built-in Games and an Apps page (YouTube, Devon AI, Prompt Gen, Go Fish and HTML Lab). Pages load through Devon's own proxy.
 
 **Official links**
 - https://db-v5.edgeone.dev
@@ -30,6 +30,7 @@ Built with Next.js 16 (App Router), TypeScript, Tailwind CSS v4 and shadcn/ui.
   - **Devon AI** (`devon://apps/ai`, or the ✦ toolbar button to open it next to a page): a chat assistant that can read and use the page you have open (click, type, choose, scroll, open tabs, with your permission per site), keeps a session state for multi-step tasks, and runs code in a sandbox. See [Devon AI](#devon-ai).
   - **Prompt Gen** (`devon://apps/prompt-gen`): turns a rough idea into ready-to-use prompts, offline.
   - **Go Fish** (`devon://apps/go-fish`): single-player Go Fish against the computer, with a discard pile.
+  - **HTML Lab** (`devon://apps/html-lab`): edit HTML, CSS and JavaScript side by side, open a project folder with local assets, and see a live preview in a restricted sandbox.
 - **Games:** open `devon://games`, the Games button on the new tab page, or ⋮ → Games. See [Games](#games).
 
 ### Keyboard shortcuts
@@ -104,6 +105,7 @@ Devon runs anywhere Next.js runs, and it is currently deployed on both **EdgeOne
 | `.claude/skills/` | Skills Devon AI's agent can load |
 | `components/prompt-gen-page.tsx`, `lib/prompt-gen.ts` | Prompt Gen |
 | `components/go-fish-page.tsx`, `public/apps/go-fish/` | Go Fish |
+| `components/html-lab-page.tsx`, `public/apps/html-lab.svg` | Live HTML/CSS/JavaScript playground with a sandboxed preview |
 | `public/games/` | Game files |
 | `public/devon-frame.html` | Blank same-origin page used for extension frames |
 
@@ -146,6 +148,7 @@ addresses even where the results page doesn't, so they're left alone.
 | YouTube | `devon://apps/youtube` | Search, watch and download YouTube videos. The old `devon://youtube` addresses still open it. |
 | Prompt Gen | `devon://apps/prompt-gen` | Write an idea, pick a type (Ask, Write, Code, Image, Study, Plan), tone and detail, and get three prompts. **Remix** rewords them. Runs entirely in the browser. **Send to Devon AI** puts a prompt in Devon AI's message box. |
 | Go Fish | `devon://apps/go-fish` | A single-player Go Fish against the computer, with a discard pile: on a miss you draw from the stock or take the top discard, and if neither has a card to give your turn ends in a discard instead. Runs entirely in the browser. |
+| HTML Lab | `devon://apps/html-lab` | Edit HTML, CSS and JavaScript with a live-updating preview, saved locally in this browser. Open a project folder to load its index/first HTML file, linked local stylesheets and scripts, and referenced images/fonts/media into the sandboxed preview (up to 250 files and 20 MB of referenced assets). JavaScript runs in a sandbox with network access blocked. Copy code or download the combined page as an HTML file. |
 
 ## Devon AI
 
