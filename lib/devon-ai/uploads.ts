@@ -1,6 +1,6 @@
 import type { UploadedFile } from "./types"
 
-export const MAX_UPLOAD_FILES = 20
+export const MAX_UPLOAD_FILES = 250
 export const MAX_UPLOAD_TEXT_CHARS = 100_000
 export const MAX_UPLOAD_FILE_CHARS = 50_000
 
