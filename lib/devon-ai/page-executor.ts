@@ -210,21 +210,22 @@ export async function runPageAction(host: PageHost, req: PageActionRequest, hook
     }
 
     if (tool === "page_watch") {
-      const watchStatus = host.status(tabId)
+      const watchTabId = tabId
+      const watchStatus = host.status(watchTabId)
       if (!watchStatus) throw new PageActionError("That tab was closed.")
       const query = str(args.query).trim()
       if (!query) throw new PageActionError("Provide the text to monitor for changes.")
       const condition = (str(args.condition) || "changes") as "appears" | "disappears" | "changes"
-      const initial = await currentTabText(host, tabId)
+      const initial = await currentTabText(host, watchTabId)
       const baseline = watchValue(initial, query, condition)
       const watchId = crypto.randomUUID().slice(0, 8)
       let checking = false
       const timer = window.setInterval(() => {
         if (checking) return
         checking = true
-        void currentTabText(host, tabId, true)
+        void currentTabText(host, watchTabId, true)
           .then((text) => {
-            if (host.status(tabId)?.url !== watchStatus.url) {
+            if (host.status(watchTabId)?.url !== watchStatus.url) {
               window.clearInterval(timer)
               pageWatches.delete(watchId)
               window.dispatchEvent(new CustomEvent("devon-page-alert", { detail: { query, url: watchStatus.url, error: "Alert stopped because its tab navigated to a different page." } }))
