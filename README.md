@@ -148,7 +148,7 @@ addresses even where the results page doesn't, so they're left alone.
 | YouTube | `devon://apps/youtube` | Search, watch and download YouTube videos. The old `devon://youtube` addresses still open it. |
 | Prompt Gen | `devon://apps/prompt-gen` | Write an idea, pick a type (Ask, Write, Code, Image, Study, Plan), tone and detail, and get three prompts. **Remix** rewords them. Runs entirely in the browser. **Send to Devon AI** puts a prompt in Devon AI's message box. |
 | Go Fish | `devon://apps/go-fish` | A single-player Go Fish against the computer, with a discard pile: on a miss you draw from the stock or take the top discard, and if neither has a card to give your turn ends in a discard instead. Runs entirely in the browser. |
-| HTML Lab | `devon://apps/html-lab` | Edit HTML, CSS and JavaScript with a live-updating preview, saved locally in this browser. Open a project folder to load its index/first HTML file, linked local stylesheets and scripts, and referenced images/fonts/media into the sandboxed preview (up to 250 files and 20 MB of referenced assets). JavaScript runs in a sandbox with network access blocked. Copy code or download the combined page as an HTML file. |
+| HTML Lab | `devon://apps/html-lab` | Edit HTML, CSS and JavaScript with a live-updating preview, saved locally in this browser. Open a single HTML file (up to 10,000,000 characters) or a project folder to load its index/first HTML file, linked local stylesheets and scripts, and referenced images/fonts/media into the sandboxed preview (up to 250 files and 20 MB of referenced assets). JavaScript runs in a sandbox with network access blocked. Copy code or download the combined page as an HTML file. |
 
 ## Devon AI
 
