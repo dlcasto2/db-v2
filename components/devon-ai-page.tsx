@@ -916,7 +916,7 @@ function Composer({ chat, disabled, quotaLeft, panel }: { chat: ChatState; disab
   const [uploadError, setUploadError] = useState("")
   const ref = useRef<HTMLTextAreaElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
-  const folderInput = useRef<HTMLInputElement>(null)
+  const folderInput = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     setUploads([])
