@@ -20,10 +20,9 @@ export const GAMES_URL = "devon://games"
 export const GAMES: Game[] = [
   {
     id: "abyssal-transcendence",
-    title: "Abyssal Transcendence 2: Dimensions Edition",
+    title: "Abyssal Transcendence: Dimensions Demo",
     author: "Independent",
-    description:
-      "Explore a dark voxel multiverse, cross fourteen strange trials, and uncover five timelines beyond the Abyss.",
+    description: "Explore the Origin and take on the Bedrock Labyrinth in this free demo of the dark voxel multiverse.",
     src: "/games/abyssal-transcendence/index.html",
     cover: "/games/abyssal-transcendence/cover.svg",
     icon: "/games/abyssal-transcendence/cover.svg",

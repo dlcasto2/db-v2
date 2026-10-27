@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-labelledby="title description">
-  <title id="title">Abyssal Transcendence: The Between</title>
+  <title id="title">Abyssal Transcendence: Dimensions Demo</title>
   <desc id="description">A golden doorway stands over a dark, misty voxel landscape.</desc>
   <defs>
     <linearGradient id="sky" x2="0" y2="1">
@@ -25,5 +25,5 @@
   <path d="M0 312h640M0 333h640" stroke="#b48cf2" stroke-opacity=".13"/>
   <text x="32" y="46" fill="#e3c27d" font-family="Georgia,serif" font-size="12" letter-spacing="4">THE BETWEEN</text>
   <text x="30" y="314" fill="#ebe5d8" font-family="Georgia,serif" font-size="30" letter-spacing="1">ABYSSAL TRANSCENDENCE</text>
-  <text x="33" y="338" fill="#a5a8b6" font-family="Arial,sans-serif" font-size="11" letter-spacing="3">DIMENSIONS EDITION</text>
+  <text x="33" y="338" fill="#a5a8b6" font-family="Arial,sans-serif" font-size="11" letter-spacing="3">DIMENSIONS DEMO</text>
 </svg>
