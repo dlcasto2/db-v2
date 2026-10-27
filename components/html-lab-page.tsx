@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { ArrowLeft, Check, Code2, Copy, Download, Eye, FolderOpen, RotateCcw, TriangleAlert } from "lucide-react"
+import { ArrowLeft, Check, Code2, Copy, Download, Eye, FileCode2, FolderOpen, RotateCcw, TriangleAlert } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
@@ -12,6 +12,7 @@ type LocalAssets = Record<string, string>
 const STORAGE_KEY = "devon_html_lab"
 const MAX_PROJECT_FILES = 250
 const MAX_PROJECT_ASSET_BYTES = 20 * 1024 * 1024
+const MAX_HTML_FILE_CHARS = 10_000_000
 const TABS: { id: EditorTab; label: string; language: string }[] = [
   { id: "html", label: "HTML", language: "text/html" },
   { id: "css", label: "CSS", language: "text/css" },
@@ -362,6 +363,25 @@ export function HtmlLabPage({ onOpenApps }: { onOpenApps: () => void }) {
       input.value = ""
     }
   }
+  const importHtmlFile = async (file: File | undefined, input: HTMLInputElement) => {
+    if (!file) return
+    try {
+      const html = await file.text()
+      if (html.length > MAX_HTML_FILE_CHARS) {
+        throw new Error(`${file.name} exceeds the ${MAX_HTML_FILE_CHARS.toLocaleString()}-character HTML file limit.`)
+      }
+      setProject({ html, css: "", js: "" })
+      setPreviewAssets({})
+      setHtmlBasePath("")
+      setFolderNotice(`Opened ${file.name}. For linked local stylesheets, scripts, and assets, use Open folder.`)
+      setRuntimeError("")
+      setActiveTab("html")
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : "Could not open this HTML file.")
+    } finally {
+      input.value = ""
+    }
+  }
 
   return (
     <div className="flex h-full w-full flex-col bg-background">
@@ -383,9 +403,19 @@ export function HtmlLabPage({ onOpenApps }: { onOpenApps: () => void }) {
         <Button size="sm" variant="outline" className="h-8 px-2.5" onClick={() => document.getElementById("html-lab-folder-input")?.click()}>
           <FolderOpen className="size-4" /> <span className="hidden sm:inline">Open folder</span>
         </Button>
+        <Button size="sm" variant="outline" className="h-8 px-2.5" onClick={() => document.getElementById("html-lab-file-input")?.click()}>
+          <FileCode2 className="size-4" /> <span className="hidden sm:inline">Open HTML</span>
+        </Button>
         <Button size="sm" variant="outline" className="h-8 px-2.5" onClick={download}>
           <Download className="size-4" /> <span className="hidden sm:inline">Download</span>
         </Button>
+        <input
+          id="html-lab-file-input"
+          type="file"
+          accept=".html,.htm,text/html"
+          className="hidden"
+          onChange={(event) => void importHtmlFile(event.currentTarget.files?.[0], event.currentTarget)}
+        />
         <input
           id="html-lab-folder-input"
           type="file"
