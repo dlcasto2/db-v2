@@ -39,6 +39,7 @@ export interface Message {
   content: string
   timestamp: number
   images?: ImageAttachment[]
+  files?: UploadedFileInfo[]
   page?: PageRef
   /** Tools and page actions used in this reply, in order */
   actions?: ActionStep[]
@@ -48,6 +49,18 @@ export interface Message {
   failed?: boolean
   /** The visitor's thumbs up/down on this reply, once sent */
   feedback?: FeedbackRating
+}
+
+export interface UploadedFileInfo {
+  name: string
+  path: string
+  mimeType: string
+  size: number
+}
+
+/** Text extracted from a user-selected file; file content is sent only with the current request. */
+export interface UploadedFile extends UploadedFileInfo {
+  text: string
 }
 
 export interface ConversationSummary {

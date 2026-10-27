@@ -54,6 +54,7 @@ import type {
   PendingApproval,
   Quota,
   SessionState,
+  UploadedFile,
 } from "@/lib/devon-ai/types"
 
 export type BannerKind = "not_configured" | "unavailable" | "rate_limited" | "notice" | "error"
@@ -77,6 +78,8 @@ export interface ChatState {
   /** Text to put in the input box (from Prompt Gen); `draftVersion` changes each time */
   draft: string
   draftVersion: number
+  /** Files to restore if a request is rejected before it reaches the model */
+  draftFiles: UploadedFile[]
   /** This chat's session state from the agent: task, steps, notes, pages used */
   session: SessionState | null
   /** Sites the visitor let Devon AI click and type on in this chat */
@@ -108,6 +111,7 @@ const INITIAL: ChatState = {
   pendingPage: null,
   draft: "",
   draftVersion: 0,
+  draftFiles: [],
   session: null,
   allowedSites: [],
   approval: null,
@@ -553,7 +557,14 @@ export function limitMessage(quota: Quota): string {
 }
 
 /** Turn a failed send into what the chat shows */
-function applyFailure(failure: ChatFailure, userMsgId: string, messageId: string, text: string, page: PageContext | undefined) {
+function applyFailure(
+  failure: ChatFailure,
+  userMsgId: string,
+  messageId: string,
+  text: string,
+  page: PageContext | undefined,
+  files: UploadedFile[],
+) {
   // The request never reached the model: take the question back out and put it in the input again
   const withdraw = failure.kind !== "error"
   if (withdraw) {
@@ -561,6 +572,7 @@ function applyFailure(failure: ChatFailure, userMsgId: string, messageId: string
       messages: s.messages.filter((m) => m.id !== userMsgId && m.id !== messageId),
       draft: text,
       draftVersion: s.draftVersion + 1,
+      draftFiles: files,
       pendingPage: page ?? s.pendingPage,
     }))
   }
@@ -584,9 +596,9 @@ function endRun() {
   set({ pageWork: null })
 }
 
-export function sendDevonAi(input: string) {
+export function sendDevonAi(input: string, files: UploadedFile[] = []) {
   const text = input.trim()
-  if (!text || state.loading || !state.started) return
+  if ((!text && !files.length) || state.loading || !state.started) return
   const conversationId = state.conversationId
   const page = state.pendingPage ?? undefined
   snapshotArmed = true
@@ -597,6 +609,7 @@ export function sendDevonAi(input: string) {
     role: "user",
     content: text,
     timestamp: Date.now(),
+    ...(files.length ? { files: files.map(({ name, path, mimeType, size }) => ({ name, path, mimeType, size })) } : {}),
     ...(page ? { page: { url: page.url, title: page.title } } : {}),
   }
   botMsgId = uuid()
@@ -614,6 +627,7 @@ export function sendDevonAi(input: string) {
       messages: [...s.messages, userMsg, botMsg],
       loading: true,
       pendingPage: null,
+      draftFiles: [],
       banner: s.banner?.kind === "notice" || s.banner?.kind === "error" ? null : s.banner,
       conversations: [summary, ...others],
     }
@@ -636,6 +650,7 @@ export function sendDevonAi(input: string) {
       botMsgId: thisBot,
       page,
       browser: browserSession(),
+      files,
     },
     {
       onQuota: (quota) => rememberQuota(quota),
@@ -677,7 +692,7 @@ export function sendDevonAi(input: string) {
         void refreshConversations("replace")
       },
       onFail(failure) {
-        applyFailure(failure, userMsg.id, thisBot, text, page)
+        applyFailure(failure, userMsg.id, thisBot, text, page, files)
         finish()
       },
     },
@@ -708,6 +723,7 @@ function switchTo(conversationId: string, load: boolean) {
     conversationId,
     messages: [],
     historyLoading: false,
+    draftFiles: [],
     session: sessionCache.get(conversationId) ?? null,
     allowedSites: sitesFor(conversationId),
   })
@@ -774,7 +790,7 @@ export function askDevonAiAboutPage(page: PageContext) {
 
 /** Put text in Devon AI's input box (Prompt Gen's "Send to Devon AI") */
 export function setDevonAiDraft(text: string) {
-  set((s) => ({ draft: text, draftVersion: s.draftVersion + 1 }))
+  set((s) => ({ draft: text, draftVersion: s.draftVersion + 1, draftFiles: [] }))
 }
 
 export function dismissDevonAiBanner() {
