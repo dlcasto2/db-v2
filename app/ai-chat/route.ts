@@ -49,7 +49,7 @@ import { createChatStream } from "@/agents/ai-chat/_stream"
 import { createAiStore, type StoredMessage } from "@/lib/devon-ai/server/store"
 import { redis } from "@/lib/devon-ai/server/kv"
 import { SANDBOX_SERVER, SANDBOX_TOOL_NAMES, createSandboxTools, sandboxConfigured } from "@/lib/devon-ai/server/sandbox-tools"
-import { readUploadedFiles, uploadedFilesBlock } from "@/lib/devon-ai/uploads"
+import { expandCompressedUploadParts, readUploadedFiles, uploadedFilesBlock } from "@/lib/devon-ai/uploads"
 
 export const runtime = "nodejs"
 export const maxDuration = 300 // Vercel plans cap this lower (Hobby/Pro); see README "Devon AI"
@@ -185,7 +185,22 @@ function stopKey(conversationId: string): string {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const body = (await request.json().catch(() => ({}))) as Record<string, unknown>
+  let body: Record<string, unknown>
+  if ((request.headers.get("content-type") || "").toLowerCase().includes("multipart/form-data")) {
+    const form = await request.formData().catch(() => null)
+    const payload = form?.get("payload")
+    if (!form || typeof payload !== "string") {
+      return json({ error: "bad_request", message: "The uploaded message is invalid." }, 400)
+    }
+    try {
+      body = JSON.parse(payload) as Record<string, unknown>
+      body.files = await expandCompressedUploadParts(form, body.fileParts)
+    } catch (error) {
+      return json({ error: "bad_request", message: error instanceof Error ? error.message : "One of the uploaded files is invalid." }, 400)
+    }
+  } else {
+    body = (await request.json().catch(() => ({}))) as Record<string, unknown>
+  }
   const message = typeof body.message === "string" ? body.message.trim() : ""
   const userMsgId = typeof body.userMsgId === "string" ? body.userMsgId : undefined
   const botMsgId = typeof body.botMsgId === "string" ? body.botMsgId : undefined

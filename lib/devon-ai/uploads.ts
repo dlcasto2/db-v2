@@ -15,6 +15,58 @@ export function prepareUploadedText(text: string, name: string): string {
   })
 }
 
+export async function expandCompressedUploadParts(form: FormData, rawParts: unknown): Promise<unknown[]> {
+  if (!Array.isArray(rawParts) || rawParts.length > MAX_UPLOAD_FILES) throw new Error(`Upload up to ${MAX_UPLOAD_FILES} files at a time.`)
+  let totalBytes = 0
+  const files: unknown[] = []
+  for (const rawPart of rawParts) {
+    if (!rawPart || typeof rawPart !== "object") throw new Error("One of the uploaded files is invalid.")
+    const part = rawPart as Record<string, unknown>
+    if (
+      typeof part.name !== "string" ||
+      typeof part.path !== "string" ||
+      typeof part.mimeType !== "string" ||
+      typeof part.size !== "number" ||
+      typeof part.field !== "string" ||
+      !/^file_\d{1,3}$/.test(part.field) ||
+      (part.encoding !== "gzip" && part.encoding !== "identity")
+    ) {
+      throw new Error("One of the uploaded files is invalid.")
+    }
+    const blob = form.get(part.field)
+    if (!(blob instanceof Blob)) throw new Error("One of the uploaded files is missing.")
+    if (part.encoding === "gzip" && typeof DecompressionStream === "undefined") {
+      throw new Error("This server can't decompress large file uploads.")
+    }
+
+    const stream =
+      part.encoding === "gzip" ? blob.stream().pipeThrough(new DecompressionStream("gzip")) : blob.stream()
+    const reader = stream.getReader()
+    const chunks: Uint8Array[] = []
+    let fileBytes = 0
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      fileBytes += value.byteLength
+      totalBytes += value.byteLength
+      if (fileBytes > MAX_UPLOAD_FILE_CHARS * 4 || totalBytes > MAX_UPLOAD_TEXT_CHARS * 4) {
+        await reader.cancel().catch(() => {})
+        throw new Error("The uploaded text exceeds the allowed size.")
+      }
+      chunks.push(value)
+    }
+    const buffer = new ArrayBuffer(fileBytes)
+    const bytes = new Uint8Array(buffer)
+    let offset = 0
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset)
+      offset += chunk.byteLength
+    }
+    files.push({ name: part.name, path: part.path, mimeType: part.mimeType, size: part.size, text: new TextDecoder().decode(buffer) })
+  }
+  return files
+}
+
 function safePath(value: string, name: string): string {
   const parts = value
     .replace(/\\/g, "/")

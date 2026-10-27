@@ -57,6 +57,64 @@ export interface StreamCallbacks {
   onFail: (failure: ChatFailure) => void
 }
 
+async function chatRequestBody(args: {
+  message: string
+  userId: string
+  userMsgId: string
+  botMsgId: string
+  page?: PageContext
+  browser?: BrowserSession
+  files?: UploadedFile[]
+}): Promise<BodyInit> {
+  const body = {
+    message: args.message,
+    userId: args.userId,
+    userMsgId: args.userMsgId,
+    botMsgId: args.botMsgId,
+    ...(args.page ? { page: args.page } : {}),
+    ...(args.browser ? { browser: args.browser } : {}),
+  }
+  if (!args.files?.length || args.files.reduce((sum, file) => sum + file.text.length, 0) <= 500_000) {
+    return JSON.stringify({ ...body, ...(args.files?.length ? { files: args.files } : {}) })
+  }
+  if (typeof CompressionStream === "undefined") {
+    throw new Error("This browser can't prepare large file uploads. Please use a current version of Chrome, Edge, or Firefox.")
+  }
+
+  const form = new FormData()
+  let transportBytes = 0
+  const fileParts: {
+    name: string
+    path: string
+    mimeType: string
+    size: number
+    field: string
+    encoding: "gzip" | "identity"
+  }[] = []
+  for (const [index, file] of args.files.entries()) {
+    const raw = new Blob([file.text], { type: "text/plain;charset=utf-8" })
+    const compressed = await new Response(raw.stream().pipeThrough(new CompressionStream("gzip"))).blob()
+    const useCompression = compressed.size < raw.size
+    const field = `file_${index}`
+    const upload = useCompression ? compressed : raw
+    transportBytes += upload.size
+    if (transportBytes > 4_000_000) {
+      throw new Error("This attachment is still too large to send safely after compression. Split it into smaller files or upload less text.")
+    }
+    form.append(field, upload, `${field}.bin`)
+    fileParts.push({
+      name: file.name,
+      path: file.path,
+      mimeType: file.mimeType,
+      size: file.size,
+      field,
+      encoding: useCompression ? "gzip" : "identity",
+    })
+  }
+  form.append("payload", JSON.stringify({ ...body, fileParts }))
+  return form
+}
+
 /** Reads a non-stream response from /ai-chat into a failure */
 async function failureFrom(res: Response): Promise<ChatFailure> {
   const type = res.headers.get("content-type") || ""
@@ -101,18 +159,14 @@ export function sendMessageStream(
     let doneReceived = false
     let failed = false
     try {
+      const body = await chatRequestBody(args)
       const res = await fetch(AI_API.chat, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "makers-conversation-id": args.conversationId },
-        body: JSON.stringify({
-          message: args.message,
-          userId: args.userId,
-          userMsgId: args.userMsgId,
-          botMsgId: args.botMsgId,
-          ...(args.page ? { page: args.page } : {}),
-          ...(args.browser ? { browser: args.browser } : {}),
-          ...(args.files?.length ? { files: args.files } : {}),
-        }),
+        headers: {
+          ...(body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+          "makers-conversation-id": args.conversationId,
+        },
+        body,
         signal: ctrl.signal,
       })
 
@@ -146,7 +200,10 @@ export function sendMessageStream(
       if (!doneReceived && !failed) cb.onDone(false)
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return
-      cb.onFail({ kind: "error", message: "Lost the connection to Devon AI. Check your network and try again." })
+      cb.onFail({
+        kind: "error",
+        message: err instanceof Error ? err.message : "Lost the connection to Devon AI. Check your network and try again.",
+      })
     }
   })()
 
