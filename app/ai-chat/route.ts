@@ -65,7 +65,7 @@ const STOP_POLL_MS = 1000
 const SANDBOX_PROMPT_ON =
   "Sandbox tools (run in an isolated E2B sandbox, not the person's computer or Devon's own server):\n" +
   "- commands: run a shell command.\n" +
-  "- files: read, write, list, makeDir, exists and remove files inside the sandbox. op is required; path for every op; content for write.\n" +
+  "- files: read, write, list, makeDir, exists, remove and download files inside the sandbox. Use download to give the person a download link. op is required; path for every op; content for write.\n" +
   "- code_interpreter: run code — python (default), javascript, typescript, r, java or bash. Good for math, data and charts. Variables, imports and functions persist across calls within this chat, like a notebook.\n" +
   "These three share one isolated sandbox for the whole chat, so a file 'files' writes in one turn is still there for 'commands' or 'code_interpreter' in a later one. The sandbox can access the public internet, but has nothing from the person's Devon tabs, this site's own files or its secrets — it's a blank machine, not Devon's server.\n\n"
 
