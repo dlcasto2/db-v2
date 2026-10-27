@@ -67,7 +67,7 @@ const SANDBOX_PROMPT_ON =
   "- commands: run a shell command.\n" +
   "- files: read, write, list, makeDir, exists and remove files inside the sandbox. op is required; path for every op; content for write.\n" +
   "- code_interpreter: run code — python (default), javascript, typescript, r, java or bash. Good for math, data and charts. Variables, imports and functions persist across calls within this chat, like a notebook.\n" +
-  "These three share one sandbox for the whole chat, so a file 'files' writes in one turn is still there for 'commands' or 'code_interpreter' in a later one. The sandbox has no internet access unless the site owner turned it on, and nothing from the person's Devon tabs, this site's own files or its secrets is in it — it's a blank machine, not Devon's server.\n\n"
+  "These three share one isolated sandbox for the whole chat, so a file 'files' writes in one turn is still there for 'commands' or 'code_interpreter' in a later one. The sandbox can access the public internet, but has nothing from the person's Devon tabs, this site's own files or its secrets — it's a blank machine, not Devon's server.\n\n"
 
 const SANDBOX_PROMPT_OFF = "You have no other tools on this Devon (no shell, files, code execution or a separate browser) — only the Devon tools above.\n\n"
 
