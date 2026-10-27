@@ -111,6 +111,10 @@ export interface SessionState {
 export interface BrowserSession {
   tabs: { id: string; title: string; url: string; active: boolean }[]
   target: string | null
+  /** Browser-local notes that survive across chats on this device */
+  memoryNotes?: string[]
+  /** Small snapshots reused across chats to avoid reading the same page again */
+  recentReads?: { url: string; title: string; text: string }[]
 }
 
 /** A page action waiting for the visitor's OK */
@@ -120,6 +124,7 @@ export interface PendingApproval {
   description: string
   /** Looks hard to undo (buying, paying, deleting, sending…) — always asked fresh, even on an already-allowed site */
   irreversible: boolean
+  warning?: string
 }
 
 export type FeedbackRating = "up" | "down"

@@ -208,6 +208,150 @@ function pageText(doc: Document): string {
     .trim()
 }
 
+export function extractTables(doc: Document, query = ""): string {
+  const needle = query.trim().toLowerCase()
+  const tables = Array.from(doc.querySelectorAll("table,[role=table]"))
+    .map((table, index) => {
+      const rows = Array.from(table.querySelectorAll("tr,[role=row]"))
+        .map((row) =>
+          Array.from(row.querySelectorAll("th,td,[role=columnheader],[role=cell]"))
+            .map((cell) => squash(cell.textContent, 300))
+            .filter(Boolean),
+        )
+        .filter((row) => row.length)
+      const caption = squash(table.querySelector("caption")?.textContent || table.getAttribute("aria-label") || "", 200)
+      return { index, caption, rows }
+    })
+    .filter((table) => table.rows.length && (!needle || `${table.caption} ${table.rows.flat().join(" ")}`.toLowerCase().includes(needle)))
+
+  if (!tables.length) return needle ? `No table matched "${query}".` : "No data tables found on this page."
+  const result = tables
+    .map(({ index, caption, rows }) => {
+      const limited = rows.slice(0, 250)
+      const width = Math.min(40, Math.max(...limited.map((row) => row.length)))
+      const lines = [
+        `Table ${index + 1}${caption ? `: ${caption}` : ""} (${rows.length} rows)`,
+        ...limited.map((row) => `| ${Array.from({ length: width }, (_, i) => row[i] || "").join(" | ")} |`),
+      ]
+      if (rows.length > limited.length) lines.push(`(${rows.length - limited.length} more rows omitted)`)
+      return lines.join("\n")
+    })
+    .join("\n\n")
+  return result.length > 30_000 ? `${result.slice(0, 30_000)}\n[truncated]` : result
+}
+
+export function visualOverview(doc: Document): string {
+  const headings = Array.from(doc.querySelectorAll("h1,h2,h3"))
+    .map((el) => `${el.tagName.toLowerCase()}: ${squash(el.textContent, 160)}`)
+    .filter((line) => !line.endsWith(":"))
+    .slice(0, 40)
+  const images = Array.from(doc.querySelectorAll("img"))
+    .map((img) => {
+      const alt = squash(img.getAttribute("alt") || img.getAttribute("title") || "", 180)
+      const size = `${Math.round(img.getBoundingClientRect().width)}×${Math.round(img.getBoundingClientRect().height)}`
+      return `- ${alt || "(image without alt text)"} (${size})`
+    })
+    .slice(0, 40)
+  const landmarks = Array.from(doc.querySelectorAll("header,nav,main,aside,footer,[role=dialog]"))
+    .map((el) => `${el.tagName.toLowerCase()}${el.getAttribute("role") ? ` role=${el.getAttribute("role")}` : ""}: ${squash(el.textContent, 120)}`)
+    .slice(0, 20)
+  return [
+    "Visual layout overview (DOM-derived; not a pixel screenshot):",
+    "Headings:",
+    ...(headings.length ? headings : ["(none found)"]),
+    "Landmarks:",
+    ...(landmarks.length ? landmarks : ["(none found)"]),
+    "Images:",
+    ...(images.length ? images : ["(none found)"]),
+  ].join("\n")
+}
+
+export async function captureScreenshot(doc: Document): Promise<{ base64: string; mimeType: string }> {
+  const win = winOf(doc)
+  if (!win) throw new PageActionError("This page doesn't expose a screenshot-capable document.")
+  const width = Math.max(1, Math.min(1000, win.innerWidth))
+  const height = Math.max(1, Math.min(700, win.innerHeight))
+  const clone = doc.documentElement.cloneNode(true) as HTMLElement
+  clone.querySelectorAll("script,iframe,object,embed,video,audio").forEach((el) => el.remove())
+  for (const attr of Array.from(clone.attributes)) {
+    if (/^on/i.test(attr.name)) clone.removeAttribute(attr.name)
+  }
+  clone.querySelectorAll("*").forEach((el) => {
+    for (const attr of Array.from(el.attributes)) {
+      if (/^on/i.test(attr.name)) el.removeAttribute(attr.name)
+    }
+  })
+  clone.style.width = `${width}px`
+  clone.style.height = `${height}px`
+  const markup = new win.XMLSerializer().serializeToString(clone)
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><foreignObject width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml" style="width:${width}px;height:${height}px;overflow:hidden">${markup}</div></foreignObject></svg>`
+  const blob = new win.Blob([svg], { type: "image/svg+xml;charset=utf-8" })
+  const objectUrl = win.URL.createObjectURL(blob)
+  try {
+    const image = new win.Image()
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve()
+      image.onerror = () => reject(new PageActionError("The page layout couldn't be rendered as an image."))
+      image.src = objectUrl
+    })
+    const canvas = doc.createElement("canvas")
+    canvas.width = width
+    canvas.height = height
+    const context = canvas.getContext("2d")
+    if (!context) throw new PageActionError("This browser can't create a screenshot canvas.")
+    context.drawImage(image, 0, 0, width, height)
+    const encoded = canvas.toDataURL("image/jpeg", 0.55)
+    const base64 = encoded.slice(encoded.indexOf(",") + 1)
+    if (base64.length > 350_000) throw new PageActionError("The screenshot is too large to send safely.")
+    return { base64, mimeType: "image/jpeg" }
+  } catch (error) {
+    if (error instanceof PageActionError) throw error
+    throw new PageActionError("The screenshot couldn't be read; page assets may block a safe capture.")
+  } finally {
+    win.URL.revokeObjectURL(objectUrl)
+  }
+}
+
+export function waitForPageCondition(
+  doc: Document,
+  condition: "appears" | "disappears" | "changes",
+  text: string,
+  timeoutMs: number,
+): Promise<string> {
+  const initial = pageText(doc)
+  const observed = (value: string) =>
+    condition === "changes" && text
+      ? value.split("\n").find((line) => line.toLowerCase().includes(text.toLowerCase())) || ""
+      : value
+  const baseline = observed(initial)
+  const matched = (value: string) =>
+    condition === "changes" ? observed(value) !== baseline : value.toLowerCase().includes(text.toLowerCase())
+  const already = condition === "disappears" ? !matched(initial) : condition === "changes" ? false : matched(initial)
+  if (already) return Promise.resolve(condition === "changes" ? "The page changed before waiting started." : `The text "${text}" is already ${condition}.`)
+
+  const win = winOf(doc)
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (result: string) => {
+      if (settled) return
+      settled = true
+      observer.disconnect()
+      win.clearTimeout(timer)
+      resolve(result)
+    }
+    const check = () => {
+      const current = pageText(doc)
+      const conditionMet =
+        condition === "disappears" ? !current.toLowerCase().includes(text.toLowerCase()) : matched(current)
+      if (conditionMet) finish(condition === "changes" ? "The page text changed." : `The text "${text}" ${condition}.`)
+    }
+    const observer = new win.MutationObserver(check)
+    observer.observe(doc.documentElement, { subtree: true, childList: true, characterData: true, attributes: true })
+    const timer = win.setTimeout(() => finish(`Timed out after ${Math.round(timeoutMs / 1000)} seconds; the requested page condition was not met.`), timeoutMs)
+    check()
+  })
+}
+
 function scrollInfo(doc: Document): string {
   const win = winOf(doc)
   const el = doc.scrollingElement || doc.documentElement

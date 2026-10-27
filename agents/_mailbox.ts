@@ -21,6 +21,7 @@ export interface PageResult {
   callId: string
   ok: boolean
   text: string
+  image?: { base64: string; mimeType: string }
   /** The tab the action ended on */
   tab?: { id?: string; url: string; title: string }
 }
@@ -71,6 +72,14 @@ export async function waitForResult(
           continue
         }
         if (parsed?.callId !== callId) continue
+        const image = parsed.image
+        const imageResult =
+          image &&
+          typeof image.base64 === "string" &&
+          image.base64.length <= 400_000 &&
+          (image.mimeType === "image/jpeg" || image.mimeType === "image/png")
+            ? { base64: image.base64, mimeType: image.mimeType }
+            : undefined
         try {
           await store.deleteMessage({ conversationId: key, messageId: entry.messageId })
         } catch {
@@ -80,6 +89,7 @@ export async function waitForResult(
           callId,
           ok: Boolean(parsed.ok),
           text: typeof parsed.text === "string" ? parsed.text : "",
+          image: imageResult,
           tab: parsed.tab && typeof parsed.tab.url === "string" ? parsed.tab : undefined,
         }
       }

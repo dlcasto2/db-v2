@@ -18,6 +18,7 @@ const logger = createLogger("ai-page-result")
 
 const JSON_HEADERS = { "Content-Type": "application/json; charset=UTF-8" } as const
 const MAX_TEXT = 40_000
+const MAX_IMAGE_BASE64 = 400_000
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 function mailboxKey(conversationId: string): string {
@@ -50,12 +51,22 @@ export async function onRequestPost(context: CloudFunctionContext): Promise<Resp
   const tab = rawTab && typeof rawTab.url === "string" ? { id: clip(rawTab.id, 40), url: clip(rawTab.url, 2000), title: clip(rawTab.title, 300) } : undefined
   let text = clip(body.text, MAX_TEXT)
   if (typeof body.text === "string" && body.text.length > MAX_TEXT) text += "\n[…cut off]"
+  const rawImage = body.image && typeof body.image === "object" ? (body.image as Record<string, unknown>) : null
+  const image =
+    rawImage &&
+    typeof rawImage.base64 === "string" &&
+    rawImage.base64.length <= MAX_IMAGE_BASE64 &&
+    /^[A-Za-z0-9+/]+={0,2}$/.test(rawImage.base64) &&
+    (rawImage.mimeType === "image/jpeg" || rawImage.mimeType === "image/png")
+      ? { base64: rawImage.base64, mimeType: rawImage.mimeType }
+      : undefined
+  if (body.image !== undefined && !image) return jsonResponse({ status: "error", message: "Invalid or oversized page screenshot" }, 400)
 
   try {
     await context.agent!.store.appendMessage({
       conversationId: mailboxKey(conversationId),
       role: "user",
-      content: JSON.stringify({ callId, ok: Boolean(body.ok), text, ...(tab ? { tab } : {}) }),
+      content: JSON.stringify({ callId, ok: Boolean(body.ok), text, ...(image ? { image } : {}), ...(tab ? { tab } : {}) }),
     })
     return jsonResponse({ status: "ok" })
   } catch (e) {

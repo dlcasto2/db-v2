@@ -29,7 +29,7 @@ import {
   sendMessageStream,
   stopAgent,
 } from "@/lib/devon-ai/api"
-import { looksIrreversible, type PageActionRequest, type PageHost, runPageAction, siteOf } from "@/lib/devon-ai/page-executor"
+import { looksIrreversible, stopPageWatches, type PageActionRequest, type PageHost, runPageAction, siteOf } from "@/lib/devon-ai/page-executor"
 import {
   base64ToBlob,
   createObjectUrl,
@@ -82,6 +82,10 @@ export interface ChatState {
   draftFiles: UploadedFile[]
   /** This chat's session state from the agent: task, steps, notes, pages used */
   session: SessionState | null
+  /** Notes persisted locally on this browser and reused across chats */
+  browserMemory: string[]
+  /** Cached page text persisted locally to avoid unnecessary re-reads */
+  recentReads: { url: string; title: string; text: string }[]
   /** Sites the visitor let Devon AI click and type on in this chat */
   allowedSites: string[]
   /** A page action waiting for the visitor's OK */
@@ -94,6 +98,9 @@ const CONVERSATION_KEY = "devon_ai_conversation"
 const USER_KEY = "devon_ai_uid"
 const QUOTA_KEY = "devon_ai_quota"
 const SITES_KEY = "devon_ai_sites"
+const BROWSER_MEMORY_KEY = "devon_ai_browser_memory"
+const BROWSER_MEMORY_HIDDEN_KEY = "devon_ai_browser_memory_hidden"
+const PAGE_READS_KEY = "devon_ai_recent_reads"
 const PAGE_SIZE = 20
 
 const INITIAL: ChatState = {
@@ -113,6 +120,8 @@ const INITIAL: ChatState = {
   draftVersion: 0,
   draftFiles: [],
   session: null,
+  browserMemory: [],
+  recentReads: [],
   allowedSites: [],
   approval: null,
   pageWork: null,
@@ -178,6 +187,58 @@ function writeStorage(key: string, value: string) {
     localStorage.setItem(key, value)
   } catch {
     // private mode: works for this session only
+  }
+}
+
+function storedBrowserMemory(): { conversationId: string; notes: string[]; updatedAt: number }[] {
+  try {
+    const raw = JSON.parse(readStorage(BROWSER_MEMORY_KEY) || "[]")
+    if (!Array.isArray(raw)) return []
+    return raw
+      .filter((entry): entry is { conversationId: string; notes: string[]; updatedAt: number } =>
+        Boolean(entry && typeof entry.conversationId === "string" && Array.isArray(entry.notes)),
+      )
+      .map((entry) => ({
+        conversationId: entry.conversationId.slice(0, 100),
+        notes: entry.notes.filter((note): note is string => typeof note === "string").map((note) => note.slice(0, 300)).slice(-30),
+        updatedAt: Number(entry.updatedAt) || 0,
+      }))
+  } catch {
+    return []
+  }
+}
+
+function storedPageReads(): { url: string; title: string; text: string }[] {
+  try {
+    const raw = JSON.parse(readStorage(PAGE_READS_KEY) || "[]")
+    if (!Array.isArray(raw)) return []
+    return raw
+      .filter((entry): entry is { url: string; title: string; text: string } =>
+        Boolean(entry && typeof entry.url === "string" && typeof entry.text === "string"),
+      )
+      .map((entry) => ({ url: entry.url.slice(0, 500), title: String(entry.title || "").slice(0, 150), text: entry.text.slice(0, 3000) }))
+      .slice(0, 5)
+  } catch {
+    return []
+  }
+}
+
+function browserMemoryNotes(): string[] {
+  return [...new Set(storedBrowserMemory().sort((a, b) => b.updatedAt - a.updatedAt).flatMap((entry) => entry.notes))].slice(0, 30)
+}
+
+function hiddenBrowserMemory(): Record<string, string[]> {
+  try {
+    const raw = JSON.parse(readStorage(BROWSER_MEMORY_HIDDEN_KEY) || "{}")
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
+    return Object.fromEntries(
+      Object.entries(raw)
+        .filter((entry): entry is [string, string[]] => Array.isArray(entry[1]) && entry[1].every((note) => typeof note === "string"))
+        .map(([id, notes]) => [id.slice(0, 100), notes.slice(-30).map((note) => note.slice(0, 300))] as const)
+        .slice(-100),
+    )
+  } catch {
+    return {}
   }
 }
 
@@ -268,7 +329,20 @@ const sessionCache = new Map<string, SessionState | null>()
 
 function setSession(conversationId: string, session: SessionState | null) {
   sessionCache.set(conversationId, session)
-  if (conversationId === state.conversationId) set({ session })
+  const memories = storedBrowserMemory().filter((entry) => entry.conversationId !== conversationId)
+  const hidden = hiddenBrowserMemory()
+  const hiddenNotes = hidden[conversationId]
+  if (hiddenNotes && session && JSON.stringify(hiddenNotes) === JSON.stringify(session.notes)) {
+    if (conversationId === state.conversationId) set({ session, browserMemory: browserMemoryNotes(), recentReads: storedPageReads() })
+    return
+  }
+  delete hidden[conversationId]
+  if (session?.notes.length) {
+    memories.push({ conversationId, notes: session.notes.slice(-30), updatedAt: session.updatedAt })
+  }
+  writeStorage(BROWSER_MEMORY_HIDDEN_KEY, JSON.stringify(hidden))
+  writeStorage(BROWSER_MEMORY_KEY, JSON.stringify(memories.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 20)))
+  if (conversationId === state.conversationId) set({ session, browserMemory: browserMemoryNotes(), recentReads: storedPageReads() })
 }
 
 async function loadSessionFor(conversationId: string) {
@@ -331,7 +405,15 @@ export function startDevonAi() {
   const existing = readStorage(CONVERSATION_KEY)
   const conversationId = existing || uuid()
   if (!existing) writeStorage(CONVERSATION_KEY, conversationId)
-  set({ started: true, userId, conversationId, quota: savedQuota(), allowedSites: sitesFor(conversationId) })
+  set({
+    started: true,
+    userId,
+    conversationId,
+    quota: savedQuota(),
+    allowedSites: sitesFor(conversationId),
+    browserMemory: browserMemoryNotes(),
+    recentReads: storedPageReads(),
+  })
   void refreshConversations("replace")
   if (existing) void loadConversation(conversationId)
 }
@@ -382,6 +464,22 @@ function actionLabels(req: PageActionRequest): { label: string; doneLabel: strin
       return a.query
         ? { label: `Looking for “${short(a.query)}”`, doneLabel: `Looked for “${short(a.query)}”` }
         : { label: "Reading the page", doneLabel: "Read the page" }
+    case "page_extract":
+      return { label: "Extracting page data", doneLabel: "Extracted page data" }
+    case "page_compare":
+      return { label: "Comparing tabs", doneLabel: "Compared tabs" }
+    case "page_visual_read":
+      return { label: "Reading the page visually", doneLabel: "Read the page visually" }
+    case "page_wait":
+      return { label: "Waiting for the page", doneLabel: "Finished waiting" }
+    case "page_watch":
+      return String(a.mode || "") === "stop"
+        ? { label: "Stopping page alert", doneLabel: "Stopped page alert" }
+        : { label: "Setting a page alert", doneLabel: "Set a page alert" }
+    case "page_download":
+      return { label: "Inspecting a download", doneLabel: "Inspected a download" }
+    case "page_handoff":
+      return { label: "Handing the page to you", doneLabel: "Handed the page to you" }
     case "page_click":
       return { label: `Clicking ${element}`, doneLabel: `Clicked ${element}` }
     case "page_type":
@@ -466,7 +564,10 @@ let approvalResolve: ((ok: boolean) => void) | null = null
 export function registerPageHost(host: PageHost): () => void {
   pageHost = host
   return () => {
-    if (pageHost === host) pageHost = null
+    if (pageHost === host) {
+      pageHost = null
+      stopPageWatches()
+    }
   }
 }
 
@@ -476,18 +577,20 @@ function browserSession(): BrowserSession | undefined {
     return {
       tabs: pageHost.tabs().map(({ id, title, url, active }) => ({ id, title, url, active })),
       target: pageHost.defaultTarget(),
+      memoryNotes: browserMemoryNotes(),
+      recentReads: storedPageReads(),
     }
   } catch {
     return undefined
   }
 }
 
-function askApproval(callId: string, site: string, description: string, conversationId: string): Promise<boolean> {
+function askApproval(callId: string, site: string, description: string, conversationId: string, warning?: string): Promise<boolean> {
   const irreversible = looksIrreversible(description)
   // A standing "allow this site" doesn't cover something that looks hard to
   // undo (buying, paying, deleting…) — that always gets a fresh prompt, even
   // later in the same chat on a site the visitor already trusted for clicks.
-  if (!irreversible && sitesFor(conversationId).includes(site)) return Promise.resolve(true)
+  if (!irreversible && !warning && sitesFor(conversationId).includes(site)) return Promise.resolve(true)
   if (runStopped) return Promise.resolve(false)
   approvalResolve?.(false)
   return new Promise((resolve) => {
@@ -496,7 +599,7 @@ function askApproval(callId: string, site: string, description: string, conversa
       set({ approval: null })
       resolve(ok)
     }
-    set({ approval: { callId, site, description, irreversible } })
+    set({ approval: { callId, site, description, irreversible, ...(warning ? { warning } : {}) } })
   })
 }
 
@@ -505,7 +608,9 @@ export function respondDevonAiApproval(choice: "once" | "site" | "deny") {
   const pending = state.approval
   if (!pending || !approvalResolve) return
   // Don't let "allow on this site" quietly cover future irreversible actions either
-  if (choice === "site" && !pending.irreversible) writeSites(state.conversationId, [...new Set([...state.allowedSites, pending.site])])
+  if (choice === "site" && !pending.irreversible && !pending.warning) {
+    writeSites(state.conversationId, [...new Set([...state.allowedSites, pending.site])])
+  }
   approvalResolve(choice !== "deny")
 }
 
@@ -526,11 +631,18 @@ function handlePageAction(req: PageActionRequest, conversationId: string, messag
     if (host) set({ pageWork: { tabId: host.defaultTarget(), label: labels.label } })
     const outcome = host
       ? await runPageAction(host, req, {
-          approve: (site, description) => askApproval(req.callId, site, description, conversationId),
+          approve: (site, description, warning) => askApproval(req.callId, site, description, conversationId, warning),
           stopped: () => runStopped,
         })
       : { ok: false, text: "Devon's page tools aren't available right now. Ask the user to reload Devon." }
     if (host && state.pageWork) set({ pageWork: { tabId: outcome.tab?.id ?? host.defaultTarget(), label: labels.doneLabel } })
+    if (outcome.ok && req.tool === "page_read" && outcome.tab) {
+      const reads = storedPageReads().filter((entry) => entry.url !== outcome.tab!.url)
+      reads.unshift({ url: outcome.tab.url, title: outcome.tab.title, text: outcome.text.slice(0, 3000) })
+      const recentReads = reads.slice(0, 5)
+      writeStorage(PAGE_READS_KEY, JSON.stringify(recentReads))
+      set({ recentReads })
+    }
     updateStep(
       req.callId,
       (s) => ({ ...s, status: outcome.ok ? "done" : "error", ...(outcome.ok ? {} : { note: short(outcome.text.split("\n")[0], 140) }) }),
@@ -725,6 +837,8 @@ function switchTo(conversationId: string, load: boolean) {
     historyLoading: false,
     draftFiles: [],
     session: sessionCache.get(conversationId) ?? null,
+    browserMemory: browserMemoryNotes(),
+    recentReads: storedPageReads(),
     allowedSites: sitesFor(conversationId),
   })
   if (load) void loadConversation(conversationId)
@@ -745,6 +859,7 @@ export function deleteDevonAiChat(id: string) {
   if (state.loading || !id) return
   const wasActive = id === state.conversationId
   set((s) => ({ conversations: s.conversations.filter((c) => c.id !== id) }))
+  setSession(id, null)
   if (wasActive) {
     loadToken++
     switchTo(uuid(), false)
@@ -767,6 +882,15 @@ export function clearDevonAiSession() {
   setSession(id, null)
   writeSites(id, [])
   void clearSessionApi(id)
+}
+
+export function clearDevonAiBrowserMemory() {
+  const hidden = { ...hiddenBrowserMemory(), ...Object.fromEntries(storedBrowserMemory().map((entry) => [entry.conversationId, entry.notes])) }
+  if (state.conversationId && state.session?.notes.length) hidden[state.conversationId] = state.session.notes
+  writeStorage(BROWSER_MEMORY_KEY, "[]")
+  writeStorage(BROWSER_MEMORY_HIDDEN_KEY, JSON.stringify(hidden))
+  writeStorage(PAGE_READS_KEY, "[]")
+  set({ browserMemory: [], recentReads: [] })
 }
 
 // ---------------------------------------------------------------------------
