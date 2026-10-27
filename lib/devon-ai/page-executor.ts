@@ -25,6 +25,9 @@ import {
   waitForPageCondition,
   waitForQuiet,
 } from "@/lib/devon-ai/page-actions"
+import { parseAppsUrl } from "@/lib/apps"
+import { parseGamesUrl } from "@/lib/games"
+import { parseYouTubeUrl } from "@/lib/youtube"
 
 export interface TabInfo {
   id: string
@@ -127,8 +130,18 @@ function normalizeUrl(input: string): string {
   } catch {
     throw new PageActionError(`"${input}" isn't a valid address.`)
   }
+  if (
+    u.protocol === "devon:" &&
+    (parseAppsUrl(s) !== null || parseGamesUrl(s) !== null || parseYouTubeUrl(s) !== null)
+  ) {
+    return u.href
+  }
   if (u.protocol !== "http:" && u.protocol !== "https:") throw new PageActionError("Devon AI can only open http and https addresses.")
   return u.href
+}
+
+function isDevonPageUrl(url: string): boolean {
+  return parseAppsUrl(url) !== null || parseGamesUrl(url) !== null || parseYouTubeUrl(url) !== null
 }
 
 const str = (v: unknown) => (typeof v === "string" ? v : "")
@@ -177,6 +190,7 @@ export async function runPageAction(host: PageHost, req: PageActionRequest, hook
       const url = normalizeUrl(str(args.url))
       tabId = host.open(url)
       host.revealPanel()
+      if (isDevonPageUrl(url)) return { ok: true, text: `Opened Devon page ${url} in a new tab [${tabId}].` }
       const doc = await waitForLoad(host, tabId, undefined)
       return done(host, tabId, `Opened ${url} in a new tab [${tabId}].`, doc)
     }
@@ -201,8 +215,13 @@ export async function runPageAction(host: PageHost, req: PageActionRequest, hook
         host.select(tabId)
         host.navigate(tabId, to.toLowerCase())
       } else {
+        const url = normalizeUrl(to)
         host.select(tabId)
-        host.navigate(tabId, normalizeUrl(to))
+        host.navigate(tabId, url)
+        if (isDevonPageUrl(url)) {
+          host.revealPanel()
+          return { ok: true, text: `Opened Devon page ${url} in tab [${tabId}].` }
+        }
       }
       host.revealPanel()
       const doc = await waitForLoad(host, tabId, before)
