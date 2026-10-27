@@ -211,6 +211,77 @@ function tabKind(tab: Tab): TabInfo["kind"] {
   return "web"
 }
 
+function isInternalDevonTab(tab: Tab): boolean {
+  return parseGamesUrl(tab.url) !== null || parseAppsUrl(tab.url) !== null || parseYouTubeUrl(tab.url) !== null
+}
+
+function InternalDevonTab({
+  tab,
+  active,
+  onNavigate,
+  onOpenLink,
+  onOpenApps,
+  onSendToAi,
+  onTitle,
+}: {
+  tab: Tab
+  active: boolean
+  onNavigate: (tabId: string, url: string, mode: HistoryMode) => void
+  onOpenLink: (url: string) => void
+  onOpenApps: (tabId: string) => void
+  onSendToAi: (prompt: string) => void
+  onTitle: (tabId: string, title: string) => void
+}) {
+  const gameId = parseGamesUrl(tab.url)
+  const appPage = gameId === null ? parseAppsUrl(tab.url) : null
+  const youtubeRoute = gameId === null && appPage === null ? parseYouTubeUrl(tab.url) : null
+  if (gameId === null && appPage === null && !youtubeRoute) return null
+
+  return (
+    <div
+      aria-hidden={!active}
+      className={cn(
+        "absolute inset-0 z-0 flex min-h-0 flex-col",
+        active ? "pointer-events-auto visible z-10" : "pointer-events-none invisible",
+      )}
+    >
+      {appPage !== null ? (
+        <div className="relative flex min-h-0 flex-1">
+          {appPage === "ai" ? (
+            <DevonAiPage onOpenLink={onOpenLink} onOpenApps={() => onOpenApps(tab.id)} />
+          ) : appPage === "prompt-gen" ? (
+            <PromptGenPage
+              onOpenApps={() => onOpenApps(tab.id)}
+              onSendToAi={onSendToAi}
+            />
+          ) : appPage === "go-fish" ? (
+            <GoFishPage onOpenApps={() => onOpenApps(tab.id)} />
+          ) : appPage === "html-lab" ? (
+            <HtmlLabPage onOpenApps={() => onOpenApps(tab.id)} />
+          ) : (
+            <AppsPage onOpen={(url) => onNavigate(tab.id, url, "push")} />
+          )}
+        </div>
+      ) : youtubeRoute ? (
+        <div className="relative flex min-h-0 flex-1">
+          <YouTubePage
+            route={youtubeRoute}
+            onNavigate={(route) => onNavigate(tab.id, youTubePageUrl(route), "push")}
+            onTitle={(title) => onTitle(tab.id, title)}
+          />
+        </div>
+      ) : (
+        <div className="relative flex min-h-0 flex-1">
+          <GamesPage
+            gameId={gameId ?? ""}
+            onOpen={(id) => onNavigate(tab.id, id ? `${GAMES_URL}/${id}` : GAMES_URL, "push")}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
 function reloadMode(tab: Tab): HistoryMode {
   return tab.history[tab.historyIndex] === tab.url ? "reload" : "push"
 }
@@ -2032,45 +2103,7 @@ export function ProxyBrowser() {
               title={activeTab.title}
               {...(activeTab.frameType?.includes("pdf") ? {} : { sandbox: "allow-downloads" })}
             />
-          ) : activeTab && parseAppsUrl(activeTab.url) !== null ? (
-            <div className="min-h-0 flex-1">
-              {parseAppsUrl(activeTab.url) === "ai" ? (
-                <DevonAiPage onOpenLink={(url) => openInNewTab(url)} onOpenApps={() => navigate(activeTab.id, APPS_URL, "push")} />
-              ) : parseAppsUrl(activeTab.url) === "prompt-gen" ? (
-                <PromptGenPage
-                  onOpenApps={() => navigate(activeTab.id, APPS_URL, "push")}
-                  onSendToAi={(prompt) => {
-                    setDevonAiDraft(prompt)
-                    showDevonAi("this-tab")
-                  }}
-                />
-              ) : parseAppsUrl(activeTab.url) === "go-fish" ? (
-                <GoFishPage onOpenApps={() => navigate(activeTab.id, APPS_URL, "push")} />
-              ) : parseAppsUrl(activeTab.url) === "html-lab" ? (
-                <HtmlLabPage onOpenApps={() => navigate(activeTab.id, APPS_URL, "push")} />
-              ) : (
-                <AppsPage onOpen={(url) => navigate(activeTab.id, url, "push")} />
-              )}
-            </div>
-          ) : activeTab && parseYouTubeUrl(activeTab.url) ? (
-            <div className="min-h-0 flex-1">
-              <YouTubePage
-                route={parseYouTubeUrl(activeTab.url)!}
-                onNavigate={(route) => navigate(activeTab.id, youTubePageUrl(route), "push")}
-                onTitle={(title) => {
-                  const tabId = activeTab.id
-                  setTabs((prev) => prev.map((t) => (t.id === tabId && parseYouTubeUrl(t.url) ? { ...t, title } : t)))
-                }}
-              />
-            </div>
-          ) : activeTab && parseGamesUrl(activeTab.url) !== null ? (
-            <div className="min-h-0 flex-1">
-              <GamesPage
-                gameId={parseGamesUrl(activeTab.url) ?? ""}
-                onOpen={(id) => navigate(activeTab.id, id ? `${GAMES_URL}/${id}` : GAMES_URL, "push")}
-              />
-            </div>
-          ) : activeTab?.blockedSignIn ? (
+          ) : activeTab && isInternalDevonTab(activeTab) ? null : activeTab?.blockedSignIn ? (
             <div className="flex flex-1 items-center justify-center overflow-auto p-6">
               <div className="w-full max-w-md">
                 <span className="mb-5 grid size-12 place-items-center rounded-2xl bg-amber-400/15 text-amber-400">
@@ -2187,6 +2220,25 @@ export function ProxyBrowser() {
               bookmarks={bookmarks}
               history={history}
             />
+          )}
+          {tabs.map((tab) =>
+            isInternalDevonTab(tab) ? (
+              <InternalDevonTab
+                key={tab.id}
+                tab={tab}
+                active={tab.isActive}
+                onNavigate={navigate}
+                onOpenLink={openInNewTab}
+                onOpenApps={(tabId) => navigate(tabId, APPS_URL, "push")}
+                onSendToAi={(prompt) => {
+                  setDevonAiDraft(prompt)
+                  showDevonAi("this-tab")
+                }}
+                onTitle={(tabId, title) =>
+                  setTabs((prev) => prev.map((item) => (item.id === tabId ? { ...item, title } : item)))
+                }
+              />
+            ) : null,
           )}
         </div>
 
