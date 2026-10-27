@@ -294,7 +294,14 @@ export async function postPageResult(conversationId: string, callId: string, out
       const res = await fetch(AI_API.pageResult, {
         method: "POST",
         headers: { "Content-Type": "application/json", "makers-conversation-id": conversationId },
-        body: JSON.stringify({ conversation_id: conversationId, call_id: callId, ok: outcome.ok, text: outcome.text, tab: outcome.tab }),
+        body: JSON.stringify({
+          conversation_id: conversationId,
+          call_id: callId,
+          ok: outcome.ok,
+          text: outcome.text,
+          ...(outcome.image ? { image: outcome.image } : {}),
+          ...(outcome.tab ? { tab: outcome.tab } : {}),
+        }),
       })
       if (res.ok) return true
       if (res.status < 500) return false

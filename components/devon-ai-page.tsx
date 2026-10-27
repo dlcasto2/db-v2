@@ -36,6 +36,7 @@ import { Button } from "@/components/ui/button"
 import {
   type ChatState,
   attachPageToDevonAi,
+  clearDevonAiBrowserMemory,
   clearDevonAiSession,
   deleteDevonAiChat,
   dismissDevonAiBanner,
@@ -160,7 +161,8 @@ export function DevonAiPage({ onOpenLink, onOpenApps, variant = "page", onClose,
 
   const quotaLeft = chat.quota && chat.quota.limit > 0 ? Math.max(0, chat.quota.limit - chat.quota.used) : null
   const outOfMessages = chat.quota !== null && quotaLeft === 0 && chat.quota.resetAt > Date.now()
-  const sessionCount = (chat.session?.task ? 1 : 0) + (chat.session?.notes.length ?? 0) + chat.allowedSites.length
+  const sessionCount =
+    (chat.session?.task ? 1 : 0) + (chat.session?.notes.length ?? 0) + chat.allowedSites.length + chat.browserMemory.length + chat.recentReads.length
 
   return (
     <div className={cn("relative flex h-full w-full bg-background", panel && "bg-toolbar")}>
@@ -259,13 +261,15 @@ export function DevonAiPage({ onOpenLink, onOpenApps, variant = "page", onClose,
 
 function SessionPanel({ chat, onOpenLink, onClose }: { chat: ChatState; onOpenLink: (url: string) => void; onClose: () => void }) {
   const s = chat.session
-  const empty = !s?.task && !s?.steps.length && !s?.notes.length && !s?.openQuestions.length && !s?.pages.length && !chat.allowedSites.length
+  const hasSessionState = Boolean(s?.task || s?.steps.length || s?.notes.length || s?.openQuestions.length || s?.pages.length || chat.allowedSites.length)
+  const hasBrowserMemory = Boolean(chat.browserMemory.length || chat.recentReads.length)
+  const empty = !hasSessionState && !hasBrowserMemory
   return (
     <div className="relative z-20 max-h-[55%] flex-shrink-0 overflow-y-auto scrollbar-thin border-b border-border bg-toolbar px-4 py-3 text-[13px] shadow-lg">
       <div className="mb-2 flex items-center gap-2">
         <ClipboardList className="size-4 text-primary" />
         <span className="flex-1 font-medium">Session</span>
-        {!empty && (
+        {hasSessionState && (
           <Button
             size="sm"
             variant="ghost"
@@ -324,6 +328,41 @@ function SessionPanel({ chat, onOpenLink, onClose }: { chat: ChatState; onOpenLi
               </ul>
             </div>
           )}
+          {hasBrowserMemory && (
+            <div>
+              <div className="flex items-center gap-2">
+                <p className="flex-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Browser memory · this device</p>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 rounded-full px-2 text-[10px] text-muted-foreground"
+                  onClick={() => {
+                    if (confirm("Forget Devon AI notes and cached page text saved in this browser?")) clearDevonAiBrowserMemory()
+                  }}
+                >
+                  Forget
+                </Button>
+              </div>
+              {!!chat.browserMemory.length && (
+                <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                  {chat.browserMemory.map((note, i) => <li key={i}>{note}</li>)}
+                </ul>
+              )}
+              {!!chat.recentReads.length && (
+                <ul className="mt-1 space-y-0.5">
+                  {chat.recentReads.map((page) => (
+                    <li key={page.url} className="truncate">
+                      <button onClick={() => onOpenLink(page.url)} className="text-primary hover:underline" title={page.url}>
+                        {page.title || hostOf(page.url)}
+                      </button>
+                      <span className="text-muted-foreground"> · recently read</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="mt-1 text-[11px] text-muted-foreground">Stored locally in this browser; not synced to other devices.</p>
+            </div>
+          )}
           {!!s?.openQuestions.length && (
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Open questions</p>
@@ -376,7 +415,7 @@ function SessionPanel({ chat, onOpenLink, onClose }: { chat: ChatState; onOpenLi
 }
 
 function ApprovalCard({ approval }: { approval: NonNullable<ChatState["approval"]> }) {
-  const warn = approval.irreversible
+  const warn = approval.irreversible || Boolean(approval.warning)
   return (
     <div
       role="alertdialog"
@@ -392,7 +431,8 @@ function ApprovalCard({ approval }: { approval: NonNullable<ChatState["approval"
         <p className="flex-1 text-[13px]">
           Devon AI wants to <span className="font-medium text-foreground">{approval.description}</span> on{" "}
           <span className="font-medium text-foreground">{approval.site}</span>.
-          {warn && <span className="mt-0.5 block text-amber-200/90">This looks hard to undo — it's asked fresh every time, even on sites you've allowed.</span>}
+          {approval.irreversible && <span className="mt-0.5 block text-amber-200/90">This looks hard to undo — it's asked fresh every time, even on sites you've allowed.</span>}
+          {approval.warning && <span className="mt-0.5 block text-amber-200/90">{approval.warning}</span>}
         </p>
       </div>
       <div className="mt-2.5 flex flex-wrap gap-1.5 pl-6">
@@ -619,6 +659,9 @@ function Bubble({ message, onOpenLink }: { message: Message; onOpenLink: (url: s
     )
   }
 
+  const confidenceMatch = !message.streaming ? message.content.match(/\s*\[Confidence:\s*(low|medium|high)\]\s*$/i) : null
+  const displayContent = confidenceMatch ? message.content.slice(0, confidenceMatch.index).trimEnd() : message.content
+  const confidence = confidenceMatch?.[1].toLowerCase()
   const waiting = message.streaming && !message.content && !message.actions?.some((a) => a.status === "active") && !message.images?.length
   return (
     <div className="group flex gap-3">
@@ -638,7 +681,22 @@ function Bubble({ message, onOpenLink }: { message: Message; onOpenLink: (url: s
             ))}
           </div>
         )}
-        {message.content && (
+        {confidence && (
+          <span
+            className={cn(
+              "mb-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ring-1",
+              confidence === "low"
+                ? "bg-amber-400/10 text-amber-200 ring-amber-400/30"
+                : confidence === "medium"
+                  ? "bg-primary/10 text-primary ring-primary/30"
+                  : "bg-emerald-400/10 text-emerald-200 ring-emerald-400/30",
+            )}
+            aria-label={`Confidence ${confidence}`}
+          >
+            {confidence[0].toUpperCase() + confidence.slice(1)} confidence
+          </span>
+        )}
+        {displayContent && (
           <div
             className={cn(
               "devon-md text-[14px] leading-relaxed text-foreground/90",
@@ -664,7 +722,7 @@ function Bubble({ message, onOpenLink }: { message: Message; onOpenLink: (url: s
                 pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
               }}
             >
-              {message.content}
+              {displayContent}
             </Markdown>
           </div>
         )}

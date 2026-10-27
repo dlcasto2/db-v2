@@ -869,6 +869,21 @@ export function ProxyBrowser() {
     if (activeTab?.id) extHostRef.current?.tabActivated(activeTab.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab?.id])
+  useEffect(() => {
+    const onPageAlert = (event: Event) => {
+      const detail = (event as CustomEvent<{ query?: string; url?: string; present?: boolean; message?: string; error?: string }>).detail
+      if (detail?.error) {
+        toast.error(detail.error)
+        return
+      }
+      if (detail?.query) {
+        const message = detail.message || `"${detail.query}" ${detail.present ? "appeared" : "disappeared"}`
+        toast.success(`${message} on ${detail.url ? hostnameOf(detail.url) : "the watched page"}`)
+      }
+    }
+    window.addEventListener("devon-page-alert", onPageAlert)
+    return () => window.removeEventListener("devon-page-alert", onPageAlert)
+  }, [])
 
   /** Clicking an extension's toolbar entry: its popup, or action.onClicked */
   const clickExtension = (extId: string) => {
@@ -1250,6 +1265,7 @@ export function ProxyBrowser() {
         ? { url: tab.url, title: tab.title, loading: Boolean(tab.isLoading), loadId: tab.loadId, error: tab.error, page: tab.content !== undefined && !tab.leftProxy }
         : null
     },
+    html: (tabId) => tabsRef.current.find((t) => t.id === tabId)?.content ?? null,
     document: (tabId) => {
       const tab = tabsRef.current.find((t) => t.id === tabId)
       const frame = iframeRef.current
@@ -1276,6 +1292,7 @@ export function ProxyBrowser() {
         open: (url) => pageHostImpl.current!.open(url),
         navigate: (id, to) => pageHostImpl.current!.navigate(id, to),
         status: (id) => pageHostImpl.current!.status(id),
+        html: (id) => pageHostImpl.current!.html(id),
         document: (id) => pageHostImpl.current!.document(id),
         revealPanel: () => pageHostImpl.current!.revealPanel(),
       }),
