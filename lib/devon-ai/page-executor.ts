@@ -497,7 +497,14 @@ async function readLimitedBlob(response: Response, maxBytes: number): Promise<Bl
     }
     chunks.push(value)
   }
-  return new Blob(chunks, { type: response.headers.get("content-type") || "application/octet-stream" })
+  const buffer = new ArrayBuffer(total)
+  const bytes = new Uint8Array(buffer)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return new Blob([buffer], { type: response.headers.get("content-type") || "application/octet-stream" })
 }
 
 function truncate(s: string, max: number) {
