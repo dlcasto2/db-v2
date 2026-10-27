@@ -77,6 +77,7 @@ import { AppsPage } from "@/components/apps-page"
 import { DevonAiPage } from "@/components/devon-ai-page"
 import { PromptGenPage } from "@/components/prompt-gen-page"
 import { GoFishPage } from "@/components/go-fish-page"
+import { HtmlLabPage } from "@/components/html-lab-page"
 import { AI_URL, APPS_URL, appPageInfo, parseAppsUrl } from "@/lib/apps"
 import { askDevonAiAboutPage, registerPageHost, setDevonAiDraft, stopDevonAi, useDevonAiPageWork } from "@/lib/devon-ai/store"
 import type { PageHost, TabInfo } from "@/lib/devon-ai/page-executor"
@@ -504,8 +505,8 @@ export function ProxyBrowser() {
       if (!trimmed) return
 
       // Devon's built-in pages: Games (devon://games, devon://games/<id>), the
-      // Apps page (devon://apps) with Devon AI (devon://apps/ai), Prompt Gen
-      // (devon://apps/prompt-gen), Go Fish (devon://apps/go-fish), and YouTube
+      // Apps page (devon://apps) with Devon AI, Prompt Gen, Go Fish, HTML Lab
+      // and YouTube
       // (devon://apps/youtube, …?q=…, …/watch?v=…; the old devon://youtube
       // addresses still work)
       const gameId = parseGamesUrl(trimmed)
@@ -2045,6 +2046,8 @@ export function ProxyBrowser() {
                 />
               ) : parseAppsUrl(activeTab.url) === "go-fish" ? (
                 <GoFishPage onOpenApps={() => navigate(activeTab.id, APPS_URL, "push")} />
+              ) : parseAppsUrl(activeTab.url) === "html-lab" ? (
+                <HtmlLabPage onOpenApps={() => navigate(activeTab.id, APPS_URL, "push")} />
               ) : (
                 <AppsPage onOpen={(url) => navigate(activeTab.id, url, "push")} />
               )}
