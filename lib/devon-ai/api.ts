@@ -21,6 +21,7 @@ import type {
   PageContext,
   Quota,
   SessionState,
+  UploadedFile,
 } from "@/lib/devon-ai/types"
 import type { PageActionOutcome, PageActionRequest } from "@/lib/devon-ai/page-executor"
 
@@ -90,6 +91,7 @@ export function sendMessageStream(
     botMsgId: string
     page?: PageContext
     browser?: BrowserSession
+    files?: UploadedFile[]
   },
   cb: StreamCallbacks,
 ): AbortController {
@@ -109,6 +111,7 @@ export function sendMessageStream(
           botMsgId: args.botMsgId,
           ...(args.page ? { page: args.page } : {}),
           ...(args.browser ? { browser: args.browser } : {}),
+          ...(args.files?.length ? { files: args.files } : {}),
         }),
         signal: ctrl.signal,
       })

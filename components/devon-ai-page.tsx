@@ -1,6 +1,6 @@
 "use client"
 
-import type React from "react"
+import React, { type ReactElement } from "react"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -13,6 +13,9 @@ import {
   CircleSlash,
   ClipboardList,
   Copy,
+  Download,
+  Eye,
+  FileText,
   Globe,
   Hand,
   Loader2,
@@ -26,6 +29,7 @@ import {
   ThumbsDown,
   ThumbsUp,
   Trash2,
+  Upload,
   X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -47,7 +51,8 @@ import {
   submitDevonAiFeedback,
   useDevonAi,
 } from "@/lib/devon-ai/store"
-import type { ActionStep, ConversationSummary, FeedbackReasonCode, Message } from "@/lib/devon-ai/types"
+import type { ActionStep, ConversationSummary, FeedbackReasonCode, Message, UploadedFile } from "@/lib/devon-ai/types"
+import { MAX_UPLOAD_FILES, MAX_UPLOAD_FILE_CHARS, MAX_UPLOAD_TEXT_CHARS } from "@/lib/devon-ai/uploads"
 import { cn } from "@/lib/utils"
 
 interface DevonAiPageProps {
@@ -72,6 +77,64 @@ const PAGE_STARTERS = ["Summarize this page", "What are the key points?", "Expla
 
 /** In the side panel, next to a site: things that use the page tools */
 const PANEL_STARTERS = ["Summarize this page", "What can I do on this page?", "Find the search box and search for “news”", "Make a to-do list from this page"]
+const TEXT_FILE_EXTENSIONS = new Set([
+  "c", "cc", "cpp", "css", "csv", "go", "h", "html", "htm", "java", "js", "json", "jsx", "md", "py", "rs", "sh", "sql", "svg",
+  "text", "toml", "ts", "tsx", "txt", "xml", "yaml", "yml",
+])
+const MAX_UPLOAD_BYTES = 2 * 1024 * 1024
+
+function extensionOf(name: string) {
+  return name.split(".").pop()?.toLowerCase() || ""
+}
+
+async function prepareUploads(selected: File[], existing: UploadedFile[]): Promise<UploadedFile[]> {
+  if (existing.length + selected.length > MAX_UPLOAD_FILES) throw new Error(`Upload up to ${MAX_UPLOAD_FILES} files at a time.`)
+  let totalChars = existing.reduce((sum, file) => sum + file.text.length, 0)
+  const prepared = [...existing]
+  for (const file of selected) {
+    if (file.size > MAX_UPLOAD_BYTES) throw new Error(`${file.name} is larger than the 2 MB per-file limit.`)
+    const path = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
+    const ext = extensionOf(file.name)
+    if (ext === "zip") {
+      const { default: JSZip } = await import("jszip")
+      const zip = await JSZip.loadAsync(file)
+      const entries = Object.values(zip.files).filter((entry) => !entry.dir)
+      if (entries.length + prepared.length > MAX_UPLOAD_FILES) throw new Error(`The ZIP contains too many files (limit ${MAX_UPLOAD_FILES}).`)
+      const startCount = prepared.length
+      for (const entry of entries) {
+        const entryExt = extensionOf(entry.name)
+        if (!TEXT_FILE_EXTENSIONS.has(entryExt)) continue
+        const declaredSize = (entry as typeof entry & { _data?: { uncompressedSize?: number } })._data?.uncompressedSize
+        if (typeof declaredSize !== "number" || !Number.isSafeInteger(declaredSize) || declaredSize > MAX_UPLOAD_FILE_CHARS) {
+          throw new Error(`${entry.name} is larger than the ${MAX_UPLOAD_FILE_CHARS.toLocaleString()}-character per-file limit or has invalid ZIP metadata.`)
+        }
+        const text = await entry.async("string")
+        totalChars += text.length
+        if (totalChars > MAX_UPLOAD_TEXT_CHARS) throw new Error(`Extracted text is limited to ${MAX_UPLOAD_TEXT_CHARS.toLocaleString()} characters.`)
+        prepared.push({ name: entry.name.split("/").pop() || entry.name, path: `${path}/${entry.name}`, mimeType: "text/plain", size: declaredSize ?? text.length, text })
+      }
+      if (prepared.length === startCount) {
+        const text = `[ZIP archive "${file.name}" contained no supported text files.]`
+        totalChars += text.length
+        prepared.push({ name: file.name, path, mimeType: "application/zip", size: file.size, text })
+      }
+      continue
+    }
+    if (ext === "rar") {
+      const text = `[RAR archive "${file.name}" (${file.size.toLocaleString()} bytes). Devon AI can see the archive name but cannot unpack this format yet.]`
+      totalChars += text.length
+      prepared.push({ name: file.name, path, mimeType: "application/vnd.rar", size: file.size, text })
+      continue
+    }
+    if (!TEXT_FILE_EXTENSIONS.has(ext)) throw new Error(`${file.name} isn’t a supported text, HTML, ZIP, or folder file.`)
+    const text = await file.text()
+    if (text.length > MAX_UPLOAD_FILE_CHARS) throw new Error(`${file.name} exceeds the ${MAX_UPLOAD_FILE_CHARS.toLocaleString()}-character per-file limit.`)
+    totalChars += text.length
+    if (totalChars > MAX_UPLOAD_TEXT_CHARS) throw new Error(`Uploaded text is limited to ${MAX_UPLOAD_TEXT_CHARS.toLocaleString()} characters.`)
+    prepared.push({ name: file.name, path, mimeType: file.type || "text/plain", size: file.size, text })
+  }
+  return prepared
+}
 
 function shorten(text: string, max = 70) {
   return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text
@@ -503,8 +566,8 @@ function EmptyState({ chat, panel }: { chat: ChatState; panel: boolean }) {
         {chat.pendingPage
           ? `Devon AI will read “${shorten(chat.pendingPage.title || hostOf(chat.pendingPage.url))}” to answer.`
           : panel
-            ? "Devon AI can read this page and click, type and scroll on it for you — it asks before acting on a site."
-            : "Devon AI can answer questions, run code in a sandbox, and read and use the pages you open. Open it next to a site with the ✦ button."}
+            ? "Devon AI can read this page, act on it with your permission, run isolated code, and work with files you attach."
+            : "Devon AI can answer questions, run isolated code, work with files you attach, and read or use the pages you open. HTML previews run separately from sites."}
       </p>
       <div className={cn("relative mt-6 grid w-full max-w-xl grid-cols-1 gap-2", !panel && "sm:grid-cols-2")}>
         {starters.map((s) => (
@@ -541,6 +604,16 @@ function Bubble({ message, onOpenLink }: { message: Message; onOpenLink: (url: s
           <div className="whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-primary/15 px-4 py-2.5 text-[14px] leading-relaxed text-foreground ring-1 ring-primary/25">
             {message.content}
           </div>
+          {!!message.files?.length && (
+            <div className="mt-1.5 flex flex-wrap justify-end gap-1">
+              {message.files.map((file) => (
+                <span key={`${file.path}:${file.name}`} title={`${file.path} · ${file.size.toLocaleString()} bytes`} className="flex max-w-full items-center gap-1 rounded-full bg-white/[0.04] px-2 py-1 text-[11px] text-muted-foreground ring-1 ring-border">
+                  <FileText className="size-3 flex-shrink-0" />
+                  <span className="truncate">{file.path}</span>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     )
@@ -588,6 +661,7 @@ function Bubble({ message, onOpenLink }: { message: Message; onOpenLink: (url: s
                     {children}
                   </a>
                 ),
+                pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
               }}
             >
               {message.content}
@@ -626,6 +700,81 @@ function Bubble({ message, onOpenLink }: { message: Message; onOpenLink: (url: s
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function CodeBlock({ children }: { children: React.ReactNode }) {
+  const [copied, setCopied] = useState(false)
+  const codeElement = React.Children.toArray(children).find((child) => React.isValidElement(child)) as
+    | ReactElement<{ className?: string; children?: React.ReactNode }>
+    | undefined
+  const code = String(codeElement?.props.children ?? "")
+  const language = codeElement?.props.className?.match(/language-([\w+#-]+)/i)?.[1]?.toLowerCase() || ""
+  const html = language === "html" || /<!doctype html|<html[\s>]/i.test(code)
+  const extension = language === "javascript" ? "js" : language === "typescript" ? "ts" : language === "python" ? "py" : language || "txt"
+  const preview = html
+    ? (() => {
+        const policy =
+          `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; ` +
+          `img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; object-src 'none'; base-uri 'none'">`
+        return /<head[^>]*>/i.test(code) ? code.replace(/<head[^>]*>/i, (head) => `${head}${policy}`) : `<!doctype html><head>${policy}</head>${code}`
+      })()
+    : ""
+
+  const download = () => {
+    const file = new File([code], `devon-generated.${extension}`, { type: html ? "text/html" : "text/plain" })
+    const url = URL.createObjectURL(file)
+    const anchor = document.createElement("a")
+    anchor.href = url
+    anchor.download = file.name
+    anchor.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+  const share = async () => {
+    const file = new File([code], `devon-generated.${extension}`, { type: html ? "text/html" : "text/plain" })
+    if (navigator.share && navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: file.name })
+        return
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return
+        throw error
+      }
+    }
+    if (navigator.clipboard) {
+      await navigator.clipboard.writeText(code)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1200)
+    } else {
+      download()
+    }
+  }
+
+  return (
+    <div className="my-2 overflow-hidden rounded-xl ring-1 ring-border">
+      <div className="flex items-center justify-between gap-2 bg-white/[0.04] px-3 py-1.5">
+        <span className="truncate text-[11px] text-muted-foreground">{language || "code"}</span>
+        <div className="flex items-center gap-1">
+          {html && (
+            <details className="group relative">
+              <summary className="flex cursor-pointer list-none items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-white/[0.08] hover:text-foreground">
+                <Eye className="size-3" /> Preview
+              </summary>
+              <div className="absolute right-0 top-full z-10 mt-1 w-[min(80vw,36rem)] overflow-hidden rounded-lg bg-background p-1 shadow-xl ring-1 ring-border">
+                <iframe title="Isolated HTML preview" sandbox="allow-scripts" srcDoc={preview} className="h-72 w-full rounded-md bg-white" />
+              </div>
+            </details>
+          )}
+          <button onClick={download} className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-white/[0.08] hover:text-foreground">
+            <Download className="size-3" /> Download
+          </button>
+          <button onClick={() => void share().catch(() => download())} className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-white/[0.08] hover:text-foreground">
+            <Upload className="size-3" /> {copied ? "Copied" : "Share"}
+          </button>
+        </div>
+      </div>
+      <pre className="overflow-x-auto bg-black/20 p-3 text-[12px] leading-relaxed">{children}</pre>
     </div>
   )
 }
@@ -763,19 +912,29 @@ function Banner({ kind, message }: { kind: string; message: string }) {
 
 function Composer({ chat, disabled, quotaLeft, panel }: { chat: ChatState; disabled: boolean; quotaLeft: number | null; panel: boolean }) {
   const [value, setValue] = useState("")
+  const [uploads, setUploads] = useState<UploadedFile[]>([])
+  const [uploadError, setUploadError] = useState("")
   const ref = useRef<HTMLTextAreaElement>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
+  const folderInput = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    setUploads([])
+    setUploadError("")
+  }, [chat.conversationId])
 
   // Text handed over from elsewhere (Prompt Gen, a refused message)
   useEffect(() => {
     if (!chat.draftVersion) return
     setValue(chat.draft)
+    setUploads(chat.draftFiles)
     requestAnimationFrame(() => {
       const el = ref.current
       if (!el) return
       el.focus()
       el.setSelectionRange(el.value.length, el.value.length)
     })
-  }, [chat.draftVersion, chat.draft])
+  }, [chat.draftVersion, chat.draft, chat.draftFiles])
 
   useLayoutEffect(() => {
     const el = ref.current
@@ -784,11 +943,22 @@ function Composer({ chat, disabled, quotaLeft, panel }: { chat: ChatState; disab
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`
   }, [value])
 
-  const canSend = chat.started && !chat.loading && !disabled && value.trim().length > 0
+  const canSend = chat.started && !chat.loading && !disabled && (value.trim().length > 0 || uploads.length > 0)
+  const addUploads = async (files: File[]) => {
+    setUploadError("")
+    try {
+      setUploads(await prepareUploads(files, uploads))
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : "Could not read the selected files.")
+    }
+    if (fileInput.current) fileInput.current.value = ""
+    if (folderInput.current) folderInput.current.value = ""
+  }
   const send = () => {
     if (!canSend) return
-    sendDevonAi(value)
+    sendDevonAi(value.trim() || "Please review the uploaded files.", uploads)
     setValue("")
+    setUploads([])
   }
 
   const hint = useMemo(() => {
@@ -800,6 +970,14 @@ function Composer({ chat, disabled, quotaLeft, panel }: { chat: ChatState; disab
   return (
     <div>
       <div
+        onDragOver={(event) => {
+          if (event.dataTransfer.types.includes("Files")) event.preventDefault()
+        }}
+        onDrop={(event) => {
+          if (!event.dataTransfer.files.length) return
+          event.preventDefault()
+          void addUploads(Array.from(event.dataTransfer.files))
+        }}
         className={cn(
           "rounded-2xl bg-toolbar ring-1 ring-border transition focus-within:ring-2 focus-within:ring-primary/60",
           disabled && "opacity-60",
@@ -821,7 +999,55 @@ function Composer({ chat, disabled, quotaLeft, panel }: { chat: ChatState; disab
             </button>
           </div>
         )}
+        {!!uploads.length && (
+          <div className="border-b border-border px-3 py-2">
+            <div className="flex flex-wrap gap-1.5">
+              {uploads.map((file, index) => (
+                <span key={`${file.path}:${file.name}:${index}`} title={`${file.path} · ${file.size.toLocaleString()} bytes`} className="flex max-w-full items-center gap-1 rounded-full bg-white/[0.05] px-2 py-1 text-[11px] ring-1 ring-border">
+                  <FileText className="size-3 flex-shrink-0 text-primary" />
+                  <span className="max-w-48 truncate">{file.path}</span>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${file.path}`}
+                    onClick={() => setUploads((current) => current.filter((entry) => entry !== file))}
+                    className="grid size-4 flex-shrink-0 place-items-center rounded-full text-muted-foreground hover:bg-white/[0.1] hover:text-foreground"
+                  >
+                    <X className="size-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+            <p className="mt-1 text-[10px] text-muted-foreground">ZIPs and folders share readable text files. RAR selections include the filename only; contents aren’t unpacked.</p>
+          </div>
+        )}
         <div className="flex items-end gap-2 p-2 pl-4">
+          <input
+            ref={fileInput}
+            type="file"
+            multiple
+            accept=".c,.cc,.cpp,.css,.csv,.go,.h,.html,.htm,.java,.js,.json,.jsx,.md,.py,.rar,.rs,.sh,.sql,.svg,.text,.toml,.ts,.tsx,.txt,.xml,.yaml,.yml,.zip"
+            className="hidden"
+            onChange={(event) => void addUploads(Array.from(event.currentTarget.files ?? []))}
+          />
+          <input
+            type="file"
+            multiple
+            accept=".c,.cc,.cpp,.css,.csv,.go,.h,.html,.htm,.java,.js,.json,.jsx,.md,.py,.rar,.rs,.sh,.sql,.svg,.text,.toml,.ts,.tsx,.txt,.xml,.yaml,.yml,.zip"
+            className="hidden"
+            ref={(element) => {
+              folderInput.current = element
+              element?.setAttribute("webkitdirectory", "")
+            }}
+            onChange={(event) => void addUploads(Array.from(event.currentTarget.files ?? []))}
+          />
+          <div className="flex flex-col gap-1">
+            <button type="button" disabled={disabled || chat.loading} onClick={() => fileInput.current?.click()} title="Attach files or ZIP" className="grid size-8 place-items-center rounded-lg text-muted-foreground hover:bg-white/[0.08] hover:text-foreground disabled:opacity-40">
+              <Upload className="size-4" />
+            </button>
+            <button type="button" disabled={disabled || chat.loading} onClick={() => folderInput.current?.click()} title="Upload a folder" className="grid size-8 place-items-center rounded-lg text-muted-foreground hover:bg-white/[0.08] hover:text-foreground disabled:opacity-40">
+              <FileText className="size-4" />
+            </button>
+          </div>
           <textarea
             ref={ref}
             value={value}
@@ -835,7 +1061,7 @@ function Composer({ chat, disabled, quotaLeft, panel }: { chat: ChatState; disab
             rows={1}
             maxLength={8000}
             disabled={disabled}
-            placeholder={chat.pendingPage ? "Ask about this page…" : panel ? "Ask or tell Devon AI what to do…" : "Message Devon AI…"}
+            placeholder={uploads.length ? "Ask Devon AI about these files…" : chat.pendingPage ? "Ask about this page…" : panel ? "Ask or tell Devon AI what to do…" : "Message Devon AI…"}
             className="max-h-[200px] min-h-[36px] flex-1 resize-none bg-transparent py-2 text-[14px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
           />
           {chat.loading ? (
@@ -858,6 +1084,7 @@ function Composer({ chat, disabled, quotaLeft, panel }: { chat: ChatState; disab
           )}
         </div>
       </div>
+      {uploadError && <p role="alert" className="mt-1 text-center text-xs text-destructive">{uploadError}</p>}
       <p className={cn("mt-1.5 hidden text-center text-[11px] text-muted-foreground/70", panel ? "block" : "sm:block")}>
         {panel && quotaLeft !== null ? `${quotaLeft} message${quotaLeft === 1 ? "" : "s"} left today` : hint}
       </p>
