@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-labelledby="title description">
+  <title id="title">Abyssal Transcendence: Dimensions Demo</title>
+  <desc id="description">A golden doorway stands over a dark, misty voxel landscape.</desc>
+  <defs>
+    <linearGradient id="sky" x2="0" y2="1">
+      <stop stop-color="#111522"/>
+      <stop offset="1" stop-color="#05070c"/>
+    </linearGradient>
+    <linearGradient id="door" x2="1" y2="1">
+      <stop stop-color="#e3c27d"/>
+      <stop offset="1" stop-color="#70502c"/>
+    </linearGradient>
+    <radialGradient id="glow">
+      <stop stop-color="#e3c27d" stop-opacity=".38"/>
+      <stop offset="1" stop-color="#e3c27d" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="640" height="360" fill="url(#sky)"/>
+  <circle cx="320" cy="176" r="180" fill="url(#glow)"/>
+  <path d="M0 257 98 190l50 39 85-97 83 92 66-54 96 87 61-42 101 55v90H0z" fill="#141923"/>
+  <path d="M0 286 113 245l65 25 86-47 55 42 94-50 67 49 69-30 91 35v91H0z" fill="#090d15"/>
+  <path d="M267 270v-92a53 53 0 0 1 106 0v92h-20v-92a33 33 0 0 0-66 0v92z" fill="url(#door)"/>
+  <path d="M300 268v-88a20 20 0 0 1 40 0v88z" fill="#191a22"/>
+  <path d="M320 190v78" stroke="#9fe6de" stroke-opacity=".7" stroke-width="2"/>
+  <path d="M0 312h640M0 333h640" stroke="#b48cf2" stroke-opacity=".13"/>
+  <text x="32" y="46" fill="#e3c27d" font-family="Georgia,serif" font-size="12" letter-spacing="4">THE BETWEEN</text>
+  <text x="30" y="314" fill="#ebe5d8" font-family="Georgia,serif" font-size="30" letter-spacing="1">ABYSSAL TRANSCENDENCE</text>
+  <text x="33" y="338" fill="#a5a8b6" font-family="Arial,sans-serif" font-size="11" letter-spacing="3">DIMENSIONS DEMO</text>
+</svg>
