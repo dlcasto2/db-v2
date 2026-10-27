@@ -23,10 +23,9 @@
  * shapes every choice here:
  * - Nothing from Devon's or Vercel's own environment is passed into the
  *   sandbox (an empty `envs`), so there's nothing secret in it to leak.
- * - Outbound internet from the sandbox is OFF by default — set
- *   DEVON_AI_SANDBOX_ALLOW_NETWORK=1 to turn it on. code_interpreter still
- *   covers math, data munging and charts without it; pip/npm installs and
- *   anything that fetches a URL need it on.
+ * - Outbound internet is available to the isolated sandbox by default. Set
+ *   DEVON_AI_SANDBOX_ALLOW_NETWORK=0 or false to turn it off. Nothing from
+ *   Devon's or Vercel's own environment is passed into the sandbox.
  * - Spinning up a *new* sandbox costs real E2B credits, unlike an ordinary
  *   chat message, so creating one is its own, separate daily cap
  *   (DEVON_AI_SANDBOX_DAILY_LIMIT) — reconnecting to a conversation's existing
@@ -156,7 +155,8 @@ interface SandboxToolsContext {
 /** Reconnects to this conversation's sandbox if it still exists, else creates one (charging the creation quota) */
 async function resolveSandbox(ctx: SandboxToolsContext): Promise<Sandbox> {
   const apiKey = ctx.env.E2B_API_KEY
-  const allowInternetAccess = ctx.env.DEVON_AI_SANDBOX_ALLOW_NETWORK === "1"
+  const networkSetting = ctx.env.DEVON_AI_SANDBOX_ALLOW_NETWORK?.trim().toLowerCase()
+  const allowInternetAccess = networkSetting !== "0" && networkSetting !== "false"
   const storedId = await ctx.store.state.get<string>("e2bSandboxId")
 
   if (storedId) {
@@ -200,7 +200,7 @@ export function createSandboxTools(ctx: SandboxToolsContext) {
       "commands",
       "Run a shell command in an isolated Linux sandbox (not the person's computer, and not Devon's own server). " +
         "Persists across this chat's tool calls (same sandbox, same filesystem) until it's been idle a while. " +
-        `No internet access unless the site owner turned it on. Output is truncated past ${MAX_OUTPUT_CHARS} characters.`,
+        `Outbound internet is available inside this isolated sandbox. Output is truncated past ${MAX_OUTPUT_CHARS} characters.`,
       {
         command: z.string().min(1).max(4000).describe("The shell command to run, e.g. 'ls -la' or 'python3 script.py'"),
         cwd: z.string().max(500).optional().describe("Working directory (default: the sandbox's home directory)"),
