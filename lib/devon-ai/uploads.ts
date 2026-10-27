@@ -4,6 +4,17 @@ export const MAX_UPLOAD_FILES = 250
 export const MAX_UPLOAD_TEXT_CHARS = 10_000_000
 export const MAX_UPLOAD_FILE_CHARS = 10_000_000
 
+const INLINE_BASE64_DATA_URI = /(data:[^,)"'\s]*;base64,)([A-Za-z0-9+/=\r\n]+)/gi
+
+export function prepareUploadedText(text: string, name: string): string {
+  if (!/\.(?:html?|xhtml)$/i.test(name)) return text
+  return text.replace(INLINE_BASE64_DATA_URI, (_match, prefix: string, payload: string) => {
+    const mimeType = prefix.slice(5, prefix.indexOf(";")) || "unknown type"
+    const bytes = Math.floor(payload.replace(/\s/g, "").length * 3 / 4)
+    return `${prefix}[embedded ${mimeType} omitted; approximately ${bytes.toLocaleString()} bytes]`
+  })
+}
+
 function safePath(value: string, name: string): string {
   const parts = value
     .replace(/\\/g, "/")

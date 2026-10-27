@@ -53,7 +53,7 @@ import {
   useDevonAi,
 } from "@/lib/devon-ai/store"
 import type { ActionStep, ConversationSummary, FeedbackReasonCode, Message, UploadedFile } from "@/lib/devon-ai/types"
-import { MAX_UPLOAD_FILES, MAX_UPLOAD_FILE_CHARS, MAX_UPLOAD_TEXT_CHARS } from "@/lib/devon-ai/uploads"
+import { MAX_UPLOAD_FILES, MAX_UPLOAD_FILE_CHARS, MAX_UPLOAD_TEXT_CHARS, prepareUploadedText } from "@/lib/devon-ai/uploads"
 import { cn } from "@/lib/utils"
 
 interface DevonAiPageProps {
@@ -109,7 +109,8 @@ async function prepareUploads(selected: File[], existing: UploadedFile[]): Promi
         if (typeof declaredSize !== "number" || !Number.isSafeInteger(declaredSize) || declaredSize > MAX_UPLOAD_FILE_CHARS) {
           throw new Error(`${entry.name} is larger than the ${MAX_UPLOAD_FILE_CHARS.toLocaleString()}-character per-file limit or has invalid ZIP metadata.`)
         }
-        const text = await entry.async("string")
+        const extracted = await entry.async("string")
+        const text = prepareUploadedText(extracted, entry.name)
         totalChars += text.length
         if (totalChars > MAX_UPLOAD_TEXT_CHARS) throw new Error(`Extracted text is limited to ${MAX_UPLOAD_TEXT_CHARS.toLocaleString()} characters.`)
         prepared.push({ name: entry.name.split("/").pop() || entry.name, path: `${path}/${entry.name}`, mimeType: "text/plain", size: declaredSize ?? text.length, text })
@@ -128,7 +129,8 @@ async function prepareUploads(selected: File[], existing: UploadedFile[]): Promi
       continue
     }
     if (!TEXT_FILE_EXTENSIONS.has(ext)) throw new Error(`${file.name} isn’t a supported text, HTML, ZIP, or folder file.`)
-    const text = await file.slice(0, MAX_UPLOAD_FILE_CHARS * 4 + 4).text()
+    const extracted = await file.slice(0, MAX_UPLOAD_FILE_CHARS * 4 + 4).text()
+    const text = prepareUploadedText(extracted, file.name)
     if (text.length > MAX_UPLOAD_FILE_CHARS) throw new Error(`${file.name} exceeds the ${MAX_UPLOAD_FILE_CHARS.toLocaleString()}-character per-file limit.`)
     totalChars += text.length
     if (totalChars > MAX_UPLOAD_TEXT_CHARS) throw new Error(`Uploaded text is limited to ${MAX_UPLOAD_TEXT_CHARS.toLocaleString()} characters.`)
