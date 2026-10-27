@@ -55,6 +55,7 @@ import {
 import type { ActionStep, ConversationSummary, FeedbackReasonCode, Message, UploadedFile } from "@/lib/devon-ai/types"
 import { MAX_UPLOAD_FILES, MAX_UPLOAD_FILE_CHARS, MAX_UPLOAD_TEXT_CHARS, prepareUploadedText } from "@/lib/devon-ai/uploads"
 import { cn } from "@/lib/utils"
+import { DevonAiFilesystem } from "@/components/devon-ai-filesystem"
 
 interface DevonAiPageProps {
   /** Open a link from a reply in a new Devon tab */
@@ -155,6 +156,7 @@ export function DevonAiPage({ onOpenLink, onOpenApps, variant = "page", onClose,
   const chat = useDevonAi()
   const [chatsOpen, setChatsOpen] = useState(false)
   const [sessionOpen, setSessionOpen] = useState(false)
+  const [filesystemOpen, setFilesystemOpen] = useState(false)
   const panel = variant === "panel"
 
   useEffect(() => {
@@ -193,6 +195,20 @@ export function DevonAiPage({ onOpenLink, onOpenApps, variant = "page", onClose,
             title="Chats"
           >
             <MessagesSquare />
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className={cn("h-8 rounded-full", filesystemOpen && "bg-white/[0.08]")}
+            onClick={() => {
+              setFilesystemOpen((value) => !value)
+              setSessionOpen(false)
+            }}
+            title="Conversation files"
+            aria-expanded={filesystemOpen}
+          >
+            <FileText />
+            {!panel && <span className="hidden lg:inline">Files</span>}
           </Button>
           <span className="ml-1 grid size-6 flex-shrink-0 place-items-center rounded-lg bg-primary/15 text-primary ring-1 ring-primary/30">
             <Sparkles className="size-3.5" />
@@ -241,6 +257,7 @@ export function DevonAiPage({ onOpenLink, onOpenApps, variant = "page", onClose,
         </div>
 
         {sessionOpen && <SessionPanel chat={chat} onOpenLink={onOpenLink} onClose={() => setSessionOpen(false)} />}
+        {filesystemOpen && <DevonAiFilesystem conversationId={chat.conversationId} />}
 
         <ChatMessages chat={chat} onOpenLink={onOpenLink} panel={panel} />
 
