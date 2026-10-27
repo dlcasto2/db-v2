@@ -81,7 +81,7 @@ const TEXT_FILE_EXTENSIONS = new Set([
   "c", "cc", "cpp", "css", "csv", "go", "h", "html", "htm", "java", "js", "json", "jsx", "md", "py", "rs", "sh", "sql", "svg",
   "text", "toml", "ts", "tsx", "txt", "xml", "yaml", "yml",
 ])
-const MAX_UPLOAD_BYTES = 2 * 1024 * 1024
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 
 function extensionOf(name: string) {
   return name.split(".").pop()?.toLowerCase() || ""
@@ -92,7 +92,7 @@ async function prepareUploads(selected: File[], existing: UploadedFile[]): Promi
   let totalChars = existing.reduce((sum, file) => sum + file.text.length, 0)
   const prepared = [...existing]
   for (const file of selected) {
-    if (file.size > MAX_UPLOAD_BYTES) throw new Error(`${file.name} is larger than the 2 MB per-file limit.`)
+    if (file.size > MAX_UPLOAD_BYTES) throw new Error(`${file.name} is larger than the 100 MB per-file limit.`)
     const path = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
     const ext = extensionOf(file.name)
     if (ext === "zip") {
@@ -127,7 +127,7 @@ async function prepareUploads(selected: File[], existing: UploadedFile[]): Promi
       continue
     }
     if (!TEXT_FILE_EXTENSIONS.has(ext)) throw new Error(`${file.name} isn’t a supported text, HTML, ZIP, or folder file.`)
-    const text = await file.text()
+    const text = await file.slice(0, MAX_UPLOAD_FILE_CHARS * 4 + 4).text()
     if (text.length > MAX_UPLOAD_FILE_CHARS) throw new Error(`${file.name} exceeds the ${MAX_UPLOAD_FILE_CHARS.toLocaleString()}-character per-file limit.`)
     totalChars += text.length
     if (totalChars > MAX_UPLOAD_TEXT_CHARS) throw new Error(`Uploaded text is limited to ${MAX_UPLOAD_TEXT_CHARS.toLocaleString()} characters.`)
