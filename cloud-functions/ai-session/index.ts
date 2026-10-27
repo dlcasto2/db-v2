@@ -49,7 +49,7 @@ export async function onRequestPost(context: CloudFunctionContext): Promise<Resp
       return jsonResponse({ session: null, available: true })
     }
     const fs = store as FileStore
-    let session = await readSessionDocuments(fs, conversationId)
+    let session: unknown = (await readSessionDocuments(fs, conversationId))?.state ?? null
     if (session === null) {
       const legacy = await store.state.get(SESSION_KEY)
       if (legacy !== null) {

@@ -60,6 +60,20 @@ export interface FileListQuery {
   limit?: number
 }
 
+export interface SessionDocumentState {
+  task: string
+  steps: { text: string; done: boolean }[]
+  notes: string[]
+  openQuestions: string[]
+  pages: { url: string; title: string; at: number; state?: string }[]
+  updatedAt: number
+}
+
+export interface SessionDocumentSnapshot {
+  state: SessionDocumentState
+  versions: Record<string, number>
+}
+
 export type FileStore = Pick<AgentMemory, "appendMessage" | "getMessages" | "deleteMessage"> & {
   state: Pick<AgentMemory["state"], "get" | "set" | "delete">
 }
@@ -801,8 +815,9 @@ export async function expireScratchTask(store: AppendableStore, conversationId: 
 export async function writeSessionDocuments(
   store: FileStore,
   conversationId: string,
-  session: { task: string; steps: { text: string; done: boolean }[]; notes: string[]; openQuestions: string[]; pages: { url: string; title: string; at: number; state?: string }[]; updatedAt: number },
-): Promise<void> {
+  session: SessionDocumentState,
+  expectedVersions?: Record<string, number>,
+): Promise<Record<string, number>> {
   const docs: [string, string][] = [
     ["/session/task.md", session.task ? `# Current task\n\n${session.task}` : ""],
     ["/session/steps.json", JSON.stringify(session.steps, null, 2)],
@@ -810,33 +825,49 @@ export async function writeSessionDocuments(
     ["/session/open_questions.json", JSON.stringify(session.openQuestions, null, 2)],
     ["/session/pages.json", JSON.stringify(session.pages, null, 2)],
   ]
-  for (const [path, body] of docs) {
-    const existing = await readFileRecord(store, conversationId, path).catch(() => null)
-    if (existing?.record.body === body) continue
-    const all = await events(store, conversationId)
+  const all = await events(store, conversationId)
+  const prepared = docs.map(([path, body]) => {
     const head = latestFor(historyFor(all, path))
+    const currentVersion = head?.version ?? 0
+    const expectedVersion = expectedVersions ? expectedVersions[path] ?? 0 : currentVersion
+    if (expectedVersion !== currentVersion) {
+      throw new FileSystemError(`Session record ${path} changed while you were working (expected v${expectedVersion}, found v${currentVersion}). Reload session state before retrying.`)
+    }
+    return { path, body, head, expectedVersion }
+  })
+  const writtenVersions: Record<string, number> = {}
+  for (const { path, body, head, expectedVersion } of prepared) {
+    if (head && !head.deleted && !recordExpired(head) && head.body === body) {
+      writtenVersions[path] = head.version
+      continue
+    }
     const result = await writeFileRecord(store, conversationId, {
       path,
       body,
-      expectedVersion: head?.version ?? 0,
+      expectedVersion,
       actor: "assistant",
       source: "session_update",
       tags: ["session"],
       internal: true,
     })
     if (!result.record) throw new FileSystemError(`Session record ${path} changed concurrently. ${result.conflict.diff}`)
+    writtenVersions[path] = result.record.version
   }
+  return writtenVersions
 }
 
-export async function readSessionDocuments(store: FileStore, conversationId: string): Promise<unknown | null> {
-  const [task, steps, notes, openQuestions, pages] = await Promise.all(
-    [
-      "/session/task.md",
-      "/session/steps.json",
-      "/session/notes.json",
-      "/session/open_questions.json",
-      "/session/pages.json",
-    ].map((path) => readFileRecord(store, conversationId, path).catch(() => null)),
+export async function readSessionDocuments(store: FileStore, conversationId: string): Promise<SessionDocumentSnapshot | null> {
+  const paths = [
+    "/session/task.md",
+    "/session/steps.json",
+    "/session/notes.json",
+    "/session/open_questions.json",
+    "/session/pages.json",
+  ]
+  const all = await events(store, conversationId)
+  const heads = paths.map((path) => latestFor(historyFor(all, path)))
+  const [task, steps, notes, openQuestions, pages] = heads.map((record) =>
+    record && !record.deleted && !recordExpired(record) ? { record } : null,
   )
   if (![task, steps, notes, openQuestions, pages].some(Boolean)) return null
   const parse = <T>(record: { record: FileRecord } | null, fallback: T): T => {
@@ -849,12 +880,15 @@ export async function readSessionDocuments(store: FileStore, conversationId: str
   }
   const legacyNotes = parse(notes, [] as string[])
   return {
-    task: task?.record.body.replace(/^# Current task\s*/, "").trim() ?? "",
-    steps: parse(steps, [] as { text: string; done: boolean }[]),
-    notes: Array.isArray(legacyNotes) ? legacyNotes : [],
-    openQuestions: parse(openQuestions, [] as string[]),
-    pages: parse(pages, [] as { url: string; title: string; at: number; state?: string }[]),
-    updatedAt: Math.max(task?.record.provenance.createdAt ? Date.parse(task.record.provenance.createdAt) : 0, ...[steps, notes, openQuestions, pages].map((item) => item?.record.provenance.createdAt ? Date.parse(item.record.provenance.createdAt) : 0)),
+    state: {
+      task: task?.record.body.replace(/^# Current task\s*/, "").trim() ?? "",
+      steps: parse(steps, [] as { text: string; done: boolean }[]),
+      notes: Array.isArray(legacyNotes) ? legacyNotes : [],
+      openQuestions: parse(openQuestions, [] as string[]),
+      pages: parse(pages, [] as { url: string; title: string; at: number; state?: string }[]),
+      updatedAt: Math.max(task?.record.provenance.createdAt ? Date.parse(task.record.provenance.createdAt) : 0, ...[steps, notes, openQuestions, pages].map((item) => item?.record.provenance.createdAt ? Date.parse(item.record.provenance.createdAt) : 0)),
+    },
+    versions: Object.fromEntries(paths.map((path, index) => [path, heads[index]?.version ?? 0])),
   }
 }
 

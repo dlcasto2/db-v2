@@ -97,6 +97,8 @@ export interface SessionUpdate {
 /** Applies a session_update call; step and note numbers are 1-based, as shown to the model */
 export function applySessionUpdate(state: SessionState, update: SessionUpdate): SessionState {
   const next: SessionState = { ...state, steps: [...state.steps], notes: [...state.notes], openQuestions: [...state.openQuestions], pages: [...state.pages] }
+  const versions = sessionVersions.get(state)
+  if (versions) sessionVersions.set(next, versions)
   if (typeof update.task === "string") next.task = clip(update.task, LIMITS.task)
   if (Array.isArray(update.steps)) {
     next.steps = update.steps.map((t) => ({ text: clip(t, LIMITS.step), done: false })).filter((x) => x.text).slice(0, LIMITS.steps)
@@ -137,7 +139,10 @@ export function recordPage(state: SessionState, page: { url: string; title: stri
   const prior = state.pages.find((p) => p.url === page.url)
   const entry = { url: clip(page.url, 500), title: clip(page.title, 150), at: Date.now(), ...(prior?.state ? { state: prior.state } : {}) }
   const pages = [entry, ...state.pages.filter((p) => p.url !== page.url)]
-  return { ...state, pages: pages.slice(0, LIMITS.pages), updatedAt: Date.now() }
+  const next = { ...state, pages: pages.slice(0, LIMITS.pages), updatedAt: Date.now() }
+  const versions = sessionVersions.get(state)
+  if (versions) sessionVersions.set(next, versions)
+  return next
 }
 
 /** Reads the browser's session from the request body, keeping it small */
@@ -209,11 +214,16 @@ type StateStore = Pick<AgentMemory, "state" | "appendMessage" | "getMessages" | 
 
 /** Process-local fallback for runtimes where store.state isn't available */
 const fallback = new Map<string, SessionState>()
+const sessionVersions = new WeakMap<SessionState, Record<string, number>>()
 
 export async function loadSession(store: StateStore, conversationId: string, logError: (...a: unknown[]) => void): Promise<SessionState> {
   try {
     const records = await readSessionDocuments(store as FileStore, conversationId)
-    if (records !== null) return normalizeSession(records)
+    if (records !== null) {
+      const session = normalizeSession(records.state)
+      sessionVersions.set(session, records.versions)
+      return session
+    }
     const legacy = await store.state.get(SESSION_KEY)
     if (legacy !== null) {
       const session = normalizeSession(legacy)
@@ -224,7 +234,8 @@ export async function loadSession(store: StateStore, conversationId: string, log
         at: new Date().toISOString(),
       })
       try {
-        await writeSessionDocuments(store as FileStore, conversationId, session)
+        const versions = await writeSessionDocuments(store as FileStore, conversationId, session)
+        sessionVersions.set(session, versions)
         await store.state.delete(SESSION_KEY)
         await finishJournal(store as FileStore, conversationId, intent.path, intent.version, {
           action: "session_migration",
@@ -273,7 +284,8 @@ export async function saveSession(
       fields: ["task", "steps", "notes", "openQuestions", "pages"],
       at: new Date().toISOString(),
     })
-    await writeSessionDocuments(store as FileStore, conversationId, state)
+    const versions = await writeSessionDocuments(store as FileStore, conversationId, state, sessionVersions.get(state) ?? {})
+    sessionVersions.set(state, versions)
     await store.state.delete(SESSION_KEY)
     await finishJournal(store as FileStore, conversationId, intent.path, intent.version, {
       action: "session_update",
