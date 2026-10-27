@@ -19,6 +19,17 @@ export const GAMES_URL = "devon://games"
 
 export const GAMES: Game[] = [
   {
+    id: "abyssal-transcendence",
+    title: "Abyssal Transcendence 2: Dimensions Edition",
+    author: "Independent",
+    description:
+      "Explore a dark voxel multiverse, cross fourteen strange trials, and uncover five timelines beyond the Abyss.",
+    src: "/games/abyssal-transcendence/index.html",
+    cover: "/games/abyssal-transcendence/cover.svg",
+    icon: "/games/abyssal-transcendence/cover.svg",
+    size: "6 MB",
+  },
+  {
     id: "game-inside-a-game",
     title: "Game Inside a Game",
     author: "Sam Hogan",
