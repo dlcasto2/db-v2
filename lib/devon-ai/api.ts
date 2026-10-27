@@ -33,6 +33,7 @@ export const AI_API = {
   deleteConversation: "/ai-delete-conversation",
   pageResult: "/ai-page-result",
   session: "/ai-session",
+  filesystem: "/ai-filesystem",
   feedback: "/ai-feedback",
 } as const
 
@@ -430,4 +431,23 @@ export async function clearSessionApi(conversationId: string): Promise<boolean> 
   } catch {
     return false
   }
+}
+
+export async function fileSystemRequest<T = Record<string, unknown>>(
+  conversationId: string,
+  action: string,
+  input: Record<string, unknown> = {},
+): Promise<T> {
+  const res = await fetch(AI_API.filesystem, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "makers-conversation-id": conversationId },
+    body: JSON.stringify({ ...input, action }),
+  })
+  const data = (await res.json().catch(() => null)) as (T & { error?: string }) | null
+  if (!res.ok && res.status !== 409) {
+    const message = data && typeof data.error === "string" ? data.error : `Filesystem request failed (HTTP ${res.status}).`
+    throw new Error(message)
+  }
+  if (!data) throw new Error("The filesystem returned an invalid response.")
+  return data
 }

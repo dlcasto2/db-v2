@@ -884,6 +884,13 @@ export function clearDevonAiSession() {
   void clearSessionApi(id)
 }
 
+export async function refreshDevonAiSession(): Promise<void> {
+  const id = state.conversationId
+  if (!id) return
+  const { session, available } = await fetchSession(id)
+  if (available) setSession(id, session)
+}
+
 export function clearDevonAiBrowserMemory() {
   const hidden = { ...hiddenBrowserMemory(), ...Object.fromEntries(storedBrowserMemory().map((entry) => [entry.conversationId, entry.notes])) }
   if (state.conversationId && state.session?.notes.length) hidden[state.conversationId] = state.session.notes

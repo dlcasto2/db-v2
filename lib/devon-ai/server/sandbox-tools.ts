@@ -233,11 +233,11 @@ export function createSandboxTools(ctx: SandboxToolsContext) {
     ),
     tool(
       "files",
-      "Read, write, list, create or remove files in the same sandbox 'commands' and 'code_interpreter' use. " +
-        "op is required; path is required for every op; content is required for write. " +
+      "Read, write, list, create, download or remove files in the same sandbox 'commands' and 'code_interpreter' use. " +
+        "Use download to give the person a link to a sandbox file. op is required; path is required for every op; content is required for write. " +
         "Paths are inside the sandbox only — never the person's computer or Devon's own server/project files.",
       {
-        op: z.enum(["read", "write", "list", "makeDir", "exists", "remove"]),
+        op: z.enum(["read", "write", "list", "makeDir", "exists", "remove", "download"]),
         path: z.string().min(1).max(1000),
         content: z.string().max(200_000).optional().describe("File content — required for write, ignored otherwise"),
       },
@@ -271,6 +271,13 @@ export function createSandboxTools(ctx: SandboxToolsContext) {
             case "remove": {
               await sbx.files.remove(args.path)
               return text(`Removed ${args.path}`)
+            }
+            case "download": {
+              const url = await sbx.downloadUrl(args.path)
+              const parts = args.path.split(/[\\/]/).filter(Boolean)
+              const name = parts[parts.length - 1] || "file"
+              const label = name.replace(/[\\[\]]/g, "\\$&")
+              return text(`Download: [${label}](${url})`)
             }
           }
         }),

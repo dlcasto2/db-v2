@@ -2,14 +2,14 @@
  * Devon AI session state (private module, not a route).
  *
  * Each chat has a small state the agent keeps while it works: the task it's
- * on, its steps, notes, and the pages it has used. It lives in the platform's
- * conversation-scoped KV (`context.store.state`), so it survives restarts and
- * follows the chat, and it's shown to the visitor in the Session panel.
+ * on, its steps, notes, and the pages it has used. It lives as conversation-
+ * scoped `/session` documents, so it survives restarts and follows the chat.
  * Alongside it, the browser sends its own session (open tabs, which one the AI
  * acts on) with every message; both go to the model as one <devon_session> block.
  */
 
 import type { AgentMemory } from "@edgeone/types"
+import { clearSessionStore, finishJournal, readSessionDocuments, writeJournal, writeSessionDocuments, type FileStore } from "../lib/devon-ai/filesystem"
 
 export const SESSION_KEY = "devon_session"
 
@@ -97,6 +97,8 @@ export interface SessionUpdate {
 /** Applies a session_update call; step and note numbers are 1-based, as shown to the model */
 export function applySessionUpdate(state: SessionState, update: SessionUpdate): SessionState {
   const next: SessionState = { ...state, steps: [...state.steps], notes: [...state.notes], openQuestions: [...state.openQuestions], pages: [...state.pages] }
+  const versions = sessionVersions.get(state)
+  if (versions) sessionVersions.set(next, versions)
   if (typeof update.task === "string") next.task = clip(update.task, LIMITS.task)
   if (Array.isArray(update.steps)) {
     next.steps = update.steps.map((t) => ({ text: clip(t, LIMITS.step), done: false })).filter((x) => x.text).slice(0, LIMITS.steps)
@@ -137,7 +139,10 @@ export function recordPage(state: SessionState, page: { url: string; title: stri
   const prior = state.pages.find((p) => p.url === page.url)
   const entry = { url: clip(page.url, 500), title: clip(page.title, 150), at: Date.now(), ...(prior?.state ? { state: prior.state } : {}) }
   const pages = [entry, ...state.pages.filter((p) => p.url !== page.url)]
-  return { ...state, pages: pages.slice(0, LIMITS.pages), updatedAt: Date.now() }
+  const next = { ...state, pages: pages.slice(0, LIMITS.pages), updatedAt: Date.now() }
+  const versions = sessionVersions.get(state)
+  if (versions) sessionVersions.set(next, versions)
+  return next
 }
 
 /** Reads the browser's session from the request body, keeping it small */
@@ -205,16 +210,59 @@ export function sessionBlock(state: SessionState, browser: BrowserSession | null
   return lines.join("\n")
 }
 
-type StateStore = Pick<AgentMemory, "state">
+type StateStore = Pick<AgentMemory, "state" | "appendMessage" | "getMessages" | "deleteMessage">
 
 /** Process-local fallback for runtimes where store.state isn't available */
 const fallback = new Map<string, SessionState>()
+const sessionVersions = new WeakMap<SessionState, Record<string, number>>()
 
 export async function loadSession(store: StateStore, conversationId: string, logError: (...a: unknown[]) => void): Promise<SessionState> {
   try {
-    return normalizeSession(await store.state.get(SESSION_KEY))
+    const records = await readSessionDocuments(store as FileStore, conversationId)
+    if (records !== null) {
+      const session = normalizeSession(records.state)
+      sessionVersions.set(session, records.versions)
+      return session
+    }
+    const legacy = await store.state.get(SESSION_KEY)
+    if (legacy !== null) {
+      const session = normalizeSession(legacy)
+      const intent = await writeJournal(store as FileStore, conversationId, {
+        action: "session_migration",
+        phase: "intent",
+        from: SESSION_KEY,
+        at: new Date().toISOString(),
+      })
+      try {
+        const versions = await writeSessionDocuments(store as FileStore, conversationId, session)
+        sessionVersions.set(session, versions)
+        await store.state.delete(SESSION_KEY)
+        await finishJournal(store as FileStore, conversationId, intent.path, intent.version, {
+          action: "session_migration",
+          phase: "result",
+          status: "success",
+          whatChanged: "Migrated legacy session state into /session documents.",
+          at: new Date().toISOString(),
+        })
+        return session
+      } catch (error) {
+        try {
+          await finishJournal(store as FileStore, conversationId, intent.path, intent.version, {
+            action: "session_migration",
+            phase: "result",
+            status: "error",
+            result: error instanceof Error ? error.message : String(error),
+            at: new Date().toISOString(),
+          })
+        } catch (journalError) {
+          logError("[session] couldn't record failed migration:", journalError)
+        }
+        throw error
+      }
+    }
+    return emptySession()
   } catch (e) {
-    logError("[session] store.state.get failed, using process memory:", e)
+    logError("[session] filesystem store failed, using process memory:", e)
     return fallback.get(conversationId) ?? emptySession()
   }
 }
@@ -228,9 +276,49 @@ export async function saveSession(
   fallback.delete(conversationId)
   fallback.set(conversationId, state)
   if (fallback.size > 500) fallback.delete(fallback.keys().next().value as string)
+  let intent: Awaited<ReturnType<typeof writeJournal>> | undefined
   try {
-    await store.state.set(SESSION_KEY, state)
+    intent = await writeJournal(store as FileStore, conversationId, {
+      action: "session_update",
+      phase: "intent",
+      fields: ["task", "steps", "notes", "openQuestions", "pages"],
+      at: new Date().toISOString(),
+    })
+    const versions = await writeSessionDocuments(store as FileStore, conversationId, state, sessionVersions.get(state) ?? {})
+    sessionVersions.set(state, versions)
+    await store.state.delete(SESSION_KEY)
+    await finishJournal(store as FileStore, conversationId, intent.path, intent.version, {
+      action: "session_update",
+      phase: "result",
+      status: "success",
+      whatChanged: { taskSet: Boolean(state.task), steps: state.steps.length, notes: state.notes.length, openQuestions: state.openQuestions.length, pages: state.pages.length },
+      at: new Date().toISOString(),
+    })
   } catch (e) {
-    logError("[session] store.state.set failed, kept in process memory:", e)
+    logError("[session] filesystem write failed, kept in process memory:", e)
+    if (intent) {
+      try {
+        await finishJournal(store as FileStore, conversationId, intent.path, intent.version, {
+          action: "session_update",
+          phase: "result",
+          status: "error",
+          result: e instanceof Error ? e.message : String(e),
+          at: new Date().toISOString(),
+        })
+      } catch (journalError) {
+        logError("[session] couldn't record failed filesystem write:", journalError)
+      }
+    }
+    throw e
+  }
+}
+
+export async function clearSession(store: StateStore, conversationId: string, logError: (...a: unknown[]) => void): Promise<void> {
+  try {
+    await clearSessionStore(store as FileStore, conversationId)
+    fallback.delete(conversationId)
+  } catch (e) {
+    logError("[session] filesystem clear failed:", e)
+    throw e
   }
 }
