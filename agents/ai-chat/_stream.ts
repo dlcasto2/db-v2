@@ -47,6 +47,7 @@ interface CreateChatStreamOptions {
   userId?: string
   quota: QuotaStatus
   session: SessionState
+  initialNotices?: { code: string; message: string }[]
   /** Filled in when the stream starts, so tools can send events down it */
   channel: StreamChannel
 }
@@ -109,6 +110,7 @@ export function createChatStream({
   userId,
   quota,
   session,
+  initialNotices,
   channel,
 }: CreateChatStreamOptions): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder()
@@ -236,6 +238,7 @@ export function createChatStream({
       try {
         send("quota", { used: quota.used, limit: quota.limit, resetAt: quota.resetAt })
         send("session", { session })
+        for (const notice of initialNotices ?? []) send("notice", notice)
 
         const abortController = new AbortController()
         if (signal?.aborted) abortController.abort()
