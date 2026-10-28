@@ -11,6 +11,7 @@ import {
   Check,
   CircleCheck,
   CircleSlash,
+  ChevronDown,
   ClipboardList,
   Copy,
   Download,
@@ -19,6 +20,7 @@ import {
   Globe,
   Hand,
   Loader2,
+  ListChecks,
   Maximize2,
   MessagesSquare,
   Plus,
@@ -690,14 +692,9 @@ function Bubble({ message, onOpenLink }: { message: Message; onOpenLink: (url: s
       <div className="min-w-0 flex-1">
         {!!message.actions?.length && <ActionSteps steps={message.actions} />}
         {waiting && (
-          <div className="flex h-6 items-center gap-1" aria-label="Devon AI is thinking">
-            {[0, 1, 2].map((i) => (
-              <span
-                key={i}
-                className="size-1.5 animate-bounce rounded-full bg-muted-foreground/70"
-                style={{ animationDelay: `${i * 0.15}s` }}
-              />
-            ))}
+          <div className="flex items-center gap-2 text-xs text-muted-foreground" role="status">
+            <Loader2 className="size-3.5 animate-spin" />
+            <span>Preparing a response</span>
           </div>
         )}
         {confidence && (
@@ -943,24 +940,56 @@ function FeedbackButtons({ message }: { message: Message }) {
 }
 
 function ActionSteps({ steps }: { steps: ActionStep[] }) {
+  const [expanded, setExpanded] = useState(() => steps.some((step) => step.status === "active"))
+  const activeStep = steps.find((step) => step.status === "active")
+  const completedCount = steps.filter((step) => step.status === "done").length
+  const errorCount = steps.filter((step) => step.status === "error").length
+  const summary = activeStep
+    ? activeStep.label
+    : errorCount
+      ? `${errorCount} ${errorCount === 1 ? "action needs" : "actions need"} attention`
+      : `${completedCount} ${completedCount === 1 ? "action" : "actions"} completed`
+
   return (
-    <ul className="mb-2 space-y-1">
-      {steps.map((step) => (
-        <li key={step.id} role="status" className="flex items-start gap-2 text-[12px]">
-          {step.status === "active" ? (
-            <Loader2 className="mt-0.5 size-3.5 flex-shrink-0 animate-spin text-primary" />
-          ) : step.status === "error" ? (
-            <CircleSlash className="mt-0.5 size-3.5 flex-shrink-0 text-amber-400" />
-          ) : (
-            <Check className="mt-0.5 size-3.5 flex-shrink-0 text-muted-foreground" />
-          )}
-          <span className={cn("min-w-0", step.status === "active" ? "text-primary" : "text-muted-foreground")}>
-            {step.status === "done" ? step.doneLabel : step.label}
-            {step.note && <span className="block text-[11px] text-amber-200/80">{step.note}</span>}
-          </span>
-        </li>
-      ))}
-    </ul>
+    <section className="mb-2 rounded-lg bg-white/[0.03] ring-1 ring-border/70">
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 px-2.5 py-2 text-left"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <ListChecks className="size-3.5 flex-shrink-0 text-primary" />
+        <span className="text-[11px] font-medium">Work log</span>
+        <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground" aria-live="polite">
+          {summary}
+        </span>
+        <ChevronDown className={cn("size-3.5 flex-shrink-0 text-muted-foreground transition-transform", expanded && "rotate-180")} />
+      </button>
+      {expanded && (
+        <div className="border-t border-border/70 px-2.5 py-2">
+          <p className="mb-2 text-[10px] text-muted-foreground">
+            Tool and page actions with their status; private internal reasoning isn’t shown.
+          </p>
+          <ul className="space-y-1">
+            {steps.map((step) => (
+              <li key={step.id} className="flex items-start gap-2 text-[12px]">
+                {step.status === "active" ? (
+                  <Loader2 className="mt-0.5 size-3.5 flex-shrink-0 animate-spin text-primary" />
+                ) : step.status === "error" ? (
+                  <CircleSlash className="mt-0.5 size-3.5 flex-shrink-0 text-amber-400" />
+                ) : (
+                  <Check className="mt-0.5 size-3.5 flex-shrink-0 text-muted-foreground" />
+                )}
+                <span className={cn("min-w-0", step.status === "active" ? "text-primary" : "text-muted-foreground")}>
+                  {step.status === "done" ? step.doneLabel : step.label}
+                  {step.note && <span className="block text-[11px] text-amber-200/80">{step.note}</span>}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
   )
 }
 
