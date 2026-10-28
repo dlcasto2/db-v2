@@ -237,6 +237,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const store = createAiStore(conversationId)
+  let uploadPersistenceNotice: { code: string; message: string } | undefined
   const ip = clientIp(request)
   const quota = await takeQuota(store, env, { visitor: userId || `ip:${ip || "unknown"}`, network: ip || undefined }, logger.error)
   if (!quota.ok) {
@@ -248,7 +249,10 @@ export async function POST(request: Request): Promise<Response> {
       await storeInboxUploads(store, conversationId, uploaded.files)
     } catch (error) {
       logger.error("[filesystem] failed to persist inbox uploads:", error)
-      return json({ error: "filesystem_write_failed", message: "The uploaded files could not be saved to this chat's /inbox." }, 500)
+      uploadPersistenceNotice = {
+        code: "upload_not_saved",
+        message: "Your uploaded files are still attached to this message, but Devon couldn't save them to this chat's /inbox. They may not be available in later turns.",
+      }
     }
   }
 
@@ -357,6 +361,7 @@ export async function POST(request: Request): Promise<Response> {
     userId: userId || undefined,
     quota,
     session: sessionRef.current,
+    ...(uploadPersistenceNotice ? { initialNotices: [uploadPersistenceNotice] } : {}),
     channel,
   })
 
