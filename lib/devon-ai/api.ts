@@ -24,6 +24,7 @@ import type {
   UploadedFile,
 } from "@/lib/devon-ai/types"
 import type { PageActionOutcome, PageActionRequest } from "@/lib/devon-ai/page-executor"
+import { aiUrl } from "@/lib/devon-ai/api-base"
 
 export const AI_API = {
   chat: "/ai-chat",
@@ -161,7 +162,7 @@ export function sendMessageStream(
     let failed = false
     try {
       const body = await chatRequestBody(args)
-      const res = await fetch(AI_API.chat, {
+      const res = await fetch(aiUrl(AI_API.chat), {
         method: "POST",
         headers: {
           ...(body instanceof FormData ? {} : { "Content-Type": "application/json" }),
@@ -281,7 +282,7 @@ function dispatchSseChunk(part: string, cb: StreamCallbacks): "done" | "error" |
  */
 export async function stopAgent(conversationId: string): Promise<boolean> {
   const post = (withHeader: boolean) =>
-    fetch(AI_API.stop, {
+    fetch(aiUrl(AI_API.stop), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -301,7 +302,7 @@ export async function stopAgent(conversationId: string): Promise<boolean> {
 /** Messages of one conversation, for showing it again after a reload */
 export async function fetchConversationHistory(conversationId: string, userId: string): Promise<Message[]> {
   try {
-    const res = await fetch(AI_API.history, {
+    const res = await fetch(aiUrl(AI_API.history), {
       method: "POST",
       headers: { "Content-Type": "application/json", "makers-conversation-id": conversationId },
       body: JSON.stringify({ conversation_id: conversationId, user_id: userId }),
@@ -317,7 +318,7 @@ export async function fetchConversationHistory(conversationId: string, userId: s
 export async function listConversations(userId: string, after?: string, limit = 20): Promise<ListConversationsResponse> {
   const empty: ListConversationsResponse = { conversations: [] }
   try {
-    const res = await fetch(AI_API.conversations, {
+    const res = await fetch(aiUrl(AI_API.conversations), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user_id: userId, limit, order: "desc", after }),
@@ -334,7 +335,7 @@ export async function listConversations(userId: string, after?: string, limit = 
 /** Permanently delete a conversation (the caller has already confirmed) */
 export async function deleteConversation(conversationId: string, userId: string): Promise<boolean> {
   try {
-    const res = await fetch(AI_API.deleteConversation, {
+    const res = await fetch(aiUrl(AI_API.deleteConversation), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ conversation_id: conversationId, user_id: userId }),
@@ -349,7 +350,7 @@ export async function deleteConversation(conversationId: string, userId: string)
 export async function postPageResult(conversationId: string, callId: string, outcome: PageActionOutcome): Promise<boolean> {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const res = await fetch(AI_API.pageResult, {
+      const res = await fetch(aiUrl(AI_API.pageResult), {
         method: "POST",
         headers: { "Content-Type": "application/json", "makers-conversation-id": conversationId },
         body: JSON.stringify({
@@ -374,7 +375,7 @@ export async function postPageResult(conversationId: string, callId: string, out
 /** A chat's session state from the server (null if none, or the runtime can't say) */
 export async function fetchSession(conversationId: string): Promise<{ session: SessionState | null; available: boolean }> {
   try {
-    const res = await fetch(AI_API.session, {
+    const res = await fetch(aiUrl(AI_API.session), {
       method: "POST",
       headers: { "Content-Type": "application/json", "makers-conversation-id": conversationId },
       body: JSON.stringify({ action: "get" }),
@@ -402,7 +403,7 @@ export async function postFeedback(input: {
   taskType: string
 }): Promise<boolean> {
   try {
-    const res = await fetch(AI_API.feedback, {
+    const res = await fetch(aiUrl(AI_API.feedback), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -422,7 +423,7 @@ export async function postFeedback(input: {
 
 export async function clearSessionApi(conversationId: string): Promise<boolean> {
   try {
-    const res = await fetch(AI_API.session, {
+    const res = await fetch(aiUrl(AI_API.session), {
       method: "POST",
       headers: { "Content-Type": "application/json", "makers-conversation-id": conversationId },
       body: JSON.stringify({ action: "clear" }),
@@ -438,7 +439,7 @@ export async function fileSystemRequest<T = Record<string, unknown>>(
   action: string,
   input: Record<string, unknown> = {},
 ): Promise<T> {
-  const res = await fetch(AI_API.filesystem, {
+  const res = await fetch(aiUrl(AI_API.filesystem), {
     method: "POST",
     headers: { "Content-Type": "application/json", "makers-conversation-id": conversationId },
     body: JSON.stringify({ ...input, action }),
