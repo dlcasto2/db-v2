@@ -2,6 +2,8 @@
  * Devon AI chat types. Adapted from TencentEdgeOne/claude-agent-starter-node (MIT).
  */
 
+export type DevonAiModel = "claude" | "eve"
+
 /** A tool image (screenshot, chart) kept in IndexedDB; `url` is a blob: URL made at runtime */
 export interface ImageAttachment {
   id: string

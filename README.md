@@ -178,6 +178,20 @@ Devon's version adds, on both backends:
 - **A daily limit per visitor**, counted on the server so refreshing, new chats or new tabs don't reset it. See below.
 - **Feedback:** every reply gets a thumbs up/down (hover a reply to see it). Down opens a reason chip (wrong fact · misread the page · bad/unsafe action · other) and an optional short note. It's logged as a small, append-only entry — model, a rough task-type label, the rating, the reason chip and note, a timestamp — never the page or the conversation itself, and reviewed by the site's maintainer as an aggregate digest (`POST /ai-feedback` with `{"action":"digest","admin_key":...}`), not a notification per click. See `agents/_feedback.ts`.
 - Chats keep streaming when you switch tabs, and links in replies open in a new Devon tab.
+- **Provider picker:** the Devon AI header lets you choose **Claude** or **Eve Agent**. The selection is saved in this browser and applies to new messages. Eve is a separate durable-agent runtime, not a model named “Eve”; its underlying model is configured in `eve-agent/agent/agent.ts` / `DEVON_EVE_MODEL`. The first Eve integration is text-chat only and does not inherit Devon's live-tab tools or E2B sandbox.
+
+### Eve Agent provider
+
+Eve runs as a separate service and Devon's existing `/ai-chat` handler proxies it. This avoids placing Eve's managed handler in `next.config.mjs` (the Eve Next.js managed-server startup issue reported in [vercel/eve#3456](https://github.com/vercel/eve/issues/3456)). The adapter in `agents/ai-chat/_eve.ts` speaks Eve's documented `/eve/v1` session API and NDJSON stream, then translates it to Devon's existing SSE stream. It also persists Eve session IDs and event cursors in Devon's conversation store so later messages resume the same session.
+
+Set the following in the Devon deployment that serves `/ai-chat`:
+
+| Variable | Meaning |
+| --- | --- |
+| `DEVON_EVE_BASE_URL` | Origin of your separately deployed Eve service, e.g. `https://your-eve-project.vercel.app`. Do not append `/eve/v1`. |
+| `DEVON_EVE_JWT_SECRET` | Shared HS256 secret, at least 32 characters. Set the same value in the Eve service and Devon. Keep it server-side; never expose it as a `NEXT_PUBLIC_` variable. |
+
+The standalone Eve project, model configuration, channel authentication and deploy steps live in [`eve-agent/README.md`](eve-agent/README.md). The Next.js/Vercel backend needs Redis configured for the persistent Eve-session mapping; the EdgeOne backend uses its conversation store. The Eve service also needs its own model credential (for example `ANTHROPIC_API_KEY`) and optional `DEVON_EVE_MODEL` setting. Eve's API host is your own deployment—`eve.dev` is documentation, not the API endpoint.
 
 Routes (same on both backends, so the client — `lib/devon-ai/` — doesn't know or care which one answers): `POST /ai-chat` (SSE stream, needs the `makers-conversation-id` header), `POST /ai-stop`, `POST /ai-history`, `POST /ai-conversations`, `POST /ai-delete-conversation`, `POST /ai-page-result` (page action results), `POST /ai-session` (read or clear a chat's session; chat ID in the header), `POST /ai-filesystem` (query, read, version, diff, edit, export, soft-delete, restore, approve a promotion, or run retention cleanup), and `POST /ai-feedback` (record a thumbs up/down, or — with the admin key — read the digest). On EdgeOne, agent runs may take up to 600 s (`edgeone.json`), since page tasks can wait on your permission; on Vercel, `app/ai-chat/route.ts` sets `maxDuration = 300`, but your Vercel plan's own function-duration limit may cap that lower.
 

@@ -55,12 +55,15 @@ import type {
   Quota,
   SessionState,
   UploadedFile,
+  DevonAiModel,
 } from "@/lib/devon-ai/types"
 
 export type BannerKind = "not_configured" | "unavailable" | "rate_limited" | "notice" | "error"
 
 export interface ChatState {
   started: boolean
+  /** Selected runtime for new requests; Eve is a separately hosted agent. */
+  selectedModel: DevonAiModel
   userId: string
   conversationId: string
   messages: Message[]
@@ -101,10 +104,12 @@ const SITES_KEY = "devon_ai_sites"
 const BROWSER_MEMORY_KEY = "devon_ai_browser_memory"
 const BROWSER_MEMORY_HIDDEN_KEY = "devon_ai_browser_memory_hidden"
 const PAGE_READS_KEY = "devon_ai_recent_reads"
+const MODEL_KEY = "devon_ai_model"
 const PAGE_SIZE = 20
 
 const INITIAL: ChatState = {
   started: false,
+  selectedModel: "claude",
   userId: "",
   conversationId: "",
   messages: [],
@@ -160,6 +165,13 @@ export function useDevonAiPageWork(): ChatState["pageWork"] {
 
 export function getDevonAiState(): ChatState {
   return state
+}
+
+/** Persist the provider selection used for subsequent messages. */
+export function setDevonAiModel(model: DevonAiModel) {
+  const selectedModel: DevonAiModel = model === "eve" ? "eve" : "claude"
+  writeStorage(MODEL_KEY, selectedModel)
+  set({ selectedModel })
 }
 
 // ---------------------------------------------------------------------------
@@ -407,6 +419,7 @@ export function startDevonAi() {
   if (!existing) writeStorage(CONVERSATION_KEY, conversationId)
   set({
     started: true,
+    selectedModel: readStorage(MODEL_KEY) === "eve" ? "eve" : "claude",
     userId,
     conversationId,
     quota: savedQuota(),
@@ -758,6 +771,7 @@ export function sendDevonAi(input: string, files: UploadedFile[] = []) {
       message: text,
       conversationId,
       userId: state.userId,
+      model: state.selectedModel,
       userMsgId: userMsg.id,
       botMsgId: thisBot,
       page,

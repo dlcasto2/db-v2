@@ -22,6 +22,7 @@ import type {
   Quota,
   SessionState,
   UploadedFile,
+  DevonAiModel,
 } from "@/lib/devon-ai/types"
 import type { PageActionOutcome, PageActionRequest } from "@/lib/devon-ai/page-executor"
 import { aiUrl } from "@/lib/devon-ai/api-base"
@@ -67,12 +68,14 @@ async function chatRequestBody(args: {
   page?: PageContext
   browser?: BrowserSession
   files?: UploadedFile[]
+  model?: DevonAiModel
 }): Promise<BodyInit> {
   const body = {
     message: args.message,
     userId: args.userId,
     userMsgId: args.userMsgId,
     botMsgId: args.botMsgId,
+    model: args.model === "eve" ? "eve" : "claude",
     ...(args.page ? { page: args.page } : {}),
     ...(args.browser ? { browser: args.browser } : {}),
   }
@@ -152,6 +155,7 @@ export function sendMessageStream(
     page?: PageContext
     browser?: BrowserSession
     files?: UploadedFile[]
+    model?: DevonAiModel
   },
   cb: StreamCallbacks,
 ): AbortController {

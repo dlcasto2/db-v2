@@ -35,6 +35,7 @@ import {
   X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   type ChatState,
   attachPageToDevonAi,
@@ -49,6 +50,7 @@ import {
   respondDevonAiApproval,
   selectDevonAiChat,
   sendDevonAi,
+  setDevonAiModel,
   startDevonAi,
   stopDevonAi,
   submitDevonAiFeedback,
@@ -215,7 +217,16 @@ export function DevonAiPage({ onOpenLink, onOpenApps, variant = "page", onClose,
           <span className="ml-1 grid size-6 flex-shrink-0 place-items-center rounded-lg bg-primary/15 text-primary ring-1 ring-primary/30">
             <Sparkles className="size-3.5" />
           </span>
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">Devon AI</span>
+          <span className="min-w-0 truncate text-sm font-medium">Devon AI</span>
+          <Select value={chat.selectedModel} onValueChange={(value) => setDevonAiModel(value === "eve" ? "eve" : "claude")} disabled={chat.loading}>
+            <SelectTrigger className="h-7 w-[112px] rounded-full border-border bg-background/60 px-2 text-xs" aria-label="Choose AI provider" title="Choose the provider for new messages. Eve Agent uses its own service and does not inherit Devon browser or sandbox tools.">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              <SelectItem value="claude">Claude</SelectItem>
+              <SelectItem value="eve">Eve Agent</SelectItem>
+            </SelectContent>
+          </Select>
           {quotaLeft !== null && !panel && (
             <span
               className={cn(

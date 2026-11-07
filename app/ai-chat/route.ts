@@ -6,6 +6,7 @@ import { clearMailbox } from "@/agents/_mailbox"
 import { type SessionState, loadSession, readBrowserSession, sessionBlock } from "@/agents/_session"
 import { DEVON_SERVER, DEVON_TOOL_NAMES, type StreamChannel, createDevonTools } from "@/agents/ai-chat/_devon-tools"
 import { createChatStream } from "@/agents/ai-chat/_stream"
+import { createEveChatResponse, eveConfigured } from "@/agents/ai-chat/_eve"
 import { createAiStore, type StoredMessage } from "@/lib/devon-ai/server/store"
 import { redis } from "@/lib/devon-ai/server/kv"
 import { SANDBOX_SERVER, SANDBOX_TOOL_NAMES, createSandboxTools, sandboxConfigured } from "@/lib/devon-ai/server/sandbox-tools"
@@ -183,6 +184,7 @@ export async function POST(request: Request): Promise<Response> {
   const browser = readBrowserSession(body.browser)
   const conversationId = request.headers.get("makers-conversation-id") || crypto.randomUUID()
   const env = process.env
+  const requestedModel = body.model === "eve" ? "eve" : "claude"
 
   if (!message) return json({ error: "bad_request", message: "'message' is required" }, 400)
   if (uploaded.error) return json({ error: "bad_request", message: uploaded.error }, 400)
@@ -193,14 +195,20 @@ export async function POST(request: Request): Promise<Response> {
   if (message.length > MAX_MESSAGE_CHARS) {
     return json({ error: "bad_request", message: `Messages can be up to ${MAX_MESSAGE_CHARS} characters` }, 400)
   }
-  if (!modelConfigured(env)) {
+  if (requestedModel === "eve" ? !eveConfigured(env) : !modelConfigured(env)) {
     return json(
       {
         error: "not_configured",
-        message: "Devon AI isn't set up on this site yet: set ANTHROPIC_API_KEY (or AI_GATEWAY_API_KEY and AI_GATEWAY_BASE_URL) in Vercel.",
+        message: requestedModel === "eve"
+          ? "Eve Agent isn't connected yet. Set DEVON_EVE_BASE_URL and DEVON_EVE_JWT_SECRET in Vercel."
+          : "Devon AI isn't set up on this site yet: set ANTHROPIC_API_KEY (or AI_GATEWAY_API_KEY and AI_GATEWAY_BASE_URL) in Vercel.",
       },
       503,
     )
+  }
+
+  if (requestedModel === "eve" && !redis()) {
+    return json({ error: "not_configured", message: "Eve Agent needs the Devon Redis store so its durable session can be resumed between messages. Configure Upstash Redis, then try again." }, 503)
   }
 
   const store = createAiStore(conversationId)
@@ -243,6 +251,37 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const sessionRef: { current: SessionState } = { current: await loadSession(store, conversationId, logger.error) }
+  if (requestedModel === "eve") {
+    const previousModel = await store.state.get<string>("activeModel")
+    const savedBinding = await store.state.get<{ sessionId: string; userId: string; cursor?: number }>("eveSession")
+    const existingBinding = previousModel === "eve" && savedBinding && typeof savedBinding.sessionId === "string" && typeof savedBinding.userId === "string"
+      ? { sessionId: savedBinding.sessionId, userId: savedBinding.userId, cursor: typeof savedBinding.cursor === "number" && Number.isFinite(savedBinding.cursor) ? Math.max(0, Math.floor(savedBinding.cursor)) : 0 }
+      : null
+    return createEveChatResponse({
+      env,
+      message,
+      conversationId,
+      userId,
+      page,
+      history,
+      sessionBlock: sessionBlock(sessionRef.current, browser),
+      filesBlock: uploadedFilesBlock(uploaded.files),
+      existingBinding,
+      signal: request.signal,
+      onSessionCreated: async (binding) => { await Promise.all([store.state.set("eveSession", binding), store.state.set("activeModel", "eve")]) },
+      onCursorUpdated: async (binding) => { await Promise.all([store.state.set("eveSession", binding), store.state.set("activeModel", "eve")]) },
+      onAssistantMessage: async (content) => {
+        await store.appendMessage({
+          conversationId,
+          role: "assistant",
+          content,
+          ...(userId ? { userId } : {}),
+          ...(botMsgId ? { messageId: botMsgId } : {}),
+        })
+      },
+    })
+  }
+  await store.state.set("activeModel", "claude")
   if (conversationId) await clearMailbox(store, conversationId, logger.error)
   const channel: StreamChannel = { send: () => {} }
   const devonServer = createSdkMcpServer({

@@ -40,6 +40,7 @@ import { clearMailbox } from "../_mailbox"
 import { type SessionState, loadSession, readBrowserSession, sessionBlock } from "../_session"
 import { DEVON_SERVER, DEVON_TOOL_NAMES, type StreamChannel, createDevonTools } from "./_devon-tools"
 import { createChatStream } from "./_stream"
+import { createEveChatResponse, eveConfigured } from "./_eve"
 import { readUploadedFiles, uploadedFilesBlock } from "../../lib/devon-ai/uploads"
 import { storeInboxUploads } from "../../lib/devon-ai/filesystem"
 
@@ -212,6 +213,7 @@ export async function onRequest(context: AgentContext) {
   const browser = readBrowserSession(body.browser)
   const conversationId = context.conversation_id || ""
   const { store, env } = context
+  const requestedModel = body.model === "eve" ? "eve" : "claude"
 
   if (!message) return json({ error: "bad_request", message: "'message' is required" }, 400)
   if (uploaded.error) return json({ error: "bad_request", message: uploaded.error }, 400)
@@ -220,11 +222,13 @@ export async function onRequest(context: AgentContext) {
   if (message.length > MAX_MESSAGE_CHARS) {
     return json({ error: "bad_request", message: `Messages can be up to ${MAX_MESSAGE_CHARS} characters` }, 400)
   }
-  if (!modelConfigured(env)) {
+  if (requestedModel === "eve" ? !eveConfigured(env) : !modelConfigured(env)) {
     return json(
       {
         error: "not_configured",
-        message: "Devon AI isn't set up on this site yet: set AI_GATEWAY_API_KEY and AI_GATEWAY_BASE_URL (or ANTHROPIC_API_KEY) in EdgeOne.",
+        message: requestedModel === "eve"
+          ? "Eve Agent isn't connected yet. Set DEVON_EVE_BASE_URL and DEVON_EVE_JWT_SECRET in EdgeOne."
+          : "Devon AI isn't set up on this site yet: set AI_GATEWAY_API_KEY and AI_GATEWAY_BASE_URL (or ANTHROPIC_API_KEY) in EdgeOne.",
       },
       503,
     )
@@ -247,6 +251,8 @@ export async function onRequest(context: AgentContext) {
 
   logger.log(`[request] cid=${conversationId} uid=${userId || "-"} page=${page ? "yes" : "no"} quota=${quota.used}/${quota.limit || "∞"}`)
 
+  const history = await store.getMessages({ conversationId, limit: 16, order: "desc" }).catch(() => [])
+
   // Save the question (without the page text) so history shows what the visitor typed
   if (conversationId) {
     try {
@@ -263,6 +269,39 @@ export async function onRequest(context: AgentContext) {
     }
   }
 
+  const sessionRef: { current: SessionState } = { current: await loadSession(store, conversationId, logger.error) }
+  if (requestedModel === "eve") {
+    const previousModel = await store.state.get("activeModel") as string | null
+    const savedBinding = await store.state.get("eveSession") as { sessionId?: unknown; userId?: unknown; cursor?: unknown } | null
+    const existingBinding = previousModel === "eve" && savedBinding && typeof savedBinding.sessionId === "string" && typeof savedBinding.userId === "string"
+      ? { sessionId: savedBinding.sessionId, userId: savedBinding.userId, cursor: typeof savedBinding.cursor === "number" ? Math.max(0, Math.floor(savedBinding.cursor)) : 0 }
+      : null
+    return createEveChatResponse({
+      env,
+      message,
+      conversationId,
+      userId,
+      page,
+      history: history as import("../../lib/devon-ai/server/store").StoredMessage[],
+      sessionBlock: sessionBlock(sessionRef.current, browser),
+      filesBlock: uploadedFilesBlock(uploaded.files),
+      existingBinding,
+      signal: context.request.signal,
+      onSessionCreated: async (binding) => { await Promise.all([store.state.set("eveSession", binding), store.state.set("activeModel", "eve")]) },
+      onCursorUpdated: async (binding) => { await Promise.all([store.state.set("eveSession", binding), store.state.set("activeModel", "eve")]) },
+      onAssistantMessage: async (content) => {
+        await store.appendMessage({
+          conversationId,
+          role: "assistant",
+          content,
+          ...(userId ? { userId } : {}),
+          ...(botMsgId ? { messageId: botMsgId } : {}),
+        } as Parameters<typeof store.appendMessage>[0])
+      },
+    })
+  }
+
+  await store.state.set("activeModel", "claude")
   const tools = context.tools as unknown as {
     toClaudeMcpServer?: () => { name: string; tools: unknown[]; allowedTools: string[] }
   }
@@ -277,7 +316,6 @@ export async function onRequest(context: AgentContext) {
   } as Parameters<typeof createSdkMcpServer>[0])
 
   // This chat's session state, and a mailbox emptied of results from earlier runs
-  const sessionRef: { current: SessionState } = { current: await loadSession(store, conversationId, logger.error) }
   if (conversationId) await clearMailbox(store, conversationId, logger.error)
   const channel: StreamChannel = { send: () => {} }
   const devonServer = createSdkMcpServer({
