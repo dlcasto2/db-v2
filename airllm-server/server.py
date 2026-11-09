@@ -290,6 +290,23 @@ class EchoBackend(Backend):
         return produced, "stop"
 
 
+def pick_device() -> str:
+    """CUDA, then Apple MPS, then CPU.
+
+    AirLLM 4.0.0 (the current PyPI release) defaults to "cuda:0" and fails to load on any
+    machine without an NVIDIA GPU; only its unreleased main branch picks a device itself.
+    Choosing here makes an empty AIRLLM_DEVICE work the same on every version.
+    """
+    import torch
+
+    if torch.cuda.is_available():
+        return "cuda:0"
+    mps = getattr(torch.backends, "mps", None)
+    if mps is not None and mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 class AirLLMBackend(Backend):
     name = "airllm"
 
@@ -311,8 +328,7 @@ class AirLLMBackend(Backend):
             kwargs["layer_shards_saving_path"] = s.shards_path
         if s.hf_token:
             kwargs["hf_token"] = s.hf_token
-        if s.device:
-            kwargs["device"] = s.device
+        kwargs["device"] = s.device or pick_device()
         if s.delete_original:
             kwargs["delete_original"] = True
         if not s.prefetching:
