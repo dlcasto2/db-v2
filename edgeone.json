@@ -1,8 +1,6 @@
 {
   "cloudFunctions": {
-    "nodejs": {
-      "maxDuration": 60
-    }
+    "maxDuration": 60
   },
   "agents": {
     "framework": "claude-agent-sdk",
