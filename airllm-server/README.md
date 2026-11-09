@@ -58,6 +58,22 @@ python server.py
 downloads and splits (watch the log), then `"ready"`. Requests before then get
 `503 model_loading`, which Devon shows as "AirLLM is still loading its model".
 
+### Which AirLLM
+
+`requirements.txt` installs the latest 4.x release from PyPI; this server was
+tested with 4.0.0. Two problems in 4.0.0 are fixed only on AirLLM's GitHub
+`main` so far, and this server can't work around them:
+
+- **Llama 3 models on a Mac give garbled output** (4.0.0's MLX port ignores the
+  model's `rope_theta`). On a Mac, install AirLLM from GitHub instead:
+  `pip install "airllm @ git+https://github.com/lyogavin/airllm.git#subdirectory=air_llm"`.
+- **Compression with a mixture-of-experts model** (Qwen3-235B, DeepSeek-V3,
+  Kimi K3…) streams still-compressed expert weights. On 4.0.0, leave
+  `AIRLLM_COMPRESSION` empty for those models, or install from GitHub as above.
+
+To install from a downloaded copy of the AirLLM repository instead of PyPI,
+point pip at its `air_llm` folder: `pip install ./airllm-4.0.0/air_llm`.
+
 With Docker (NVIDIA Container Toolkit installed on the host):
 
 ```sh

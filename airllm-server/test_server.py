@@ -363,10 +363,21 @@ def test_a_failed_load_is_reported():
 # ── Real AirLLM (opt-in) ────────────────────────────────────────────────────
 
 
+def test_pick_device_prefers_cuda_then_mps_then_cpu(monkeypatch):
+    torch = pytest.importorskip("torch")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    assert server.pick_device() == "cuda:0"
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
+    assert server.pick_device() == "mps"
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+    assert server.pick_device() == "cpu"
+
+
 @pytest.mark.skipif(not os.environ.get("AIRLLM_TEST_MODEL"), reason="set AIRLLM_TEST_MODEL to a local model folder")
 def test_real_airllm_streams_and_cancels():
     s = Settings(backend="airllm", model=os.environ["AIRLLM_TEST_MODEL"], api_key=KEY, keepalive_seconds=1.0,
-                 device=os.environ.get("AIRLLM_TEST_DEVICE") or None,
+                 device=os.environ.get("AIRLLM_TEST_DEVICE") or None,  # unset: exercises pick_device()
                  shards_path=os.environ.get("AIRLLM_TEST_SHARDS") or None)
     with Running(s, load=True) as srv:
         deadline = time.time() + 900
