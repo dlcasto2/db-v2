@@ -24,6 +24,7 @@ import type {
   UploadedFile,
   DevonAiModel,
 } from "@/lib/devon-ai/types"
+import { toDevonAiModel } from "@/lib/devon-ai/types"
 import type { PageActionOutcome, PageActionRequest } from "@/lib/devon-ai/page-executor"
 import { aiUrl } from "@/lib/devon-ai/api-base"
 
@@ -75,7 +76,7 @@ async function chatRequestBody(args: {
     userId: args.userId,
     userMsgId: args.userMsgId,
     botMsgId: args.botMsgId,
-    model: args.model === "eve" ? "eve" : "claude",
+    model: toDevonAiModel(args.model),
     ...(args.page ? { page: args.page } : {}),
     ...(args.browser ? { browser: args.browser } : {}),
   }

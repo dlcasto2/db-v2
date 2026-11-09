@@ -102,6 +102,7 @@ Devon runs anywhere Next.js runs, and it is currently deployed on both **EdgeOne
 | `lib/devon-ai/server/store.ts`, `lib/devon-ai/server/kv.ts` | The Redis-backed store the Vercel routes use in place of EdgeOne's `context.store` |
 | `lib/devon-ai/server/sandbox-tools.ts` | Vercel's shell/files/code-interpreter tools — an E2B sandbox standing in for EdgeOne's built-in ones |
 | `lib/devon-ai/page-actions.ts`, `lib/devon-ai/page-executor.ts` | Reading and acting on pages in the browser, and running the page tools against Devon's tabs |
+| `agents/ai-chat/_airllm.ts`, `airllm-server/` | Devon AI's AirLLM provider: the adapter both backends use, and the Python service that runs the open model on your GPU machine |
 | `.claude/skills/` | Skills Devon AI's agent can load |
 | `components/prompt-gen-page.tsx`, `lib/prompt-gen.ts` | Prompt Gen |
 | `components/go-fish-page.tsx`, `public/apps/go-fish/` | Go Fish |
@@ -178,7 +179,7 @@ Devon's version adds, on both backends:
 - **A daily limit per visitor**, counted on the server so refreshing, new chats or new tabs don't reset it. See below.
 - **Feedback:** every reply gets a thumbs up/down (hover a reply to see it). Down opens a reason chip (wrong fact · misread the page · bad/unsafe action · other) and an optional short note. It's logged as a small, append-only entry — model, a rough task-type label, the rating, the reason chip and note, a timestamp — never the page or the conversation itself, and reviewed by the site's maintainer as an aggregate digest (`POST /ai-feedback` with `{"action":"digest","admin_key":...}`), not a notification per click. See `agents/_feedback.ts`.
 - Chats keep streaming when you switch tabs, and links in replies open in a new Devon tab.
-- **Provider picker:** the Devon AI header lets you choose **Claude** or **Eve Agent**. The selection is saved in this browser and applies to new messages. Eve is a separate durable-agent runtime, not a model named “Eve”; its underlying model is configured in `eve-agent/agent/agent.ts` / `DEVON_EVE_MODEL`. The first Eve integration is text-chat only and does not inherit Devon's live-tab tools or E2B sandbox.
+- **Provider picker:** the Devon AI header lets you choose **Claude**, **Eve Agent** or **AirLLM**. The selection is saved in this browser and applies to new messages. Eve is a separate durable-agent runtime, not a model named “Eve”; its underlying model is configured in `eve-agent/agent/agent.ts` / `DEVON_EVE_MODEL`. AirLLM is an open model you run on your own GPU machine (see below). Eve and AirLLM are text-chat only and do not inherit Devon's live-tab tools or E2B sandbox.
 
 ### Eve Agent provider
 
@@ -192,6 +193,18 @@ Set the following in the Devon deployment that serves `/ai-chat`:
 | `DEVON_EVE_JWT_SECRET` | Shared HS256 secret, at least 32 characters. Set the same value in the Eve service and Devon. Keep it server-side; never expose it as a `NEXT_PUBLIC_` variable. |
 
 The standalone Eve project, model configuration, channel authentication and deploy steps live in [`eve-agent/README.md`](eve-agent/README.md). The Next.js/Vercel backend needs Redis configured for the persistent Eve-session mapping; the EdgeOne backend uses its conversation store. The Eve service also needs its own model credential (for example `ANTHROPIC_API_KEY`) and optional `DEVON_EVE_MODEL` setting. Eve's API host is your own deployment—`eve.dev` is documentation, not the API endpoint.
+
+### AirLLM provider
+
+[AirLLM](https://github.com/lyogavin/airllm) runs big open models (Llama, Qwen, DeepSeek, Mistral…) on a small GPU by streaming them through it one layer at a time. That needs a GPU machine and plenty of disk, so it runs as its own service, [`airllm-server/`](airllm-server/README.md), on your hardware; Devon's `/ai-chat` calls it server-to-server (`agents/ai-chat/_airllm.ts`) and translates its OpenAI-style stream into Devon's chat stream. It's slow by design — every token reads the whole model from disk — so replies are kept short, one runs at a time, and Stop cancels generation at the next token.
+
+| Variable | Meaning |
+| --- | --- |
+| `DEVON_AIRLLM_BASE_URL` | Your `airllm-server`, e.g. `https://airllm.example.com`, reachable from Devon's backend. |
+| `DEVON_AIRLLM_API_KEY` | The server's `AIRLLM_API_KEY`. Server-side only; never a `NEXT_PUBLIC_` variable. |
+| `DEVON_AIRLLM_MAX_TOKENS`, `DEVON_AIRLLM_MAX_PAGE_CHARS`, `DEVON_AIRLLM_TIMEOUT_SECONDS` | Optional: reply length (default 384), page text per question (default 6000), and a reply time limit shorter than the platform's. |
+
+Replies end cleanly, keeping their text, 10 s before the function limit (about 290 s on Vercel, 590 s on EdgeOne); for long replies from big models, use the standalone `devon-ai-api` service. No Redis is required, though without it the chat history the model sees doesn't persist between messages. Setup, hardware expectations and the API are in [`airllm-server/README.md`](airllm-server/README.md).
 
 Routes (same on both backends, so the client — `lib/devon-ai/` — doesn't know or care which one answers): `POST /ai-chat` (SSE stream, needs the `makers-conversation-id` header), `POST /ai-stop`, `POST /ai-history`, `POST /ai-conversations`, `POST /ai-delete-conversation`, `POST /ai-page-result` (page action results), `POST /ai-session` (read or clear a chat's session; chat ID in the header), `POST /ai-filesystem` (query, read, version, diff, edit, export, soft-delete, restore, approve a promotion, or run retention cleanup), and `POST /ai-feedback` (record a thumbs up/down, or — with the admin key — read the digest). On EdgeOne, agent runs may take up to 600 s (`edgeone.json`), since page tasks can wait on your permission; on Vercel, `app/ai-chat/route.ts` sets `maxDuration = 300`, but your Vercel plan's own function-duration limit may cap that lower.
 

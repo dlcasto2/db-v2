@@ -7,6 +7,7 @@ import { type SessionState, loadSession, readBrowserSession, sessionBlock } from
 import { DEVON_SERVER, DEVON_TOOL_NAMES, type StreamChannel, createDevonTools } from "@/agents/ai-chat/_devon-tools"
 import { createChatStream } from "@/agents/ai-chat/_stream"
 import { createEveChatResponse, eveConfigured } from "@/agents/ai-chat/_eve"
+import { airllmConfigured, createAirllmChatResponse } from "@/agents/ai-chat/_airllm"
 import { createAiStore, type StoredMessage } from "@/lib/devon-ai/server/store"
 import { redis } from "@/lib/devon-ai/server/kv"
 import { SANDBOX_SERVER, SANDBOX_TOOL_NAMES, createSandboxTools, sandboxConfigured } from "@/lib/devon-ai/server/sandbox-tools"
@@ -157,6 +158,36 @@ function stopKey(conversationId: string): string {
   return `devon:stop:${conversationId}`
 }
 
+/**
+ * Aborts on client disconnect (requestSignal) AND on a stop flag set by POST
+ * /ai-stop (a separate invocation, possibly a different instance — polled,
+ * since there's no in-process way to reach it).
+ */
+function stopSignal(requestSignal: AbortSignal, conversationId: string): AbortSignal {
+  const abortController = new AbortController()
+  if (requestSignal.aborted) abortController.abort()
+  else requestSignal.addEventListener("abort", () => abortController.abort(), { once: true })
+  const r = redis()
+  const stopPoll = r
+    ? setInterval(async () => {
+        if (abortController.signal.aborted) {
+          clearInterval(stopPoll)
+          return
+        }
+        try {
+          if (await r.get(stopKey(conversationId))) {
+            abortController.abort()
+            clearInterval(stopPoll)
+          }
+        } catch {
+          // a transient Redis error here just means Stop might be a beat slower
+        }
+      }, STOP_POLL_MS)
+    : undefined
+  if (stopPoll) setTimeout(() => clearInterval(stopPoll), maxDuration * 1000)
+  return abortController.signal
+}
+
 export async function POST(request: Request): Promise<Response> {
   let body: Record<string, unknown>
   if ((request.headers.get("content-type") || "").toLowerCase().includes("multipart/form-data")) {
@@ -184,7 +215,7 @@ export async function POST(request: Request): Promise<Response> {
   const browser = readBrowserSession(body.browser)
   const conversationId = request.headers.get("makers-conversation-id") || crypto.randomUUID()
   const env = process.env
-  const requestedModel = body.model === "eve" ? "eve" : "claude"
+  const requestedModel = body.model === "eve" || body.model === "airllm" ? body.model : "claude"
 
   if (!message) return json({ error: "bad_request", message: "'message' is required" }, 400)
   if (uploaded.error) return json({ error: "bad_request", message: uploaded.error }, 400)
@@ -195,13 +226,16 @@ export async function POST(request: Request): Promise<Response> {
   if (message.length > MAX_MESSAGE_CHARS) {
     return json({ error: "bad_request", message: `Messages can be up to ${MAX_MESSAGE_CHARS} characters` }, 400)
   }
-  if (requestedModel === "eve" ? !eveConfigured(env) : !modelConfigured(env)) {
+  const configured = requestedModel === "eve" ? eveConfigured(env) : requestedModel === "airllm" ? airllmConfigured(env) : modelConfigured(env)
+  if (!configured) {
     return json(
       {
         error: "not_configured",
         message: requestedModel === "eve"
           ? "Eve Agent isn't connected yet. Set DEVON_EVE_BASE_URL and DEVON_EVE_JWT_SECRET in Vercel."
-          : "Devon AI isn't set up on this site yet: set ANTHROPIC_API_KEY (or AI_GATEWAY_API_KEY and AI_GATEWAY_BASE_URL) in Vercel.",
+          : requestedModel === "airllm"
+            ? "AirLLM isn't connected yet. Run airllm-server/ on a GPU machine, then set DEVON_AIRLLM_BASE_URL and DEVON_AIRLLM_API_KEY in Vercel."
+            : "Devon AI isn't set up on this site yet: set ANTHROPIC_API_KEY (or AI_GATEWAY_API_KEY and AI_GATEWAY_BASE_URL) in Vercel.",
       },
       503,
     )
@@ -281,6 +315,29 @@ export async function POST(request: Request): Promise<Response> {
       },
     })
   }
+  if (requestedModel === "airllm") {
+    await store.state.set("activeModel", "airllm")
+    return createAirllmChatResponse({
+      env,
+      message,
+      page,
+      history,
+      filesBlock: uploadedFilesBlock(uploaded.files),
+      signal: stopSignal(request.signal, conversationId),
+      // Finish (and save) before Vercel ends the function; AirLLM is slow enough to reach it
+      timeoutMs: (maxDuration - 10) * 1000,
+      logError: logger.error,
+      onAssistantMessage: async (content) => {
+        await store.appendMessage({
+          conversationId,
+          role: "assistant",
+          content,
+          ...(userId ? { userId } : {}),
+          ...(botMsgId ? { messageId: botMsgId } : {}),
+        })
+      },
+    })
+  }
   await store.state.set("activeModel", "claude")
   if (conversationId) await clearMailbox(store, conversationId, logger.error)
   const channel: StreamChannel = { send: () => {} }
@@ -315,30 +372,7 @@ export async function POST(request: Request): Promise<Response> {
       })
     : undefined
 
-  // Our own AbortController: aborts on client disconnect (request.signal) AND
-  // on a stop flag set by POST /ai-stop (a separate invocation, possibly a
-  // different instance — polled, since there's no in-process way to reach it).
-  const abortController = new AbortController()
-  if (request.signal.aborted) abortController.abort()
-  else request.signal.addEventListener("abort", () => abortController.abort(), { once: true })
-  const r = redis()
-  const stopPoll = r
-    ? setInterval(async () => {
-        if (abortController.signal.aborted) {
-          clearInterval(stopPoll)
-          return
-        }
-        try {
-          if (await r.get(stopKey(conversationId))) {
-            abortController.abort()
-            clearInterval(stopPoll)
-          }
-        } catch {
-          // a transient Redis error here just means Stop might be a beat slower
-        }
-      }, STOP_POLL_MS)
-    : undefined
-  if (stopPoll) setTimeout(() => clearInterval(stopPoll), maxDuration * 1000)
+  const stopped = stopSignal(request.signal, conversationId)
 
   const options: Record<string, unknown> = {
     model: resolveModelName(env),
@@ -359,7 +393,7 @@ export async function POST(request: Request): Promise<Response> {
   const stream = createChatStream({
     prompt: buildPrompt(message, page, sessionBlock(sessionRef.current, browser), historyBlock(history), uploadedFilesBlock(uploaded.files)),
     options,
-    signal: abortController.signal,
+    signal: stopped,
     logger,
     conversationId,
     store,

@@ -57,6 +57,7 @@ import {
   useDevonAi,
 } from "@/lib/devon-ai/store"
 import type { ActionStep, ConversationSummary, FeedbackReasonCode, Message, UploadedFile } from "@/lib/devon-ai/types"
+import { toDevonAiModel } from "@/lib/devon-ai/types"
 import { MAX_UPLOAD_FILES, MAX_UPLOAD_FILE_CHARS, MAX_UPLOAD_TEXT_CHARS, prepareUploadedText } from "@/lib/devon-ai/uploads"
 import { cn } from "@/lib/utils"
 import { DevonAiFilesystem } from "@/components/devon-ai-filesystem"
@@ -218,13 +219,14 @@ export function DevonAiPage({ onOpenLink, onOpenApps, variant = "page", onClose,
             <Sparkles className="size-3.5" />
           </span>
           <span className="min-w-0 truncate text-sm font-medium">Devon AI</span>
-          <Select value={chat.selectedModel} onValueChange={(value) => setDevonAiModel(value === "eve" ? "eve" : "claude")} disabled={chat.loading}>
-            <SelectTrigger className="h-7 w-[112px] rounded-full border-border bg-background/60 px-2 text-xs" aria-label="Choose AI provider" title="Choose the provider for new messages. Eve Agent uses its own service and does not inherit Devon browser or sandbox tools.">
+          <Select value={chat.selectedModel} onValueChange={(value) => setDevonAiModel(toDevonAiModel(value))} disabled={chat.loading}>
+            <SelectTrigger className="h-7 w-[112px] rounded-full border-border bg-background/60 px-2 text-xs" aria-label="Choose AI provider" title="Choose the provider for new messages. Eve Agent and AirLLM run on their own services and don't get Devon's browser or sandbox tools; AirLLM runs an open model on the site owner's hardware and is slow.">
               <SelectValue />
             </SelectTrigger>
             <SelectContent align="end">
               <SelectItem value="claude">Claude</SelectItem>
               <SelectItem value="eve">Eve Agent</SelectItem>
+              <SelectItem value="airllm">AirLLM</SelectItem>
             </SelectContent>
           </Select>
           {quotaLeft !== null && !panel && (

@@ -2,7 +2,12 @@
  * Devon AI chat types. Adapted from TencentEdgeOne/claude-agent-starter-node (MIT).
  */
 
-export type DevonAiModel = "claude" | "eve"
+export type DevonAiModel = "claude" | "eve" | "airllm"
+
+/** A stored or received provider choice, falling back to Claude for anything unknown */
+export function toDevonAiModel(value: unknown): DevonAiModel {
+  return value === "eve" || value === "airllm" ? value : "claude"
+}
 
 /** A tool image (screenshot, chart) kept in IndexedDB; `url` is a blob: URL made at runtime */
 export interface ImageAttachment {
