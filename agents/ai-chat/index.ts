@@ -29,6 +29,7 @@
  *   DEVON_AI_DAILY_LIMIT                       messages per visitor per day (default 30, 0 = no limit)
  *   DEVON_AI_IP_DAILY_LIMIT                    shared cap per network per day (default 0 = off)
  *   WSA_API_KEY                                only for the web search tool (optional)
+ *   DEVON_AIRLLM_BASE_URL + DEVON_AIRLLM_API_KEY  the "AirLLM" provider (see _airllm.ts, airllm-server/)
  */
 
 import type { AgentContext } from "@edgeone/types"
@@ -41,6 +42,7 @@ import { type SessionState, loadSession, readBrowserSession, sessionBlock } from
 import { DEVON_SERVER, DEVON_TOOL_NAMES, type StreamChannel, createDevonTools } from "./_devon-tools"
 import { createChatStream } from "./_stream"
 import { createEveChatResponse, eveConfigured } from "./_eve"
+import { airllmConfigured, createAirllmChatResponse } from "./_airllm"
 import { readUploadedFiles, uploadedFilesBlock } from "../../lib/devon-ai/uploads"
 import { storeInboxUploads } from "../../lib/devon-ai/filesystem"
 
@@ -54,6 +56,8 @@ process.stdout.on("error", (err: NodeJS.ErrnoException) => {
 
 const MAX_MESSAGE_CHARS = 8000
 const MAX_PAGE_TEXT_CHARS = 12000
+/** edgeone.json → agents.timeout */
+const AGENT_TIMEOUT_SECONDS = 600
 
 const SYSTEM_PROMPT =
   "You are Devon AI, the assistant built into Devon, a web browser that opens sites through a proxy. " +
@@ -213,7 +217,7 @@ export async function onRequest(context: AgentContext) {
   const browser = readBrowserSession(body.browser)
   const conversationId = context.conversation_id || ""
   const { store, env } = context
-  const requestedModel = body.model === "eve" ? "eve" : "claude"
+  const requestedModel = body.model === "eve" || body.model === "airllm" ? body.model : "claude"
 
   if (!message) return json({ error: "bad_request", message: "'message' is required" }, 400)
   if (uploaded.error) return json({ error: "bad_request", message: uploaded.error }, 400)
@@ -222,13 +226,16 @@ export async function onRequest(context: AgentContext) {
   if (message.length > MAX_MESSAGE_CHARS) {
     return json({ error: "bad_request", message: `Messages can be up to ${MAX_MESSAGE_CHARS} characters` }, 400)
   }
-  if (requestedModel === "eve" ? !eveConfigured(env) : !modelConfigured(env)) {
+  const configured = requestedModel === "eve" ? eveConfigured(env) : requestedModel === "airllm" ? airllmConfigured(env) : modelConfigured(env)
+  if (!configured) {
     return json(
       {
         error: "not_configured",
         message: requestedModel === "eve"
           ? "Eve Agent isn't connected yet. Set DEVON_EVE_BASE_URL and DEVON_EVE_JWT_SECRET in EdgeOne."
-          : "Devon AI isn't set up on this site yet: set AI_GATEWAY_API_KEY and AI_GATEWAY_BASE_URL (or ANTHROPIC_API_KEY) in EdgeOne.",
+          : requestedModel === "airllm"
+            ? "AirLLM isn't connected yet. Run airllm-server/ on a GPU machine, then set DEVON_AIRLLM_BASE_URL and DEVON_AIRLLM_API_KEY in EdgeOne."
+            : "Devon AI isn't set up on this site yet: set AI_GATEWAY_API_KEY and AI_GATEWAY_BASE_URL (or ANTHROPIC_API_KEY) in EdgeOne.",
       },
       503,
     )
@@ -289,6 +296,31 @@ export async function onRequest(context: AgentContext) {
       signal: context.request.signal,
       onSessionCreated: async (binding) => { await Promise.all([store.state.set("eveSession", binding), store.state.set("activeModel", "eve")]) },
       onCursorUpdated: async (binding) => { await Promise.all([store.state.set("eveSession", binding), store.state.set("activeModel", "eve")]) },
+      onAssistantMessage: async (content) => {
+        await store.appendMessage({
+          conversationId,
+          role: "assistant",
+          content,
+          ...(userId ? { userId } : {}),
+          ...(botMsgId ? { messageId: botMsgId } : {}),
+        } as Parameters<typeof store.appendMessage>[0])
+      },
+    })
+  }
+
+  if (requestedModel === "airllm") {
+    await store.state.set("activeModel", "airllm")
+    return createAirllmChatResponse({
+      env,
+      message,
+      page,
+      history: history as import("../../lib/devon-ai/server/store").StoredMessage[],
+      filesBlock: uploadedFilesBlock(uploaded.files),
+      // POST /ai-stop's abortActiveRun(conversationId) aborts this signal
+      signal: context.request.signal,
+      // Finish (and save) before EdgeOne ends the run (agents.timeout in edgeone.json)
+      timeoutMs: (AGENT_TIMEOUT_SECONDS - 10) * 1000,
+      logError: logger.error,
       onAssistantMessage: async (content) => {
         await store.appendMessage({
           conversationId,

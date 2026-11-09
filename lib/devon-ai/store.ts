@@ -57,6 +57,7 @@ import type {
   UploadedFile,
   DevonAiModel,
 } from "@/lib/devon-ai/types"
+import { toDevonAiModel } from "@/lib/devon-ai/types"
 
 export type BannerKind = "not_configured" | "unavailable" | "rate_limited" | "notice" | "error"
 
@@ -169,7 +170,7 @@ export function getDevonAiState(): ChatState {
 
 /** Persist the provider selection used for subsequent messages. */
 export function setDevonAiModel(model: DevonAiModel) {
-  const selectedModel: DevonAiModel = model === "eve" ? "eve" : "claude"
+  const selectedModel = toDevonAiModel(model)
   writeStorage(MODEL_KEY, selectedModel)
   set({ selectedModel })
 }
@@ -419,7 +420,7 @@ export function startDevonAi() {
   if (!existing) writeStorage(CONVERSATION_KEY, conversationId)
   set({
     started: true,
-    selectedModel: readStorage(MODEL_KEY) === "eve" ? "eve" : "claude",
+    selectedModel: toDevonAiModel(readStorage(MODEL_KEY)),
     userId,
     conversationId,
     quota: savedQuota(),
@@ -448,6 +449,7 @@ const TOOL_LABELS: [RegExp, string, string][] = [
   [/^(files|file_|fs_)/i, "Working with files", "Worked with files"],
   [/^(commands|command_|cmd_|shell|exec)/i, "Running a command", "Ran a command"],
   [/^(skill|load_skill)$/i, "Loading a skill", "Loaded a skill"],
+  [/^airllm_prompt$/, "AirLLM is reading your message", "AirLLM read your message"],
 ]
 
 function toolLabels(tool: string): { label: string; doneLabel: string } {

@@ -1,0 +1,9 @@
+# AirLLM server for Devon AI. Python 3.10+.
+# airllm pulls in torch, transformers, accelerate and safetensors.
+airllm>=4.0.0,<5
+fastapi>=0.110
+uvicorn>=0.29
+# Optional: 4bit/8bit block-wise compression (AIRLLM_COMPRESSION), NVIDIA GPUs only
+# bitsandbytes
+# Optional, macOS (Apple silicon) only: AirLLM's MLX backend
+# mlx
