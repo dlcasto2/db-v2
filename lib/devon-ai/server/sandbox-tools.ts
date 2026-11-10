@@ -50,9 +50,10 @@ import { Sandbox } from "@e2b/code-interpreter"
 import { tool } from "@anthropic-ai/claude-agent-sdk"
 import { z } from "zod"
 import type { AiStore } from "./store"
+import { mimeTypeFor } from "../uploads"
 
 export const SANDBOX_SERVER = "sandbox"
-export const SANDBOX_TOOL_NAMES = ["commands", "files", "code_interpreter"].map((n) => `mcp__${SANDBOX_SERVER}__${n}`)
+export const SANDBOX_TOOL_NAMES = ["commands", "files", "code_interpreter", "deliver_file"].map((n) => `mcp__${SANDBOX_SERVER}__${n}`)
 
 type Env = Record<string, string | undefined>
 
@@ -68,6 +69,10 @@ const COMMAND_TIMEOUT_MS = 30_000
 const CODE_TIMEOUT_MS = 60_000
 const MAX_OUTPUT_CHARS = 6000
 const MAX_LIST_ENTRIES = 200
+// Above this, push a sandbox download link instead of inlining base64 — the
+// SSE stream and the model's own context both have a size where a link
+// serves the person better than a huge inline payload.
+const MAX_INLINE_DELIVER_BYTES = 8_000_000
 
 type ToolContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
 type ToolResult = { content: ToolContent[]; isError?: boolean }
@@ -144,16 +149,23 @@ async function takeSandboxCreationQuota(
 
 // ---------------------------------------------------------------------------
 
-interface SandboxToolsContext {
+export interface SandboxToolsContext {
   store: Pick<AiStore, "state" | "getMessages" | "appendMessage" | "clearMessages">
   env: Env
   /** Identifies the visitor for the sandbox-creation quota — same id used for the chat-message quota */
   visitor: string
   logError: (...args: unknown[]) => void
+  /** Only needed for deliver_file, to push its file_output event */
+  channel?: { send: (event: string, data: Record<string, unknown>) => void }
 }
 
-/** Reconnects to this conversation's sandbox if it still exists, else creates one (charging the creation quota) */
-async function resolveSandbox(ctx: SandboxToolsContext): Promise<Sandbox> {
+/**
+ * Reconnects to this conversation's sandbox if it still exists, else creates
+ * one (charging the creation quota). Exported so route.ts can write binary
+ * uploads into it before the agent loop starts — same sandbox the tools
+ * below reconnect to, since the id is persisted in ctx.store.state either way.
+ */
+export async function resolveSandbox(ctx: SandboxToolsContext): Promise<Sandbox> {
   const apiKey = ctx.env.E2B_API_KEY
   const networkSetting = ctx.env.DEVON_AI_SANDBOX_ALLOW_NETWORK?.trim().toLowerCase()
   const allowInternetAccess = networkSetting !== "0" && networkSetting !== "false"
@@ -317,5 +329,42 @@ export function createSandboxTools(ctx: SandboxToolsContext) {
           return { content, isError: Boolean(execution.error) }
         }),
     ),
+    tool(
+      "deliver_file",
+      "Hand a file you generated in the sandbox to the person for download. Call this as your very next action right after " +
+        "code_interpreter or commands produces an output file — don't verify it exists first, trust the save. Files up to " +
+        `${(MAX_INLINE_DELIVER_BYTES / 1_000_000).toFixed(0)} MB are delivered directly; larger files get a sandbox download link instead.`,
+      {
+        path: z.string().min(1).max(1000).describe("Absolute path to the output file in the sandbox, e.g. /tmp/report.pdf"),
+        filename: z.string().min(1).max(250).describe("Display filename for the person, e.g. report.pdf"),
+        description: z.string().max(300).optional().describe("Brief description of the file's content"),
+      },
+      async (args) =>
+        withSandbox(async (sbx) => {
+          let bytes: Uint8Array
+          try {
+            bytes = await sbx.files.read(args.path, { format: "bytes" })
+          } catch (e) {
+            return text(`Couldn't read "${args.path}": ${e instanceof Error ? e.message : String(e)}`, true)
+          }
+          if (!bytes.length) return text(`"${args.path}" is empty.`, true)
+          if (bytes.length > MAX_INLINE_DELIVER_BYTES) {
+            const url = await sbx.downloadUrl(args.path)
+            return text(`"${args.filename}" is ${(bytes.length / 1_000_000).toFixed(1)} MB — too large to deliver inline. Download: [${args.filename.replace(/[\\[\]]/g, "\\$&")}](${url})`)
+          }
+          const base64 = Buffer.from(bytes).toString("base64")
+          const mimeType = mimeTypeFor(args.filename)
+          ctx.channel?.send("file_output", {
+            fileId: crypto.randomUUID(),
+            base64,
+            filename: args.filename,
+            mimeType,
+            size: bytes.length,
+            ...(args.description ? { description: args.description } : {}),
+          })
+          return text(`"${args.filename}" has been delivered to the person for download. Don't also paste a link or the raw content — the download card already shows it.`)
+        }),
+    ),
   ]
 }
+

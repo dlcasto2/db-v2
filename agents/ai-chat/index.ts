@@ -33,18 +33,22 @@
  */
 
 import type { AgentContext } from "@edgeone/types"
-import { createSdkMcpServer, getSessionInfo } from "@anthropic-ai/claude-agent-sdk"
+import { createSdkMcpServer, getSessionInfo, tool } from "@anthropic-ai/claude-agent-sdk"
+import { z } from "zod"
 import { buildSdkEnv, modelConfigured, resolveModelName } from "../_model"
 import { createLogger } from "../_logger"
 import { takeQuota } from "../_quota"
 import { clearMailbox } from "../_mailbox"
 import { type SessionState, loadSession, readBrowserSession, sessionBlock } from "../_session"
 import { DEVON_SERVER, DEVON_TOOL_NAMES, type StreamChannel, createDevonTools } from "./_devon-tools"
+import { UI_SERVER, UI_TOOL_NAMES, createUiTools } from "./_ui-tools"
+import { FILE_SKILLS_OVERVIEW, buildFileSkillsPrompt } from "./_file-skills"
 import { createChatStream } from "./_stream"
 import { createEveChatResponse, eveConfigured } from "./_eve"
 import { airllmConfigured, createAirllmChatResponse } from "./_airllm"
-import { readUploadedFiles, uploadedFilesBlock } from "../../lib/devon-ai/uploads"
+import { binaryUploadsNote, mimeTypeFor, readUploadedFiles, uploadedFilesBlock } from "../../lib/devon-ai/uploads"
 import { storeInboxUploads } from "../../lib/devon-ai/filesystem"
+import type { UploadedFile } from "../../lib/devon-ai/types"
 
 const logger = createLogger("ai-chat")
 
@@ -59,7 +63,21 @@ const MAX_PAGE_TEXT_CHARS = 12000
 /** edgeone.json → agents.timeout */
 const AGENT_TIMEOUT_SECONDS = 600
 
-const SYSTEM_PROMPT =
+const UI_PROMPT =
+  "suggest_actions: show the person 2-5 clickable next-step options as cards instead of writing them as a numbered list in your reply (a text list isn't clickable). " +
+  "Use it once a file task is done or whenever a short menu of concrete next steps would help; skip it once the task is fully done with nothing left to offer, once the person says they're finished, or when what they asked for isn't something you can do.\n\n"
+
+function buildSystemPrompt(uploadedFiles: UploadedFile[]): string {
+  return (
+    SYSTEM_PROMPT_PREFIX +
+    UI_PROMPT +
+    `${FILE_SKILLS_OVERVIEW}\n` +
+    buildFileSkillsPrompt(uploadedFiles) +
+    SYSTEM_PROMPT_SUFFIX
+  )
+}
+
+const SYSTEM_PROMPT_PREFIX =
   "You are Devon AI, the assistant built into Devon, a web browser that opens sites through a proxy. " +
   "Anyone using Devon can talk to you, so be friendly, clear and concise, and match the person's level.\n\n" +
   "Pages: when the message includes a <page> block, the person is asking about a page they have open in Devon. " +
@@ -114,14 +132,17 @@ const SYSTEM_PROMPT =
   "- commands: run safe shell commands (e.g. date, ls, uname).\n" +
   "- files: read, write, list, makeDir, exists and remove files inside the sandbox. op is required; path for most ops; content for write.\n" +
   "- code_interpreter: run code, e.g. language \"python\" and code. Good for math, data and charts.\n" +
-  "- browser: fetch a page (op + url) or interact by screenshot, click, type or evaluate.\n\n" +
+  "- browser: fetch a page (op + url) or interact by screenshot, click, type or evaluate.\n" +
+  "- deliver_file: after generating an output file with code_interpreter or commands, hand it to the person for download — see the file-processing notes below for when to call it.\n\n" +
   "Project skills:\n" +
   "- sandbox-algorithms: for deterministic algorithm results (Fibonacci, factorials, primes, sorting, combinations).\n\n" +
   "Two machines — don't mix paths:\n" +
   "- Skill/Read run in the agent process; skill files live under .claude/skills there.\n" +
-  "- files, commands and code_interpreter run in a separate sandbox VM that has no .claude/skills or project folder.\n" +
+  "- files, commands, code_interpreter and deliver_file run in a separate sandbox VM that has no .claude/skills or project folder.\n" +
   "- Never pass agent paths (.claude/skills, the project folder) to the sandbox tools. After a Skill loads, don't list its folder; " +
-  "for algorithm tasks prefer a self-contained code_interpreter snippet.\n\n" +
+  "for algorithm tasks prefer a self-contained code_interpreter snippet.\n\n"
+
+const SYSTEM_PROMPT_SUFFIX =
   "Rules:\n" +
   "1. Use a tool only when it's needed to answer concretely. Most questions need no tools.\n" +
   "2. Call tools one at a time and wait for each result.\n" +
@@ -130,6 +151,188 @@ const SYSTEM_PROMPT =
   "5. If a tool returns an image, don't put base64 or data: URLs in your text — just say the image is shown in the chat.\n" +
   "6. Use Markdown for lists, tables and code. When creating a downloadable file, include its contents in a fenced code block with the correct language; HTML code blocks can be previewed in an isolated frame.\n" +
   "7. Run code only in the isolated sandbox, never inside a visitor's live website tab."
+
+// ---------------------------------------------------------------------------
+// Binary uploads → EdgeOne sandbox, and deliver_file (the EdgeOne-side
+// equivalents of app/ai-chat/route.ts's resolveSandbox write + sandbox-tools.ts's
+// deliver_file, adapted for the EdgeOne Makers sandbox instead of E2B).
+//
+// EdgeOne's own type package doesn't (yet) declare context.sandbox, so it's
+// read the same way context.tools is above: cast through `unknown` to a
+// small local shape covering only what's used here, rather than widening
+// AgentContext itself or turning off strict checking for this file.
+// ---------------------------------------------------------------------------
+
+interface SandboxCommandResult {
+  stdout?: string
+  stderr?: string
+}
+
+interface EdgeOneSandbox {
+  commands: { run: (cmd: string, opts?: { timeout?: number }) => Promise<SandboxCommandResult> }
+  files: { write: (path: string, content: string) => Promise<unknown> }
+  runCode: (code: string, opts?: { language?: string }) => Promise<unknown>
+}
+
+function sandboxOf(context: AgentContext): EdgeOneSandbox | null {
+  return (context as unknown as { sandbox?: EdgeOneSandbox }).sandbox ?? null
+}
+
+/** Shell-safe single-quote wrapping (adapted from TencentEdgeOne/multimodal-file-assistant-agent's shellQuote) */
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+/**
+ * EdgeOne's sandbox /tmp is ephemeral per request — a fresh sandbox can back
+ * any given call — so a binary file written for one turn isn't still there
+ * for a later turn the way it is on the Vercel/E2B backend (one persistent
+ * sandbox per conversation, reconnected via an id kept in store.state; see
+ * resolveSandbox in lib/devon-ai/server/sandbox-tools.ts). This in-process
+ * cache re-uploads a conversation's binary files on every turn instead, so a
+ * follow-up like "now compress it" with no new upload still finds them.
+ * Best-effort only — it doesn't survive a cold start or a different
+ * instance handling the request, the same trade-off
+ * TencentEdgeOne/multimodal-file-assistant-agent makes for this same
+ * platform constraint (its own _sessionFileCache).
+ */
+const binaryUploadCache = new Map<string, Map<string, UploadedFile>>()
+
+const SANDBOX_READY_RETRIES = 2
+const SANDBOX_READY_DELAY_MS = 2000
+const PYTHON_B64_CHUNK_CHARS = 150_000
+
+async function sandboxReady(sandbox: EdgeOneSandbox, logError: (...args: unknown[]) => void): Promise<boolean> {
+  for (let attempt = 0; attempt <= SANDBOX_READY_RETRIES; attempt++) {
+    try {
+      await sandbox.commands.run("ls /tmp", { timeout: 10 })
+      return true
+    } catch (e) {
+      if (attempt === SANDBOX_READY_RETRIES) {
+        logError("[sandbox] not ready after retries:", e)
+        return false
+      }
+      await new Promise((resolve) => setTimeout(resolve, SANDBOX_READY_DELAY_MS))
+    }
+  }
+  return false
+}
+
+/**
+ * Writes one binary file into the sandbox at /tmp/<name>. The EdgeOne sandbox's
+ * files.write only reliably carries text, so the base64 is decoded in two
+ * steps rather than written as bytes directly — same two-strategy approach
+ * TencentEdgeOne/multimodal-file-assistant-agent uses for the same platform:
+ * write the base64 as a text file and decode it with the shell, falling back
+ * to a chunked Python decode if that fails.
+ */
+async function writeBinaryFileToSandbox(sandbox: EdgeOneSandbox, file: UploadedFile, logError: (...args: unknown[]) => void): Promise<boolean> {
+  const sandboxPath = `/tmp/${file.name}`
+  const base64 = file.base64 || ""
+  const runCmd = async (cmd: string): Promise<string> => (await sandbox.commands.run(cmd, { timeout: 30 })).stdout || ""
+  const sizeOf = () => runCmd(`stat -c %s ${shellQuote(sandboxPath)} 2>/dev/null || echo 0`)
+
+  try {
+    const tmpPath = `/tmp/__upload_${crypto.randomUUID()}.b64`
+    await sandbox.files.write(tmpPath, base64)
+    await runCmd(`base64 -d ${shellQuote(tmpPath)} > ${shellQuote(sandboxPath)} && rm -f ${shellQuote(tmpPath)}`)
+    if ((Number.parseInt((await sizeOf()).trim(), 10) || 0) > 0) return true
+  } catch (e) {
+    logError(`[sandbox] files.write+decode failed for ${file.name}:`, e)
+  }
+
+  try {
+    const runCode = (code: string) => sandbox.runCode(code, { language: "python" })
+    if (base64.length <= PYTHON_B64_CHUNK_CHARS) {
+      await runCode(`import base64\nwith open(${JSON.stringify(sandboxPath)}, "wb") as f:\n    f.write(base64.b64decode(${JSON.stringify(base64)}))\n`)
+    } else {
+      const tmpPath = "/tmp/__b64tmp"
+      await runCode(`open(${JSON.stringify(tmpPath)}, "w").close()`)
+      for (let i = 0; i < base64.length; i += PYTHON_B64_CHUNK_CHARS) {
+        await runCode(`open(${JSON.stringify(tmpPath)}, "a").write(${JSON.stringify(base64.slice(i, i + PYTHON_B64_CHUNK_CHARS))})`)
+      }
+      await runCode(
+        `import base64, os\nwith open(${JSON.stringify(tmpPath)}) as f:\n    d = base64.b64decode(f.read())\nwith open(${JSON.stringify(sandboxPath)}, "wb") as f:\n    f.write(d)\nos.remove(${JSON.stringify(tmpPath)})\n`,
+      )
+    }
+    return (Number.parseInt((await sizeOf()).trim(), 10) || 0) > 0
+  } catch (e) {
+    logError(`[sandbox] runCode decode failed for ${file.name}:`, e)
+    return false
+  }
+}
+
+async function writeBinaryUploadsToSandbox(
+  sandbox: EdgeOneSandbox,
+  files: UploadedFile[],
+  logError: (...args: unknown[]) => void,
+): Promise<{ ok: boolean; written: UploadedFile[] }> {
+  if (!(await sandboxReady(sandbox, logError))) return { ok: false, written: [] }
+  const written: UploadedFile[] = []
+  for (const file of files) {
+    if (await writeBinaryFileToSandbox(sandbox, file, logError)) written.push(file)
+    else return { ok: false, written } // one failure usually means the sandbox just died; stop rather than keep retrying
+  }
+  return { ok: true, written }
+}
+
+const DELIVER_SERVER = "sandboxfiles"
+const DELIVER_TOOL_NAME = `mcp__${DELIVER_SERVER}__deliver_file`
+
+/** The EdgeOne-side deliver_file: reads the file out of the sandbox with a shell command (EdgeOne has no E2B-style files.read(bytes)) instead of sandbox-tools.ts's sbx.files.read. */
+function createDeliverFileTools(sandbox: EdgeOneSandbox | null, channel: StreamChannel, logError: (...args: unknown[]) => void) {
+  return [
+    tool(
+      "deliver_file",
+      "Hand a file you generated in the sandbox to the person for download. Call this as your very next action right after " +
+        "code_interpreter or commands produces an output file — don't verify it exists first, trust the save.",
+      {
+        path: z.string().min(1).max(1000).describe("Absolute path to the output file in the sandbox, e.g. /tmp/report.pdf"),
+        filename: z.string().min(1).max(250).describe("Display filename for the person, e.g. report.pdf"),
+        description: z.string().max(300).optional().describe("Brief description of the file's content"),
+      },
+      async (args) => {
+        if (!sandbox) return { content: [{ type: "text" as const, text: "The sandbox isn't available right now." }], isError: true }
+        let base64 = ""
+        try {
+          base64 = ((await sandbox.commands.run(`base64 -w 0 ${shellQuote(args.path)}`, { timeout: 30 })).stdout || "").trim()
+        } catch (e) {
+          logError("[deliver_file] failed to read file:", e)
+          return { content: [{ type: "text" as const, text: `Couldn't read "${args.path}": ${e instanceof Error ? e.message : String(e)}` }], isError: true }
+        }
+        if (!base64) {
+          // The model may have mistyped the path — fall back to the most recently written file with the same extension
+          try {
+            const ext = args.filename.split(".").pop() || ""
+            const altPath = ((await sandbox.commands.run(`ls -t /tmp/*.${ext} 2>/dev/null | head -1`, { timeout: 10 })).stdout || "").trim()
+            if (altPath && altPath !== args.path) {
+              base64 = ((await sandbox.commands.run(`base64 -w 0 ${shellQuote(altPath)}`, { timeout: 30 })).stdout || "").trim()
+            }
+          } catch {
+            // ignore fallback scan errors
+          }
+        }
+        if (!base64) return { content: [{ type: "text" as const, text: `"${args.path}" is empty or doesn't exist.` }], isError: true }
+        channel.send("file_output", {
+          fileId: crypto.randomUUID(),
+          base64,
+          filename: args.filename,
+          mimeType: mimeTypeFor(args.filename),
+          size: Math.floor((base64.length * 3) / 4),
+          ...(args.description ? { description: args.description } : {}),
+        })
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `"${args.filename}" has been delivered to the person for download. Don't also paste a link or the raw content — the download card already shows it.`,
+            },
+          ],
+        }
+      },
+    ),
+  ]
+}
 
 interface PageContext {
   url: string
@@ -247,6 +450,7 @@ export async function onRequest(context: AgentContext) {
     logger.log(`[quota] refused uid=${userId || "-"} scope=${quota.scope} used=${quota.used}/${quota.limit}`)
     return json({ error: "rate_limited", used: quota.used, limit: quota.limit, resetAt: quota.resetAt, scope: quota.scope }, 429)
   }
+  const initialNotices: { code: string; message: string }[] = []
   if (uploaded.files.length) {
     try {
       await storeInboxUploads(store, conversationId, uploaded.files)
@@ -365,18 +569,63 @@ export async function onRequest(context: AgentContext) {
     timeout: 180_000,
   })
 
+  const uiServer = createSdkMcpServer({
+    name: UI_SERVER,
+    tools: createUiTools({ channel }),
+    alwaysLoad: true,
+  })
+
+  // Binary uploads (images, PDF, Word, Excel) are written straight into the
+  // sandbox — never inlined as text — same idea as the Vercel/E2B backend
+  // (app/ai-chat/route.ts), adapted for EdgeOne's own sandbox; see
+  // binaryUploadCache's comment above for how the two backends differ here.
+  const sandbox = sandboxOf(context)
+  const binaryFilesThisTurn = uploaded.files.filter((f) => f.binary)
+  if (conversationId && binaryFilesThisTurn.length) {
+    const cached = binaryUploadCache.get(conversationId) ?? new Map<string, UploadedFile>()
+    for (const file of binaryFilesThisTurn) cached.set(file.name, file)
+    binaryUploadCache.set(conversationId, cached)
+  }
+  const cachedBinaryFiles = conversationId ? [...(binaryUploadCache.get(conversationId)?.values() ?? [])] : binaryFilesThisTurn
+  let binaryUploadsReady = ""
+  if (cachedBinaryFiles.length) {
+    if (!sandbox) {
+      initialNotices.push({
+        code: "sandbox_not_configured",
+        message: `Devon AI can't process ${cachedBinaryFiles.length === 1 ? "this file" : "these files"} (images, PDFs, Word or Excel need the sandbox, which isn't available right now).`,
+      })
+    } else {
+      const result = await writeBinaryUploadsToSandbox(sandbox, cachedBinaryFiles, logger.error)
+      if (result.written.length) binaryUploadsReady = binaryUploadsNote(result.written, (f) => `/tmp/${f.name}`)
+      if (!result.ok) {
+        initialNotices.push({
+          code: "upload_not_saved",
+          message: result.written.length
+            ? "Some of your uploaded files couldn't be written into the sandbox, so Devon AI may not be able to process all of them right now."
+            : "Your uploaded files couldn't be written into the sandbox, so Devon AI can't process them right now. Try again in a moment.",
+        })
+      }
+    }
+  }
+
+  const deliverFileServer = createSdkMcpServer({
+    name: DELIVER_SERVER,
+    tools: createDeliverFileTools(sandbox, channel, logger.error),
+    alwaysLoad: true,
+  })
+
   const cwd = process.cwd()
   const claudeSessionStore = store.claudeSessionStore()
   const session = await resolveSession(context, claudeSessionStore, conversationId, cwd)
 
   const options: Record<string, unknown> = {
     model: resolveModelName(env),
-    systemPrompt: SYSTEM_PROMPT,
+    systemPrompt: buildSystemPrompt(uploaded.files),
     cwd,
     // Claude Code's own tools stay narrow: Skill loads project skills and Read
     // may only open files under .claude/skills. The sandbox tools come from MCP.
     tools: ["Skill", "Read"],
-    allowedTools: [...edgeoneMcp.allowedTools, ...DEVON_TOOL_NAMES],
+    allowedTools: [...edgeoneMcp.allowedTools, ...DEVON_TOOL_NAMES, ...UI_TOOL_NAMES, DELIVER_TOOL_NAME],
     settingSources: ["project"],
     skills: "all",
     permissionMode: "bypassPermissions",
@@ -392,12 +641,17 @@ export async function onRequest(context: AgentContext) {
     env: buildSdkEnv(env),
     stderr: (line: string) => logger.error("[claude-cli stderr]", line),
     sessionStore: claudeSessionStore,
-    mcpServers: { [edgeoneMcp.name]: mcpServer, [DEVON_SERVER]: devonServer },
+    mcpServers: { [edgeoneMcp.name]: mcpServer, [DEVON_SERVER]: devonServer, [UI_SERVER]: uiServer, [DELIVER_SERVER]: deliverFileServer },
     ...(session.resume ? { resume: session.resume } : session.sessionId ? { sessionId: session.sessionId } : {}),
   }
 
   const stream = createChatStream({
-    prompt: buildPrompt(message, page, sessionBlock(sessionRef.current, browser), uploadedFilesBlock(uploaded.files)),
+    prompt: buildPrompt(
+      message,
+      page,
+      sessionBlock(sessionRef.current, browser),
+      [uploadedFilesBlock(uploaded.files), binaryUploadsReady].filter(Boolean).join("\n\n"),
+    ),
     options,
     signal: context.request.signal,
     logger,
@@ -407,6 +661,7 @@ export async function onRequest(context: AgentContext) {
     userId: userId || undefined,
     quota,
     session: sessionRef.current,
+    ...(initialNotices.length ? { initialNotices } : {}),
     channel,
   })
 

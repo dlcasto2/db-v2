@@ -33,12 +33,15 @@ import { looksIrreversible, stopPageWatches, type PageActionRequest, type PageHo
 import {
   base64ToBlob,
   createObjectUrl,
+  deleteConversationGeneratedFiles,
   deleteConversationImages,
   deleteSnapshot,
+  loadConversationGeneratedFiles,
   loadConversationImages,
   loadSnapshot,
   makeStorageKey,
   revokeAllObjectUrls,
+  saveGeneratedFile,
   saveImage,
   saveSnapshot,
 } from "@/lib/devon-ai/storage"
@@ -47,6 +50,8 @@ import type {
   BrowserSession,
   ConversationSummary,
   FeedbackReasonCode,
+  FileOutputSsePayload,
+  GeneratedFile,
   ImageAttachment,
   ImageSsePayload,
   Message,
@@ -54,6 +59,7 @@ import type {
   PendingApproval,
   Quota,
   SessionState,
+  SuggestActionsSsePayload,
   UploadedFile,
   DevonAiModel,
 } from "@/lib/devon-ai/types"
@@ -370,16 +376,22 @@ async function loadConversation(conversationId: string) {
   set({ historyLoading: true, messages: [] })
   void loadSessionFor(conversationId)
   try {
-    const [history, snapshot, images] = await Promise.all([
+    const [history, snapshot, images, generatedFiles] = await Promise.all([
       fetchConversationHistory(conversationId, state.userId),
       loadSnapshot(conversationId),
       loadConversationImages(conversationId),
+      loadConversationGeneratedFiles(conversationId),
     ])
     if (token !== loadToken) return
     const urls = new Map(images.map((r) => [r.imageId, createObjectUrl(r.storageKey, r.blob)]))
     const withImages = (m: Message): Message =>
       m.images?.length ? { ...m, images: m.images.map((img) => ({ ...img, url: urls.get(img.id) ?? "" })).filter((img) => img.url) } : m
-    const messages = (snapshot.length ? snapshot : history).map(withImages)
+    const fileUrls = new Map(generatedFiles.map((r) => [r.fileId, createObjectUrl(r.storageKey, r.blob)]))
+    const withGeneratedFiles = (m: Message): Message =>
+      m.generatedFiles?.length
+        ? { ...m, generatedFiles: m.generatedFiles.map((f) => ({ ...f, url: fileUrls.get(f.id) ?? "" })).filter((f) => f.url) }
+        : m
+    const messages = (snapshot.length ? snapshot : history).map(withImages).map(withGeneratedFiles)
     set({ messages })
   } finally {
     if (token === loadToken) set({ historyLoading: false })
@@ -441,6 +453,8 @@ let botMsgId = ""
 
 /** Step text while a tool runs, and once it's done */
 const TOOL_LABELS: [RegExp, string, string][] = [
+  [/^deliver_file$/i, "Preparing your file", "Prepared your file"],
+  [/^suggest_actions$/i, "Putting together next steps", "Ready with next steps"],
   [/^session_update$/i, "Updating the session", "Updated the session"],
   [/^(page_|tab_|tabs_)/i, "Working on the page", "Worked on the page"],
   [/^(web_search|search)/i, "Searching the web", "Searched the web"],
@@ -564,6 +578,37 @@ async function handleImage(payload: ImageSsePayload, conversationId: string, mes
     persistent,
   }
   set((s) => ({ messages: s.messages.map((m) => (m.id === messageId ? { ...m, images: [...(m.images || []), attachment] } : m)) }))
+}
+
+/** deliver_file's file_output event: a generated file pushed inline as base64, mirroring handleImage above */
+async function handleFileOutput(payload: FileOutputSsePayload, conversationId: string, messageId: string) {
+  const mimeType = payload.mimeType || "application/octet-stream"
+  const blob = base64ToBlob(payload.base64, mimeType)
+  const storageKey = makeStorageKey(conversationId, payload.fileId)
+  let persistent = false
+  try {
+    await saveGeneratedFile({ conversationId, messageId, fileId: payload.fileId, blob, mimeType, name: payload.filename, description: payload.description })
+    persistent = true
+  } catch {
+    // shown for this session only
+  }
+  const file: GeneratedFile = {
+    id: payload.fileId,
+    storageKey,
+    url: persistent ? createObjectUrl(storageKey, blob) : URL.createObjectURL(blob),
+    name: payload.filename,
+    mimeType,
+    size: payload.size ?? blob.size,
+    ...(payload.description ? { description: payload.description } : {}),
+    createdAt: Date.now(),
+    persistent,
+  }
+  set((s) => ({ messages: s.messages.map((m) => (m.id === messageId ? { ...m, generatedFiles: [...(m.generatedFiles || []), file] } : m)) }))
+}
+
+/** suggest_actions event: no binary payload, so this just sets the clickable next-step cards on the message */
+function handleSuggestActions(payload: SuggestActionsSsePayload, messageId: string) {
+  set((s) => ({ messages: s.messages.map((m) => (m.id === messageId ? { ...m, suggestedActions: payload.actions } : m)) }))
 }
 
 // ---------------------------------------------------------------------------
@@ -801,6 +846,14 @@ export function sendDevonAi(input: string, files: UploadedFile[] = []) {
         finishToolSteps(thisBot)
         void handleImage(payload, conversationId, thisBot)
       },
+      onFileOutput(payload) {
+        finishToolSteps(thisBot)
+        void handleFileOutput(payload, conversationId, thisBot)
+      },
+      onSuggestActions(payload) {
+        finishToolSteps(thisBot)
+        handleSuggestActions(payload, thisBot)
+      },
       onNotice(_code, message) {
         updateBot(
           (m) => {
@@ -884,6 +937,7 @@ export function deleteDevonAiChat(id: string) {
   sessionCache.delete(id)
   void deleteSnapshot(id)
   void deleteConversationImages(id).catch(() => {})
+  void deleteConversationGeneratedFiles(id).catch(() => {})
   void deleteConversationApi(id, state.userId)
 }
 

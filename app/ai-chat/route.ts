@@ -5,13 +5,16 @@ import { takeQuota } from "@/agents/_quota"
 import { clearMailbox } from "@/agents/_mailbox"
 import { type SessionState, loadSession, readBrowserSession, sessionBlock } from "@/agents/_session"
 import { DEVON_SERVER, DEVON_TOOL_NAMES, type StreamChannel, createDevonTools } from "@/agents/ai-chat/_devon-tools"
+import { UI_SERVER, UI_TOOL_NAMES, createUiTools } from "@/agents/ai-chat/_ui-tools"
+import { FILE_SKILLS_OVERVIEW, buildFileSkillsPrompt } from "@/agents/ai-chat/_file-skills"
 import { createChatStream } from "@/agents/ai-chat/_stream"
 import { createEveChatResponse, eveConfigured } from "@/agents/ai-chat/_eve"
 import { airllmConfigured, createAirllmChatResponse } from "@/agents/ai-chat/_airllm"
 import { createAiStore, type StoredMessage } from "@/lib/devon-ai/server/store"
 import { redis } from "@/lib/devon-ai/server/kv"
-import { SANDBOX_SERVER, SANDBOX_TOOL_NAMES, createSandboxTools, sandboxConfigured } from "@/lib/devon-ai/server/sandbox-tools"
-import { expandCompressedUploadParts, readUploadedFiles, uploadedFilesBlock } from "@/lib/devon-ai/uploads"
+import { SANDBOX_SERVER, SANDBOX_TOOL_NAMES, createSandboxTools, resolveSandbox, sandboxConfigured } from "@/lib/devon-ai/server/sandbox-tools"
+import { binaryUploadsNote, expandCompressedUploadParts, readUploadedFiles, uploadedFilesBlock } from "@/lib/devon-ai/uploads"
+import type { UploadedFile } from "@/lib/devon-ai/types"
 import { storeInboxUploads } from "@/lib/devon-ai/filesystem"
 
 export const runtime = "nodejs"
@@ -30,11 +33,16 @@ const SANDBOX_PROMPT_ON =
   "- commands: run a shell command.\n" +
   "- files: read, write, list, makeDir, exists, remove and download files inside the sandbox. Use download to give the person a download link. op is required; path for every op; content for write.[...]\n" +
   "- code_interpreter: run code — python (default), javascript, typescript, r, java or bash. Good for math, data and charts. Variables, imports and functions persist across calls within this chat.\n" +
-  "These three share one isolated sandbox for the whole chat, so a file 'files' writes in one turn is still there for 'commands' or 'code_interpreter' in a later one. The sandbox can access the public internet, but has nothing from the person's Devon tabs, this site's own files or its secrets — it's a blank machine, not Devon's server.\n\n"
+  "- deliver_file: after generating an output file with code_interpreter or commands, hand it to the person for download — see the file-processing notes below for when to call it.\n" +
+  "These four share one isolated sandbox for the whole chat, so a file 'files' writes in one turn is still there for 'commands' or 'code_interpreter' in a later one. The sandbox can access the public internet, but has nothing from the person's Devon tabs, this site's own files or its secrets — it's a blank machine, not Devon's server.\n\n"
 
 const SANDBOX_PROMPT_OFF = "You have no other tools on this Devon (no shell, files, code execution or a separate browser) — only the Devon tools above.\n\n"
 
-function buildSystemPrompt(sandboxOn: boolean): string {
+const UI_PROMPT =
+  "suggest_actions: show the person 2-5 clickable next-step options as cards instead of writing them as a numbered list in your reply (a text list isn't clickable). " +
+  "Use it once a file task is done or whenever a short menu of concrete next steps would help; skip it once the task is fully done with nothing left to offer, once the person says they're finished, or when what they asked for isn't something you can do.\n\n"
+
+function buildSystemPrompt(sandboxOn: boolean, uploadedFiles: UploadedFile[] = []): string {
   return (
     "You are Devon AI, the assistant built into Devon, a web browser that opens sites through a proxy. " +
     "Anyone using Devon can talk to you, so be friendly, clear and concise, and match the person's level.\n\n" +
@@ -86,6 +94,9 @@ function buildSystemPrompt(sandboxOn: boolean): string {
     "Confidence: when a material part of an answer is an inference rather than observed or sourced fact, append one short marker at the end: [Confidence: low], [Confidence: medium], or [Confidence: high]. " +
     "Do not add a marker to straightforward facts, and explain what is uncertain in the answer itself.\n\n" +
     (sandboxOn ? SANDBOX_PROMPT_ON : SANDBOX_PROMPT_OFF) +
+    UI_PROMPT +
+    (sandboxOn ? `${FILE_SKILLS_OVERVIEW}\n` : "") +
+    (sandboxOn ? buildFileSkillsPrompt(uploadedFiles) : "") +
     "You're shown a short excerpt of earlier turns in this chat (if any), marked off below; it's a plain summary, not something to quote back verbatim.\n\n" +
     "Rules:\n" +
     "1. Use a tool only when it's needed to answer concretely. Most questions need no tools.\n" +
@@ -246,7 +257,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const store = createAiStore(conversationId)
-  let uploadPersistenceNotice: { code: string; message: string } | undefined
+  const initialNotices: { code: string; message: string }[] = []
   const ip = clientIp(request)
   const quota = await takeQuota(store, env, { visitor: userId || `ip:${ip || "unknown"}`, network: ip || undefined }, logger.error)
   if (!quota.ok) {
@@ -258,10 +269,10 @@ export async function POST(request: Request): Promise<Response> {
       await storeInboxUploads(store, conversationId, uploaded.files)
     } catch (error) {
       logger.error("[filesystem] failed to persist inbox uploads:", error)
-      uploadPersistenceNotice = {
+      initialNotices.push({
         code: "upload_not_saved",
         message: "Your uploaded files are still attached to this message, but Devon couldn't save them to this chat's /inbox. They may not be available in later turns.",
-      }
+      })
     }
   }
 
@@ -357,41 +368,85 @@ export async function POST(request: Request): Promise<Response> {
   })
 
   const sandboxOn = sandboxConfigured(env)
+  const sandboxCtx = {
+    store,
+    env,
+    visitor: userId || `ip:${ip || "unknown"}`,
+    logError: logger.error,
+    channel,
+  }
   const sandboxServer = sandboxOn
     ? createSdkMcpServer({
         name: SANDBOX_SERVER,
-        tools: createSandboxTools({
-          store,
-          env,
-          visitor: userId || `ip:${ip || "unknown"}`,
-          logError: logger.error,
-        }),
+        tools: createSandboxTools(sandboxCtx),
         alwaysLoad: true,
         // A code_interpreter run or a slow command needs more than the default
         timeout: 90_000,
       })
     : undefined
+  const uiServer = createSdkMcpServer({
+    name: UI_SERVER,
+    tools: createUiTools({ channel }),
+    alwaysLoad: true,
+  })
+
+  // Binary uploads (images, PDF, Word, Excel) are written straight into the
+  // sandbox — never inlined as text — so the model finds them already
+  // waiting at a known path instead of asking the person to resend them.
+  const binaryFiles = uploaded.files.filter((f) => f.binary)
+  let binaryUploadsReady = ""
+  if (binaryFiles.length) {
+    if (!sandboxOn) {
+      initialNotices.push({
+        code: "sandbox_not_configured",
+        message: `Devon AI can't process ${binaryFiles.length === 1 ? "this file" : "these files"} (images, PDFs, Word or Excel need the sandbox, which isn't configured on this site). Try a plain-text file instead, or ask the site owner to set E2B_API_KEY.`,
+      })
+    } else {
+      try {
+        const sbx = await resolveSandbox(sandboxCtx)
+        for (const file of binaryFiles) {
+          const bytes = Buffer.from(file.base64 || "", "base64")
+          await sbx.files.write(`/tmp/${file.name}`, new Blob([bytes]))
+        }
+        binaryUploadsReady = binaryUploadsNote(uploaded.files, (f) => `/tmp/${f.name}`)
+      } catch (error) {
+        logger.error("[sandbox] failed to write uploaded files:", error)
+        initialNotices.push({
+          code: "upload_not_saved",
+          message: "Your uploaded files couldn't be written into the sandbox, so Devon AI can't process them right now. Try again in a moment.",
+        })
+      }
+    }
+  }
 
   const stopped = stopSignal(request.signal, conversationId)
 
   const options: Record<string, unknown> = {
     model: resolveModelName(env),
-    systemPrompt: buildSystemPrompt(sandboxOn),
+    systemPrompt: buildSystemPrompt(sandboxOn, uploaded.files),
     cwd: process.cwd(),
     tools: [], // no Claude Code built-ins (Bash/Write/Edit/...) — only the MCP tools below
-    allowedTools: sandboxOn ? [...DEVON_TOOL_NAMES, ...SANDBOX_TOOL_NAMES] : DEVON_TOOL_NAMES,
+    allowedTools: sandboxOn ? [...DEVON_TOOL_NAMES, ...UI_TOOL_NAMES, ...SANDBOX_TOOL_NAMES] : [...DEVON_TOOL_NAMES, ...UI_TOOL_NAMES],
     permissionMode: "bypassPermissions",
     maxTurns: 24,
     env: buildSdkEnv(env),
     stderr: (line: string) => logger.error("[claude-cli stderr]", line),
-    mcpServers: sandboxOn ? { [DEVON_SERVER]: devonServer, [SANDBOX_SERVER]: sandboxServer } : { [DEVON_SERVER]: devonServer },
+    mcpServers: sandboxOn
+      ? { [DEVON_SERVER]: devonServer, [UI_SERVER]: uiServer, [SANDBOX_SERVER]: sandboxServer }
+      : { [DEVON_SERVER]: devonServer, [UI_SERVER]: uiServer },
     // No options.abortController here: createChatStream (agents/ai-chat/_stream.ts)
     // makes its own and wires it to the `signal` passed below, overwriting
     // whatever this object holds — same as the EdgeOne original.
   }
 
   const stream = createChatStream({
-    prompt: buildPrompt(message, page, sessionBlock(sessionRef.current, browser), historyBlock(history), uploadedFilesBlock(uploaded.files)),
+    prompt: buildPrompt(
+      message,
+      page,
+      sessionBlock(sessionRef.current, browser),
+      historyBlock(history),
+      [uploadedFilesBlock(uploaded.files), binaryUploadsReady].filter(Boolean).join("\n\n"),
+    ),
     options,
     signal: stopped,
     logger,
@@ -401,7 +456,7 @@ export async function POST(request: Request): Promise<Response> {
     userId: userId || undefined,
     quota,
     session: sessionRef.current,
-    ...(uploadPersistenceNotice ? { initialNotices: [uploadPersistenceNotice] } : {}),
+    ...(initialNotices.length ? { initialNotices } : {}),
     channel,
   })
 

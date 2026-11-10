@@ -56,9 +56,17 @@ import {
   submitDevonAiFeedback,
   useDevonAi,
 } from "@/lib/devon-ai/store"
-import type { ActionStep, ConversationSummary, FeedbackReasonCode, Message, UploadedFile } from "@/lib/devon-ai/types"
+import type { ActionStep, ConversationSummary, FeedbackReasonCode, Message, SuggestedAction, UploadedFile } from "@/lib/devon-ai/types"
 import { toDevonAiModel } from "@/lib/devon-ai/types"
-import { MAX_UPLOAD_FILES, MAX_UPLOAD_FILE_CHARS, MAX_UPLOAD_TEXT_CHARS, prepareUploadedText } from "@/lib/devon-ai/uploads"
+import {
+  MAX_BINARY_TOTAL_BYTES,
+  MAX_BINARY_UPLOAD_BYTES,
+  MAX_UPLOAD_FILES,
+  MAX_UPLOAD_FILE_CHARS,
+  MAX_UPLOAD_TEXT_CHARS,
+  mimeTypeFor,
+  prepareUploadedText,
+} from "@/lib/devon-ai/uploads"
 import { cn } from "@/lib/utils"
 import { DevonAiFilesystem } from "@/components/devon-ai-filesystem"
 
@@ -88,20 +96,47 @@ const TEXT_FILE_EXTENSIONS = new Set([
   "c", "cc", "cpp", "css", "csv", "go", "h", "html", "htm", "java", "js", "json", "jsx", "md", "py", "rs", "sh", "sql", "svg",
   "text", "toml", "ts", "tsx", "txt", "xml", "yaml", "yml",
 ])
+/** Images, PDF, Word, and Excel — written straight into the sandbox rather than inlined as text; see lib/devon-ai/uploads.ts */
+const BINARY_FILE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "pdf", "docx", "xlsx"])
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 
 function extensionOf(name: string) {
   return name.split(".").pop()?.toLowerCase() || ""
 }
 
+async function fileToBase64(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer()
+  const bytes = new Uint8Array(buffer)
+  // atob/btoa work on binary strings; chunk to avoid blowing the call stack via String.fromCharCode(...bytes) on large files
+  const CHUNK = 0x8000
+  let binary = ""
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
+  }
+  return btoa(binary)
+}
+
 async function prepareUploads(selected: File[], existing: UploadedFile[]): Promise<UploadedFile[]> {
   if (existing.length + selected.length > MAX_UPLOAD_FILES) throw new Error(`Upload up to ${MAX_UPLOAD_FILES} files at a time.`)
   let totalChars = existing.reduce((sum, file) => sum + file.text.length, 0)
+  let totalBinaryBytes = existing.reduce((sum, file) => sum + (file.binary ? Math.floor(((file.base64?.length ?? 0) * 3) / 4) : 0), 0)
   const prepared = [...existing]
   for (const file of selected) {
     if (file.size > MAX_UPLOAD_BYTES) throw new Error(`${file.name} is larger than the 100 MB per-file limit.`)
     const path = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
     const ext = extensionOf(file.name)
+    if (BINARY_FILE_EXTENSIONS.has(ext)) {
+      if (file.size > MAX_BINARY_UPLOAD_BYTES) {
+        throw new Error(`${file.name} is larger than the ${(MAX_BINARY_UPLOAD_BYTES / 1_000_000).toFixed(0)} MB limit for images, PDFs, Word, and Excel files.`)
+      }
+      totalBinaryBytes += file.size
+      if (totalBinaryBytes > MAX_BINARY_TOTAL_BYTES) {
+        throw new Error(`Images, PDFs, Word, and Excel files are limited to ${(MAX_BINARY_TOTAL_BYTES / 1_000_000).toFixed(0)} MB total per message.`)
+      }
+      const base64 = await fileToBase64(file)
+      prepared.push({ name: file.name, path, mimeType: file.type || mimeTypeFor(file.name), size: file.size, text: "", binary: true, base64 })
+      continue
+    }
     if (ext === "zip") {
       const { default: JSZip } = await import("jszip")
       const zip = await JSZip.loadAsync(file)
@@ -134,7 +169,7 @@ async function prepareUploads(selected: File[], existing: UploadedFile[]): Promi
       prepared.push({ name: file.name, path, mimeType: "application/vnd.rar", size: file.size, text })
       continue
     }
-    if (!TEXT_FILE_EXTENSIONS.has(ext)) throw new Error(`${file.name} isn’t a supported text, HTML, ZIP, or folder file.`)
+    if (!TEXT_FILE_EXTENSIONS.has(ext)) throw new Error(`${file.name} isn’t a supported text, image, PDF, Word, Excel, ZIP, or folder file.`)
     const extracted = await file.slice(0, MAX_UPLOAD_FILE_CHARS * 4 + 4).text()
     const text = prepareUploadedText(extracted, file.name)
     if (text.length > MAX_UPLOAD_FILE_CHARS) throw new Error(`${file.name} exceeds the ${MAX_UPLOAD_FILE_CHARS.toLocaleString()}-character per-file limit.`)
@@ -143,6 +178,12 @@ async function prepareUploads(selected: File[], existing: UploadedFile[]): Promi
     prepared.push({ name: file.name, path, mimeType: file.type || "text/plain", size: file.size, text })
   }
   return prepared
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function shorten(text: string, max = 70) {
@@ -770,6 +811,37 @@ function Bubble({ message, onOpenLink }: { message: Message; onOpenLink: (url: s
             )}
           </div>
         )}
+        {!!message.generatedFiles?.length && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {message.generatedFiles.map((file) =>
+              file.url ? (
+                <a
+                  key={file.id}
+                  href={file.url}
+                  download={file.name}
+                  title={file.description || file.name}
+                  className="flex max-w-full items-center gap-2 rounded-xl bg-toolbar px-3 py-2 ring-1 ring-border transition hover:ring-primary/40"
+                >
+                  <span className="grid size-8 flex-shrink-0 place-items-center rounded-lg bg-primary/15 text-primary ring-1 ring-primary/30">
+                    <Download className="size-4" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block max-w-[220px] truncate text-[13px] font-medium text-foreground">{file.name}</span>
+                    <span className="block truncate text-[11px] text-muted-foreground">
+                      {formatBytes(file.size)}
+                      {file.description ? ` · ${file.description}` : ""}
+                    </span>
+                  </span>
+                </a>
+              ) : null,
+            )}
+          </div>
+        )}
+        {!message.streaming && !!message.suggestedActions?.length && (
+          <div className="mt-3 grid gap-1.5 sm:grid-cols-2">
+            {message.suggestedActions.map((action) => <SuggestedActionCard key={action.id} action={action} />)}
+          </div>
+        )}
         {!message.streaming && message.content && !message.failed && (
           <div className="mt-1.5 flex items-center gap-1">
             <button
@@ -788,6 +860,23 @@ function Bubble({ message, onOpenLink }: { message: Message; onOpenLink: (url: s
         )}
       </div>
     </div>
+  )
+}
+
+/** A clickable next-step option from suggest_actions; sending it re-uses the composer's own send path (sendDevonAi no-ops while a reply is in flight) */
+function SuggestedActionCard({ action }: { action: SuggestedAction }) {
+  return (
+    <button
+      type="button"
+      onClick={() => sendDevonAi(action.title)}
+      className="flex items-start gap-2 rounded-xl bg-toolbar px-3 py-2.5 text-left ring-1 ring-border transition hover:ring-primary/40"
+    >
+      <span className="text-base leading-none">{action.emoji}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[13px] font-medium text-foreground">{action.title}</span>
+        <span className="block text-[11px] text-muted-foreground">{action.description}</span>
+      </span>
+    </button>
   )
 }
 
@@ -1136,7 +1225,10 @@ function Composer({ chat, disabled, quotaLeft, panel }: { chat: ChatState; disab
                 </span>
               ))}
             </div>
-            <p className="mt-1 text-[10px] text-muted-foreground">ZIPs and folders share readable text files. RAR selections include the filename only; contents aren’t unpacked.</p>
+            <p className="mt-1 text-[10px] text-muted-foreground">
+              Images, PDFs, Word, and Excel files are read directly (up to {(MAX_BINARY_UPLOAD_BYTES / 1_000_000).toFixed(0)} MB each). ZIPs and folders
+              share readable text files. RAR selections include the filename only; contents aren’t unpacked.
+            </p>
           </div>
         )}
         <div className="flex items-end gap-2 p-2 pl-4">
@@ -1144,14 +1236,14 @@ function Composer({ chat, disabled, quotaLeft, panel }: { chat: ChatState; disab
             ref={fileInput}
             type="file"
             multiple
-            accept=".c,.cc,.cpp,.css,.csv,.go,.h,.html,.htm,.java,.js,.json,.jsx,.md,.py,.rar,.rs,.sh,.sql,.svg,.text,.toml,.ts,.tsx,.txt,.xml,.yaml,.yml,.zip"
+            accept=".c,.cc,.cpp,.css,.csv,.go,.h,.html,.htm,.java,.js,.json,.jsx,.md,.py,.rar,.rs,.sh,.sql,.svg,.text,.toml,.ts,.tsx,.txt,.xml,.yaml,.yml,.zip,.png,.jpg,.jpeg,.gif,.webp,.bmp,.pdf,.docx,.xlsx"
             className="hidden"
             onChange={(event) => void addUploads(Array.from(event.currentTarget.files ?? []))}
           />
           <input
             type="file"
             multiple
-            accept=".c,.cc,.cpp,.css,.csv,.go,.h,.html,.htm,.java,.js,.json,.jsx,.md,.py,.rar,.rs,.sh,.sql,.svg,.text,.toml,.ts,.tsx,.txt,.xml,.yaml,.yml,.zip"
+            accept=".c,.cc,.cpp,.css,.csv,.go,.h,.html,.htm,.java,.js,.json,.jsx,.md,.py,.rar,.rs,.sh,.sql,.svg,.text,.toml,.ts,.tsx,.txt,.xml,.yaml,.yml,.zip,.png,.jpg,.jpeg,.gif,.webp,.bmp,.pdf,.docx,.xlsx"
             className="hidden"
             ref={(element) => {
               folderInput.current = element
@@ -1160,7 +1252,7 @@ function Composer({ chat, disabled, quotaLeft, panel }: { chat: ChatState; disab
             onChange={(event) => void addUploads(Array.from(event.currentTarget.files ?? []))}
           />
           <div className="flex flex-col gap-1">
-            <button type="button" disabled={disabled || chat.loading} onClick={() => fileInput.current?.click()} title="Attach files or ZIP" className="grid size-8 place-items-center rounded-lg text-muted-foreground hover:bg-white/[0.08] hover:text-foreground disabled:opacity-40">
+            <button type="button" disabled={disabled || chat.loading} onClick={() => fileInput.current?.click()} title="Attach files, images, PDF, Word, Excel, or ZIP" className="grid size-8 place-items-center rounded-lg text-muted-foreground hover:bg-white/[0.08] hover:text-foreground disabled:opacity-40">
               <Upload className="size-4" />
             </button>
             <button type="button" disabled={disabled || chat.loading} onClick={() => folderInput.current?.click()} title="Upload a folder" className="grid size-8 place-items-center rounded-lg text-muted-foreground hover:bg-white/[0.08] hover:text-foreground disabled:opacity-40">

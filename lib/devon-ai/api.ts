@@ -15,12 +15,14 @@
 import type {
   BrowserSession,
   FeedbackReasonCode,
+  FileOutputSsePayload,
   ImageSsePayload,
   ListConversationsResponse,
   Message,
   PageContext,
   Quota,
   SessionState,
+  SuggestActionsSsePayload,
   UploadedFile,
   DevonAiModel,
 } from "@/lib/devon-ai/types"
@@ -54,6 +56,8 @@ export interface StreamCallbacks {
   onToolCalled: (tool: string) => void
   onSkillLoaded?: (name: string) => void
   onImage: (payload: ImageSsePayload) => void
+  onSuggestActions?: (payload: SuggestActionsSsePayload) => void
+  onFileOutput?: (payload: FileOutputSsePayload) => void
   onNotice?: (code: string, message: string) => void
   onSession?: (session: SessionState) => void
   onPageAction?: (request: PageActionRequest) => void
@@ -80,7 +84,11 @@ async function chatRequestBody(args: {
     ...(args.page ? { page: args.page } : {}),
     ...(args.browser ? { browser: args.browser } : {}),
   }
-  if (!args.files?.length || args.files.reduce((sum, file) => sum + file.text.length, 0) <= 500_000) {
+  // Binary files carry their bytes as base64 text in `base64` instead of `text`
+  // (see lib/devon-ai/types.ts's UploadedFile); either way, this is the size
+  // that actually goes over the wire on the simple JSON path below, so both
+  // have to count toward the same threshold.
+  if (!args.files?.length || args.files.reduce((sum, file) => sum + file.text.length + (file.base64?.length ?? 0), 0) <= 500_000) {
     return JSON.stringify({ ...body, ...(args.files?.length ? { files: args.files } : {}) })
   }
   if (typeof CompressionStream === "undefined") {
@@ -96,16 +104,30 @@ async function chatRequestBody(args: {
     size: number
     field: string
     encoding: "gzip" | "identity"
+    kind?: "binary"
   }[] = []
   for (const [index, file] of args.files.entries()) {
-    const raw = new Blob([file.text], { type: "text/plain;charset=utf-8" })
+    // Binary files travel as their actual bytes, not base64 text — decoding
+    // back to bytes here, rather than sending the base64 string as-is, keeps
+    // the transported size at the file's real size instead of ~33% larger,
+    // and lets the server decode it the same way for both transports (see
+    // expandCompressedUploadParts in lib/devon-ai/uploads.ts). It matters:
+    // see MAX_BINARY_UPLOAD_BYTES's comment for why there's so little room
+    // to spare on a binary upload's wire size.
+    const raw = file.binary
+      ? await fetch(`data:application/octet-stream;base64,${file.base64}`).then((r) => r.blob())
+      : new Blob([file.text], { type: "text/plain;charset=utf-8" })
     const compressed = await new Response(raw.stream().pipeThrough(new CompressionStream("gzip"))).blob()
     const useCompression = compressed.size < raw.size
     const field = `file_${index}`
     const upload = useCompression ? compressed : raw
     transportBytes += upload.size
     if (transportBytes > 4_000_000) {
-      throw new Error("This attachment is still too large to send safely after compression. Split it into smaller files or upload less text.")
+      throw new Error(
+        file.binary
+          ? "This attachment is too large to send. Devon AI's chat can carry files up to a few MB; for anything bigger, use a smaller file."
+          : "This attachment is still too large to send safely after compression. Split it into smaller files or upload less text.",
+      )
     }
     form.append(field, upload, `${field}.bin`)
     fileParts.push({
@@ -115,6 +137,7 @@ async function chatRequestBody(args: {
       size: file.size,
       field,
       encoding: useCompression ? "gzip" : "identity",
+      ...(file.binary ? { kind: "binary" as const } : {}),
     })
   }
   form.append("payload", JSON.stringify({ ...body, fileParts }))
@@ -251,6 +274,31 @@ function dispatchSseChunk(part: string, cb: StreamCallbacks): "done" | "error" |
           base64: parsed.base64,
           mimeType: typeof parsed.mimeType === "string" ? parsed.mimeType : "image/png",
           size: Number(parsed.size) || 0,
+        })
+      }
+      break
+    case "suggest_actions":
+      if (Array.isArray(parsed.actions)) {
+        const actions: SuggestActionsSsePayload["actions"] = []
+        for (const raw of parsed.actions as unknown[]) {
+          if (!raw || typeof raw !== "object") continue
+          const a = raw as Record<string, unknown>
+          if (typeof a.id === "string" && typeof a.emoji === "string" && typeof a.title === "string" && typeof a.description === "string") {
+            actions.push({ id: a.id, emoji: a.emoji, title: a.title, description: a.description })
+          }
+        }
+        if (actions.length) cb.onSuggestActions?.({ actions })
+      }
+      break
+    case "file_output":
+      if (typeof parsed.base64 === "string" && typeof parsed.filename === "string") {
+        cb.onFileOutput?.({
+          fileId: typeof parsed.fileId === "string" ? parsed.fileId : crypto.randomUUID(),
+          base64: parsed.base64,
+          filename: parsed.filename,
+          mimeType: typeof parsed.mimeType === "string" ? parsed.mimeType : undefined,
+          size: typeof parsed.size === "number" ? parsed.size : undefined,
+          description: typeof parsed.description === "string" ? parsed.description : undefined,
         })
       }
       break

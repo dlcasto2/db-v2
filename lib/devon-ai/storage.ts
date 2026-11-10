@@ -133,6 +133,81 @@ export function revokeAllObjectUrls(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Generated files (deliver_file downloads) — same shape and lifecycle as
+// Images above, kept in a separate IndexedDB database since a download can
+// be much larger than a screenshot and the two are cleared independently.
+// ---------------------------------------------------------------------------
+
+const FILE_DB = "devon-ai-files"
+const FILE_STORE = "files"
+
+export interface StoredGeneratedFileRecord {
+  storageKey: string
+  conversationId: string
+  messageId: string
+  fileId: string
+  blob: Blob
+  mimeType: string
+  name: string
+  size: number
+  description?: string
+  createdAt: number
+}
+
+function openFileDb() {
+  return openDatabase(FILE_DB, 1, (db) => {
+    if (!db.objectStoreNames.contains(FILE_STORE)) {
+      const store = db.createObjectStore(FILE_STORE, { keyPath: "storageKey" })
+      store.createIndex("byConversation", "conversationId", { unique: false })
+    }
+  })
+}
+
+export async function saveGeneratedFile(params: {
+  conversationId: string
+  messageId: string
+  fileId: string
+  blob: Blob
+  mimeType: string
+  name: string
+  description?: string
+}): Promise<StoredGeneratedFileRecord> {
+  const record: StoredGeneratedFileRecord = {
+    ...params,
+    storageKey: makeStorageKey(params.conversationId, params.fileId),
+    size: params.blob.size,
+    createdAt: Date.now(),
+  }
+  const db = await openFileDb()
+  await run(db, FILE_STORE, "readwrite", (s) => s.put(record))
+  return record
+}
+
+export async function loadConversationGeneratedFiles(conversationId: string): Promise<StoredGeneratedFileRecord[]> {
+  try {
+    const db = await openFileDb()
+    return (await run(db, FILE_STORE, "readonly", (s) => s.index("byConversation").getAll(conversationId))) ?? []
+  } catch {
+    return []
+  }
+}
+
+export async function deleteConversationGeneratedFiles(conversationId: string): Promise<void> {
+  const db = await openFileDb()
+  await new Promise<void>((resolve, reject) => {
+    const req = db.transaction(FILE_STORE, "readwrite").objectStore(FILE_STORE).index("byConversation").openCursor(conversationId)
+    req.onsuccess = () => {
+      const cursor = req.result
+      if (cursor) {
+        cursor.delete()
+        cursor.continue()
+      } else resolve()
+    }
+    req.onerror = () => reject(req.error)
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Message snapshots
 // ---------------------------------------------------------------------------
 
@@ -147,9 +222,10 @@ function openSnapshotDb() {
 
 /** Drop runtime-only fields (blob: URLs, streaming flags, spinning steps) before saving */
 function forStorage(messages: Message[]): Message[] {
-  return messages.map(({ streaming: _streaming, images, actions, ...rest }) => ({
+  return messages.map(({ streaming: _streaming, images, generatedFiles, actions, ...rest }) => ({
     ...rest,
     ...(images?.length ? { images: images.map((img) => ({ ...img, url: "" })) } : {}),
+    ...(generatedFiles?.length ? { generatedFiles: generatedFiles.map((f) => ({ ...f, url: "" })) } : {}),
     ...(actions?.length ? { actions: actions.map((a) => (a.status === "active" ? { ...a, status: "done" as const } : a)) } : {}),
   }))
 }

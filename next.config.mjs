@@ -29,12 +29,43 @@ const nextConfig = {
   // imported, so Vercel's build-time file trace misses it unless told.
   // Without this, Devon AI's chat on Vercel fails at the first message with
   // an ENOENT for the CLI binary, not at deploy time.
-  outputFileTracingIncludes: {
-    "app/ai-chat/route": [
-      "./node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/**",
-      "./node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl/**",
-    ],
-  },
+  //
+  // Vercel-only: on EdgeOne, /ai-chat is actually served by agents/ai-chat
+  // (its own agent runtime, with EdgeOne's own sandbox tools — see README
+  // "Deploying"), so app/ai-chat/route.ts is dead weight there — just a Next
+  // route that happens to exist, never the one handling real traffic. Forcing
+  // this ~150 MB native CLI binary into .next/standalone for it anyway used
+  // to get duplicated again by EdgeOne's own post-build copy step, and the
+  // build's small tmpfs ran out of space on that final copy (ENOSPC, ret
+  // code 33). Gating it to real Vercel builds removes that copy entirely on
+  // EdgeOne, where it was never needed.
+  ...(process.env.VERCEL
+    ? {
+        outputFileTracingIncludes: {
+          "app/ai-chat/route": [
+            "./node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/**",
+            "./node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl/**",
+          ],
+        },
+      }
+    : {
+        // Same reasoning in reverse: app/ai-chat/route.ts (and the CLI +
+        // E2B sandbox it pulls in) is unreachable on EdgeOne, so don't let
+        // Next's file trace pull their node_modules into the SSR bundle
+        // there either.
+        outputFileTracingExcludes: {
+          "app/ai-chat/route": [
+            "./node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/**",
+            "./node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl/**",
+            "./node_modules/@e2b/**",
+            "./node_modules/e2b/**",
+          ],
+          // Build-time only (scripts/copy-vendor.mjs copies its browser
+          // build into public/vendor/ffmpeg-core/); no server route imports
+          // it, so nothing reachable at runtime needs it traced in either.
+          "**/*": ["./node_modules/@ffmpeg/core/**"],
+        },
+      }),
 }
 
 export default nextConfig

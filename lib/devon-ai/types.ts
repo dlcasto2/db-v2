@@ -50,6 +50,10 @@ export interface Message {
   page?: PageRef
   /** Tools and page actions used in this reply, in order */
   actions?: ActionStep[]
+  /** Clickable next-step options the assistant offered after finishing a task */
+  suggestedActions?: SuggestedAction[]
+  /** Files the assistant generated and delivered for download */
+  generatedFiles?: GeneratedFile[]
   /** True while this reply is still streaming */
   streaming?: boolean
   /** The reply failed; content holds the reason */
@@ -58,16 +62,62 @@ export interface Message {
   feedback?: FeedbackRating
 }
 
+/** One clickable option in a suggest_actions card */
+export interface SuggestedAction {
+  id: string
+  emoji: string
+  title: string
+  description: string
+}
+
+/** A file the assistant delivered for download (deliver_file); the bytes live in IndexedDB, keyed like ImageAttachment */
+export interface GeneratedFile {
+  id: string
+  storageKey: string
+  url: string
+  name: string
+  mimeType: string
+  size: number
+  description?: string
+  createdAt: number
+  /** Saved to IndexedDB (survives a reload); false if only a sandbox download link was offered instead */
+  persistent: boolean
+}
+
+/** suggest_actions SSE payload */
+export interface SuggestActionsSsePayload {
+  actions: SuggestedAction[]
+}
+
+/** file_output SSE payload: a generated file pushed inline, base64-encoded */
+export interface FileOutputSsePayload {
+  fileId: string
+  base64: string
+  filename: string
+  mimeType?: string
+  size?: number
+  description?: string
+}
+
 export interface UploadedFileInfo {
   name: string
   path: string
   mimeType: string
   size: number
+  /** Image, PDF, Word or Excel — written into the sandbox rather than inlined as text; see lib/devon-ai/uploads.ts */
+  binary?: boolean
 }
 
-/** Text extracted from a user-selected file; file content is sent only with the current request. */
+/**
+ * A user-selected file; content is sent only with the current request.
+ * Text files carry extracted text in `text`. Binary files (images, PDF,
+ * Word, Excel) carry base64-encoded bytes in `base64` instead, with `text`
+ * left empty — their content is written into the sandbox, never inlined
+ * into the prompt (see lib/devon-ai/uploads.ts's uploadedFilesBlock).
+ */
 export interface UploadedFile extends UploadedFileInfo {
   text: string
+  base64?: string
 }
 
 export interface ConversationSummary {
