@@ -11,6 +11,19 @@ export interface ProxyResponse {
   finalUrl: string
   title: string
   favicon?: string
+  /**
+   * Set when the address turned out to be a file to save (an archive, an
+   * installer, anything too big for one response) instead of a page: nothing
+   * was loaded yet. Fetch it with downloadThroughProxy.
+   */
+  download?: ProxyDownload
+}
+
+export interface ProxyDownload {
+  name: string
+  type: string
+  /** Bytes, when the site said */
+  size: number | null
 }
 
 export interface ProxyRequestOptions {
@@ -75,7 +88,9 @@ export async function fetchThroughProxy(url: string, options: ProxyRequestOption
           body: JSON.stringify({ url, body: body ?? "", contentType: "application/x-www-form-urlencoded" }),
           signal,
         })
-      : await fetch(`/api/proxy?url=${encodeURIComponent(url)}`, { signal })
+      : // nav=1: this is a tab load, so a file download comes back as a
+        // description of the file instead of the file (see ProxyResponse.download)
+        await fetch(`/api/proxy?url=${encodeURIComponent(url)}&nav=1`, { signal })
 
   const finalUrl = response.headers.get("x-proxy-final-url")
 
@@ -95,6 +110,29 @@ export async function fetchThroughProxy(url: string, options: ProxyRequestOption
   const isHtml = contentType.includes("text/html") || contentType.includes("application/xhtml")
   // Loaded through the proxy too, so icons show on networks that block Google
   const favicon = `/api/proxy?url=${encodeURIComponent(`https://www.google.com/s2/favicons?domain=${safeHostname(finalUrl)}&sz=32`)}&raw=1`
+
+  if (response.headers.get("x-devon-download") === "1") {
+    let info: Partial<ProxyDownload> = {}
+    try {
+      info = ((await response.json()) as { download?: Partial<ProxyDownload> }).download ?? {}
+    } catch {
+      // fall back to what the URL says
+    }
+    const name =
+      typeof info.name === "string" && info.name ? info.name : fileNameFromPath(finalUrl) || "download"
+    return {
+      contentType,
+      status: response.status,
+      finalUrl,
+      title: name,
+      favicon,
+      download: {
+        name,
+        type: typeof info.type === "string" && info.type ? info.type : "application/octet-stream",
+        size: typeof info.size === "number" && info.size > 0 ? info.size : null,
+      },
+    }
+  }
 
   if (isHtml) {
     // Like a real browser, show the site's own error pages (404 etc.) too
@@ -131,6 +169,103 @@ export async function fetchThroughProxy(url: string, options: ProxyRequestOption
     title,
     favicon,
   }
+}
+
+function fileNameFromPath(url: string): string {
+  try {
+    const last = new URL(url).pathname.split("/").filter(Boolean).pop() || ""
+    try {
+      return decodeURIComponent(last)
+    } catch {
+      return last
+    }
+  } catch {
+    return ""
+  }
+}
+
+/** Slice size for downloads — under every host's single-response cap (EdgeOne's is a few MB) */
+export const DOWNLOAD_SLICE_SIZE = 2 * 1024 * 1024
+/** 2 GB at the slice size: past that, a download held in memory isn't sensible */
+const MAX_DOWNLOAD_SLICES = 1024
+const SLICE_RETRIES = 2
+
+export interface DownloadProgress {
+  received: number
+  /** Bytes in the whole file, when known */
+  total: number | null
+}
+
+/**
+ * Downloads a file through the proxy in slices (its ?slice= mode) and returns
+ * it whole. One response can't carry more than a few MB on hosts like EdgeOne,
+ * so a big file (a 190 MB repo archive, an installer) only gets through this
+ * way. Each slice is retried a couple of times, since one flaky request
+ * shouldn't throw away the hundreds of MB already fetched.
+ */
+export async function downloadThroughProxy(
+  url: string,
+  file: ProxyDownload,
+  options: { signal?: AbortSignal; onProgress?: (progress: DownloadProgress) => void } = {},
+): Promise<Blob> {
+  const { signal, onProgress } = options
+  const parts: ArrayBuffer[] = []
+  let received = 0
+  let total = file.size
+
+  for (let i = 0; ; i++) {
+    if (i >= MAX_DOWNLOAD_SLICES) throw new Error("This file is too big to download through Devon (over 2 GB).")
+    const sliceUrl = `/api/proxy?url=${encodeURIComponent(url)}&raw=1&slice=${i}&sliceSize=${DOWNLOAD_SLICE_SIZE}`
+
+    let response: Response | null = null
+    let lastError: unknown
+    for (let attempt = 0; attempt <= SLICE_RETRIES; attempt++) {
+      if (attempt > 0) await sleep(attempt * 1500, signal)
+      try {
+        const res = await fetch(sliceUrl, { signal })
+        if (res.ok) {
+          response = res
+          break
+        }
+        let message = `HTTP ${res.status}`
+        try {
+          message = (await res.json()).error || message
+        } catch {
+          // not JSON
+        }
+        lastError = new Error(message)
+      } catch (error) {
+        if (signal?.aborted) throw error
+        lastError = error
+      }
+    }
+    if (!response) throw lastError instanceof Error ? lastError : new Error(String(lastError))
+
+    const headerTotal = Number(response.headers.get("x-devon-total"))
+    if (Number.isFinite(headerTotal) && headerTotal > 0) total = headerTotal
+    const part = await response.arrayBuffer()
+    parts.push(part)
+    received += part.byteLength
+    onProgress?.({ received, total })
+    if (response.headers.get("x-devon-more") !== "1") break
+  }
+
+  return new Blob(parts, { type: file.type })
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new DOMException("Aborted", "AbortError"))
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort)
+      resolve()
+    }, ms)
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(new DOMException("Aborted", "AbortError"))
+    }
+    signal?.addEventListener("abort", onAbort, { once: true })
+  })
 }
 
 export function isValidUrl(string: string): boolean {

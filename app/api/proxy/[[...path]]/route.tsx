@@ -1654,6 +1654,52 @@ function encodeBody(text: string, acceptEncoding: string | null): { body: Uint8A
   return { body, headers }
 }
 
+/**
+ * The most one function response reliably carries. EdgeOne Pages (like most
+ * serverless hosts) caps a single response at a few MB and fails anything
+ * bigger outright — which is why the slice mode below exists.
+ */
+const SINGLE_RESPONSE_LIMIT = 4 * 1024 * 1024
+
+/**
+ * Types a browser downloads instead of showing (archives, installers, raw
+ * bytes; binary/octet-stream is what S3 labels files it can't identify)
+ */
+const DOWNLOAD_TYPE_RE =
+  /^(?:binary\/octet-stream|application\/(?:octet-stream|zip|x-zip|x-zip-compressed|x-7z-compressed|x-rar|x-rar-compressed|vnd\.rar|x-tar|gzip|x-gzip|x-bzip2?|x-xz|zstd|x-msdownload|x-msi|x-ms-installer|x-apple-diskimage|vnd\.android\.package-archive|java-archive|x-java-archive|x-iso9660-image|x-debian-package|x-rpm|x-sh|x-executable|vnd\.microsoft\.portable-executable))\b/i
+
+/**
+ * Whether a page navigation landed on a file to save rather than a page to
+ * show: the site said so (Content-Disposition: attachment), it's a type no
+ * frame can display, or it's too big to come back in one response at all.
+ */
+function isDownloadResponse(upstream: Response, contentType: string): boolean {
+  if (/^\s*attachment\b/i.test(upstream.headers.get("content-disposition") || "")) return true
+  if (DOWNLOAD_TYPE_RE.test(contentType.trim())) return true
+  // Pages, scripts and styles are rewritten and re-compressed, so their size on
+  // the wire isn't what's sent on; everything else is passed on as-is
+  if (/text\/html|application\/xhtml|javascript|text\/css/i.test(contentType)) return false
+  const length = Number(upstream.headers.get("content-length"))
+  return Number.isFinite(length) && length > SINGLE_RESPONSE_LIMIT
+}
+
+/** The file name a Content-Disposition header asks for (RFC 6266), or null */
+function fileNameFromDisposition(header: string | null): string | null {
+  if (!header) return null
+  const extended = /filename\*\s*=\s*([^']*)'[^']*'([^;]+)/i.exec(header)
+  if (extended) {
+    try {
+      const name = decodeURIComponent(extended[2].trim().replace(/^"|"$/g, ""))
+      if (name) return name
+    } catch {
+      // malformed; fall back to the plain filename=
+    }
+  }
+  const plain = /(?:^|;)\s*filename\s*=\s*(?:"([^"]*)"|([^;]+))/i.exec(header)
+  const name = (plain?.[1] ?? plain?.[2] ?? "").trim()
+  return name || null
+}
+
 async function buildProxyResponse(
   upstream: Response,
   finalUrl: string,
@@ -1662,6 +1708,7 @@ async function buildProxyResponse(
   isHead = false,
   experimental = false,
   acceptEncoding: string | null = null,
+  navigation = false,
 ): Promise<NextResponse> {
   const status = upstream.status
   const contentType = upstream.headers.get("content-type") || "application/octet-stream"
@@ -1672,6 +1719,32 @@ async function buildProxyResponse(
 
   if (status === 204 || status === 205 || status === 304) {
     return new NextResponse(null, { status, headers: baseHeaders })
+  }
+
+  // A tab navigated to a file download (a GitHub "Download ZIP" link, an
+  // installer...). Don't try to push the file through this one response: past
+  // a few MB the host refuses it, and the visitor got a bare error (a 190 MB
+  // repo archive came back as "HTTP 406"). Answer with what the file is, and
+  // the app downloads it in slices (?slice=) and saves it, like a browser
+  // download, leaving the current page where it was.
+  if (navigation && !raw && !isHead && status >= 200 && status < 300 && isDownloadResponse(upstream, contentType)) {
+    await upstream.body?.cancel().catch(() => {})
+    // A compressed transfer's length isn't the file's
+    const encoding = (upstream.headers.get("content-encoding") || "identity").toLowerCase()
+    const length = encoding === "identity" ? Number(upstream.headers.get("content-length")) : NaN
+    const name = (fileNameFromDisposition(upstream.headers.get("content-disposition")) || fileNameFromUrl(finalUrl))
+      .replace(/[\\/\r\n]+/g, "_")
+      .slice(0, 200)
+    return NextResponse.json(
+      {
+        download: {
+          name: name || "download",
+          type: contentType.split(";")[0].trim() || "application/octet-stream",
+          size: Number.isFinite(length) && length > 0 ? length : null,
+        },
+      },
+      { status: 200, headers: { ...baseHeaders, "X-Devon-Download": "1", "Cache-Control": "no-store" } },
+    )
   }
 
   // Raw mode (the page's own fetch/XHR calls): pass the body through untouched
@@ -1875,6 +1948,10 @@ async function handle(
       init.method.toUpperCase() === "HEAD",
       experimental,
       request.headers.get("accept-encoding"),
+      // Only the app's own tab loads (fetchThroughProxy) ask for this. A page's
+      // subresources (a font served as octet-stream, say) must keep getting
+      // their bytes, and a POST result can't be re-fetched in GET slices.
+      !raw && method === "GET" && request.nextUrl.searchParams.get("nav") === "1",
     )
     if (jar) {
       for (const header of jarSetCookieHeaders(jar, request.nextUrl.protocol === "https:")) {
@@ -2032,6 +2109,13 @@ async function handleSlice(request: NextRequest, targetUrl: string, index: numbe
     const range = response.headers.get("content-range")
     const total = range ? Number(range.split("/")[1]) : NaN
     if (!more && Number.isFinite(total) && total > start + kept) more = true
+    // The whole file's size, when the site says (lets downloads show progress)
+    const wholeLength =
+      response.status === 206
+        ? total
+        : !response.headers.get("content-encoding")
+          ? Number(response.headers.get("content-length"))
+          : NaN
 
     const body = new Uint8Array(kept)
     let offset = 0
@@ -2039,15 +2123,14 @@ async function handleSlice(request: NextRequest, targetUrl: string, index: numbe
       body.set(c, offset)
       offset += c.byteLength
     }
-    return new NextResponse(body, {
-      status: 200,
-      headers: {
-        "Content-Type": response.headers.get("content-type") || "application/octet-stream",
-        "X-Devon-More": more ? "1" : "0",
-        "X-Proxy-Final-Url": finalUrl,
-        "Cache-Control": "public, max-age=3600",
-      },
-    })
+    const sliceHeaders: Record<string, string> = {
+      "Content-Type": response.headers.get("content-type") || "application/octet-stream",
+      "X-Devon-More": more ? "1" : "0",
+      "X-Proxy-Final-Url": finalUrl,
+      "Cache-Control": "public, max-age=3600",
+    }
+    if (Number.isFinite(wholeLength) && wholeLength > 0) sliceHeaders["X-Devon-Total"] = String(wholeLength)
+    return new NextResponse(body, { status: 200, headers: sliceHeaders })
   } catch (error) {
     return errorResponse(error)
   } finally {
