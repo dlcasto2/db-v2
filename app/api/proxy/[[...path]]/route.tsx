@@ -696,6 +696,18 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
       var dest = realUrl(value);
       if (isHttp(dest)) openProxied(dest, target);
     };
+    // One stable object, reused on every access — not rebuilt per read, or
+    // popup.location.href = url (at least as common as popup.location = url
+    // or .assign()/.replace()) would set .href on a throwaway object that's
+    // discarded immediately after, silently going nowhere instead of opening a
+    // Devon tab. Its own href is an accessor for the same reason.
+    var fakeLocation = {
+      assign: go,
+      replace: go,
+      reload: function () {},
+      toString: function () { return ''; },
+    };
+    Object.defineProperty(fakeLocation, 'href', { get: function () { return ''; }, set: go });
     var pending = {
       close: function () { closed = true; },
       focus: function () {},
@@ -710,12 +722,12 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
     };
     Object.defineProperty(pending, 'closed', { get: function () { return closed; } });
     try {
-      Object.defineProperty(pending, 'location', {
-        get: function () { return { href: '', assign: go, replace: go, toString: function () { return ''; } }; },
-        set: go,
-      });
+      // The setter covers whole-property reassignment (popup.location = url);
+      // the getter hands back the same object every time so href/assign/replace
+      // on it keep working too.
+      Object.defineProperty(pending, 'location', { get: function () { return fakeLocation; }, set: go });
     } catch (e) {
-      pending.location = { href: '', assign: go, replace: go };
+      pending.location = fakeLocation;
     }
     return pending;
   }
