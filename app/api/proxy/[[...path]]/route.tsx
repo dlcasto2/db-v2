@@ -674,13 +674,59 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
   }
 
   // ---- window.open(): open proxied pages in a new Devon tab
+  //
+  // Some sites — eBay's rover.ebay.com click-tracking links are a common
+  // example — call window.open() with NO url to get a window handle
+  // synchronously (the only way a popup survives popup blockers), then set
+  // its .location once a tracking request finishes. allow-popups-to-escape-
+  // sandbox means a window opened that way is a normal, un-proxied tab with
+  // none of this script in it: once the site holds that reference, nothing
+  // Devon injects can see what gets assigned to it afterward, so the eventual
+  // navigation goes straight to the real site, outside Devon entirely. A
+  // blank open gets a stand-in object instead, whose .location Devon can
+  // still intercept and hand to send() like any other navigation.
   var nativeOpen = window.open;
-  window.open = function (u, target) {
-    var url = u === undefined || u === '' ? null : realUrl(u);
-    if (!isHttp(url)) return nativeOpen.apply(window, arguments);
+  function openProxied(url, target) {
     var t = String(target || '_blank').toLowerCase();
     send({ url: url, newTab: t !== '_self' && t !== '_parent' && t !== '_top' });
-    return null; // same as a blocked popup
+  }
+  function pendingPopup(target) {
+    var closed = false;
+    var go = function (value) {
+      var dest = realUrl(value);
+      if (isHttp(dest)) openProxied(dest, target);
+    };
+    var pending = {
+      close: function () { closed = true; },
+      focus: function () {},
+      blur: function () {},
+      postMessage: function () {},
+      document: {
+        write: function () {},
+        writeln: function () {},
+        close: function () {},
+        open: function () { return pending.document; },
+      },
+    };
+    Object.defineProperty(pending, 'closed', { get: function () { return closed; } });
+    try {
+      Object.defineProperty(pending, 'location', {
+        get: function () { return { href: '', assign: go, replace: go, toString: function () { return ''; } }; },
+        set: go,
+      });
+    } catch (e) {
+      pending.location = { href: '', assign: go, replace: go };
+    }
+    return pending;
+  }
+  window.open = function (u, target) {
+    var url = u === undefined || u === '' ? null : realUrl(u);
+    if (isHttp(url)) {
+      openProxied(url, target);
+      return null; // same as a blocked popup
+    }
+    if (u === undefined || u === '' || u === 'about:blank') return pendingPopup(target);
+    return nativeOpen.apply(window, arguments);
   };
 
   // ---- history.pushState/replaceState: the site passes URLs on its own origin, which
@@ -1501,6 +1547,27 @@ function processHTML(content: string, pageUrl: string, proxyOrigin: string, expe
       if (!abs) return match
       const href = /\brel=["']?modulepreload\b/i.test(before + after) ? mirrored(proxyOrigin, abs) : proxied(proxyOrigin, abs)
       return `<link${before}href=${q}${href}${q}${after}>`
+    })
+
+    // <meta http-equiv="refresh" content="N;url=..."> navigates the document on
+    // its own timer, outside any click/form/history hook. The injected script's
+    // Navigation API listener (below) is meant to catch it like any other
+    // navigation, but that's a client-side assumption about a non-standard
+    // cross-browser corner of a fairly new API — interstitial/"please wait"
+    // pages (bot-check, redirect gateways) that are little more than a bare
+    // refresh tag are exactly the case where, if that assumption is ever wrong,
+    // the frame navigates itself straight to the real site. Rewriting the URL
+    // here means that even if the client-side hook never fires, the timer
+    // still lands back on the proxy.
+    markup = markup.replace(/<meta\b[^>]*>/gi, (tag) => {
+      if (!/\bhttp-equiv\s*=\s*["']?refresh["']?/i.test(tag)) return tag
+      return tag.replace(/\bcontent\s*=\s*(["'])([\s\S]*?)\1/i, (whole, q: string, raw: string) => {
+        const m = /^([^;]*;\s*)(?:url\s*=\s*)?(['"])?([^'"]*)\2?\s*$/i.exec(raw)
+        if (!m || !m[3]) return whole
+        const abs = proxiable(m[3], pageUrl)
+        if (!abs) return whole
+        return `content=${q}${m[1]}url=${proxied(proxyOrigin, abs)}${q}`
+      })
     })
 
     // Subresource Integrity hashes can't match content the proxy rewrote
