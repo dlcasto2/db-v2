@@ -47,6 +47,7 @@ import {
   X,
 } from "lucide-react"
 import {
+  downloadThroughProxy,
   fetchThroughProxy,
   formatUrl,
   identityHandoff,
@@ -55,6 +56,7 @@ import {
   reportIdpBlock,
   resolveSearchUrl,
   type IdentityHandoff,
+  type ProxyDownload,
 } from "@/lib/proxy-utils"
 import { SessionManager, type BookmarkItem, type HistoryItem } from "@/lib/session-manager"
 import {
@@ -187,6 +189,56 @@ function hostnameOf(url: string): string {
   } catch {
     return "Unknown"
   }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+/**
+ * Downloads a file a tab navigated to (see ProxyResponse.download) in the
+ * background, with its progress in a toast, then saves it like a browser
+ * download would.
+ */
+function startFileDownload(url: string, file: ProxyDownload) {
+  const controller = new AbortController()
+  const toastId = toast.loading(`Downloading ${file.name}`, {
+    description: file.size ? `0 of ${formatBytes(file.size)}` : "Starting…",
+    duration: Infinity,
+    action: { label: "Cancel", onClick: () => controller.abort() },
+  })
+  downloadThroughProxy(url, file, {
+    signal: controller.signal,
+    onProgress: ({ received, total }) => {
+      toast.loading(`Downloading ${file.name}`, {
+        id: toastId,
+        description: total
+          ? `${formatBytes(Math.min(received, total))} of ${formatBytes(total)} (${Math.min(100, Math.floor((received / total) * 100))}%)`
+          : `${formatBytes(received)} so far`,
+        duration: Infinity,
+        action: { label: "Cancel", onClick: () => controller.abort() },
+      })
+    },
+  })
+    .then((blob) => {
+      saveBlob(blob, file.name)
+      toast.success(`Downloaded ${file.name}`, { id: toastId, description: formatBytes(blob.size), duration: 6000, action: undefined })
+    })
+    .catch((error) => {
+      if (controller.signal.aborted) {
+        toast(`Download cancelled`, { id: toastId, description: file.name, duration: 4000, action: undefined })
+        return
+      }
+      toast.error(`Couldn't download ${file.name}`, {
+        id: toastId,
+        description: error instanceof Error ? error.message : String(error),
+        duration: 10000,
+        action: undefined,
+      })
+    })
 }
 
 /** Only what's worth persisting — page content can blow past the localStorage quota */
@@ -704,7 +756,10 @@ export function ProxyBrowser() {
       const controller = new AbortController()
       controllersRef.current.set(tabId, controller)
 
-      releaseBlob(tabId)
+      // What the tab showed before, in case this turns out to be a file
+      // download rather than a page: a browser stays on the current page then.
+      // Its blob: URL (if any) is kept alive until we know (releaseBlob below).
+      const before = tabsRef.current.find((t) => t.id === tabId)
       setTabs((prev) =>
         prev.map((tab) =>
           tab.id === tabId
@@ -735,6 +790,38 @@ export function ProxyBrowser() {
           return
         }
         controllersRef.current.delete(tabId)
+
+        // A file to save, not a page (a GitHub "Download ZIP", an installer, a
+        // file too big for one response): download it in the background and
+        // put the tab back the way it was — no history entry, like a browser.
+        if (result.download) {
+          startFileDownload(result.finalUrl, result.download)
+          setTabs((prev) =>
+            prev.map((tab) => {
+              if (tab.id !== tabId) return tab
+              if (!before) return { ...tab, isLoading: false }
+              return {
+                ...tab,
+                url: before.url,
+                title: before.title,
+                favicon: before.favicon,
+                content: before.content,
+                loadId: before.loadId,
+                frameSrc: before.frameSrc,
+                frameType: before.frameType,
+                error: before.error,
+                errorDetails: before.errorDetails,
+                leftProxy: before.leftProxy,
+                blockedSignIn: before.blockedSignIn,
+                isSecure: before.isSecure,
+                isLoading: false,
+              }
+            }),
+          )
+          return
+        }
+
+        releaseBlob(tabId)
         if (result.frameSrc) blobUrlsRef.current.set(tabId, result.frameSrc)
 
         const finalUrl = result.finalUrl
@@ -815,6 +902,8 @@ export function ProxyBrowser() {
       } catch (error) {
         if (controllersRef.current.get(tabId) !== controller) return
         controllersRef.current.delete(tabId)
+        // The error page replaces whatever was showing
+        releaseBlob(tabId)
 
         const aborted = error instanceof Error && error.name === "AbortError"
         const errorMessage = aborted ? STOPPED_MESSAGE : error instanceof Error ? error.message : "Failed to load page"

@@ -751,6 +751,88 @@ function CookieDialog({
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
+// YouTube IFrame Player API (official embed controller), used in Direct mode
+// ---------------------------------------------------------------------------
+
+interface YTPlayerInstance {
+  destroy: () => void
+}
+
+interface YTNamespace {
+  Player: new (
+    el: HTMLElement,
+    opts: {
+      videoId: string
+      host?: string
+      playerVars?: Record<string, string | number>
+      events?: { onError?: (event: { data: number }) => void }
+    },
+  ) => YTPlayerInstance
+}
+
+declare global {
+  interface Window {
+    YT?: YTNamespace
+    onYouTubeIframeAPIReady?: () => void
+  }
+}
+
+let ytApiPromise: Promise<YTNamespace> | null = null
+
+/** Loads youtube.com/iframe_api once and shares the promise across players */
+function loadYouTubeIframeApi(): Promise<YTNamespace> {
+  if (window.YT) return Promise.resolve(window.YT)
+  if (!ytApiPromise) {
+    ytApiPromise = new Promise((resolve) => {
+      const previous = window.onYouTubeIframeAPIReady
+      window.onYouTubeIframeAPIReady = () => {
+        previous?.()
+        if (window.YT) resolve(window.YT)
+      }
+      const script = document.createElement("script")
+      script.src = "https://www.youtube.com/iframe_api"
+      script.async = true
+      document.head.appendChild(script)
+    })
+  }
+  return ytApiPromise
+}
+
+/**
+ * The official embed, used for Direct mode: the API builds and owns its own
+ * iframe pointed straight at youtube-nocookie.com and talks to it over
+ * postMessage, so it only makes sense when the viewer's browser is already
+ * talking to YouTube directly. Devon (proxied) mode keeps the plain iframe
+ * below instead — the API's postMessage protocol expects its iframe at
+ * YouTube's real origin, which a rewritten src isn't.
+ */
+function OfficialYouTubePlayer({ id, onError }: { id: string; onError: () => void }) {
+  const hostRef = useRef<HTMLDivElement | null>(null)
+  const onErrorRef = useRef(onError)
+  onErrorRef.current = onError
+
+  useEffect(() => {
+    let cancelled = false
+    let player: YTPlayerInstance | null = null
+    loadYouTubeIframeApi().then((YT) => {
+      if (cancelled || !hostRef.current) return
+      player = new YT.Player(hostRef.current, {
+        videoId: id,
+        host: "https://www.youtube-nocookie.com",
+        playerVars: { rel: 0, playsinline: 1 },
+        events: { onError: () => onErrorRef.current() },
+      })
+    })
+    return () => {
+      cancelled = true
+      player?.destroy()
+    }
+  }, [id])
+
+  return <div ref={hostRef} className="size-full" />
+}
+
+// ---------------------------------------------------------------------------
 // Devon's player
 // ---------------------------------------------------------------------------
 
@@ -817,6 +899,8 @@ function DevonPlayer({ id, video }: { id: string; video: YTVideo | null }) {
             className="size-full"
             onError={() => setNativeFailed(true)}
           />
+        ) : mode === "direct" ? (
+          <OfficialYouTubePlayer key={id} id={id} onError={() => setModeState("devon")} />
         ) : (
           <iframe
             key={src}
