@@ -181,7 +181,7 @@ Devon's version adds, on both backends:
 - **A daily limit per visitor**, counted on the server so refreshing, new chats or new tabs don't reset it. See below.
 - **Feedback:** every reply gets a thumbs up/down (hover a reply to see it). Down opens a reason chip (wrong fact · misread the page · bad/unsafe action · other) and an optional short note. It's logged as a small, append-only entry — model, a rough task-type label, the rating, the reason chip and note, a timestamp — never the page or the conversation itself, and reviewed by the site's maintainer as an aggregate digest (`POST /ai-feedback` with `{"action":"digest","admin_key":...}`), not a notification per click. See `agents/_feedback.ts`.
 - Chats keep streaming when you switch tabs, and links in replies open in a new Devon tab.
-- **Provider picker:** the Devon AI header lets you choose **Claude**, **Eve Agent** or **AirLLM**. The selection is saved in this browser and applies to new messages. Eve is a separate durable-agent runtime, not a model named “Eve”; its underlying model is configured in `eve-agent/agent/agent.ts` / `DEVON_EVE_MODEL`. AirLLM is an open model you run on your own GPU machine (see below). Eve and AirLLM are text-chat only and do not inherit Devon's live-tab tools or E2B sandbox.
+- **Provider picker:** the Devon AI header lets you choose **Claude**, **Eve Agent**, **AirLLM** or **OpenAI Agents**. The selection is saved in this browser and applies to new messages. Eve is a separate durable-agent runtime, not a model named “Eve”; its underlying model is configured in `eve-agent/agent/agent.ts` / `DEVON_EVE_MODEL`. AirLLM is an open model you run on your own GPU machine (see below). OpenAI Agents runs the `@openai/agents` SDK against an OpenAI-compatible endpoint, by default the same Makers AI Gateway the Claude backend falls back to. Eve, AirLLM and OpenAI Agents are text-chat only and do not inherit Devon's live-tab tools or E2B/EdgeOne sandbox.
 
 ### Eve Agent provider
 
@@ -207,6 +207,18 @@ The standalone Eve project, model configuration, channel authentication and depl
 | `DEVON_AIRLLM_MAX_TOKENS`, `DEVON_AIRLLM_MAX_PAGE_CHARS`, `DEVON_AIRLLM_TIMEOUT_SECONDS` | Optional: reply length (default 384), page text per question (default 6000), and a reply time limit shorter than the platform's. |
 
 Replies end cleanly, keeping their text, 10 s before the function limit (about 290 s on Vercel, 590 s on EdgeOne); for long replies from big models, use the standalone `devon-ai-api` service. No Redis is required, though without it the chat history the model sees doesn't persist between messages. Setup, hardware expectations and the API are in [`airllm-server/README.md`](airllm-server/README.md).
+
+### OpenAI Agents provider
+
+Brought in from [TencentEdgeOne/openai-agents-starter-node](https://github.com/TencentEdgeOne/openai-agents-starter-node) (MIT): an `@openai/agents` `Agent` running against an OpenAI-compatible chat-completions endpoint, called from `agents/ai-chat/_openai.ts` and shared by both backends the same way `_eve.ts`/`_airllm.ts` are. It ships four small demo tools ported from the starter's `agents/_tools.ts` (`_openai-tools.ts` here) — `get_weather`, `get_clothing_advice`, `translate_text`, `text_statistics` — which return mock data; swap an `execute` body in for a real API to make one do more than demonstrate tool use.
+
+| Variable | Meaning |
+| --- | --- |
+| `DEVON_OPENAI_BASE_URL` | An OpenAI-compatible endpoint of its own. Optional — falls back to `AI_GATEWAY_BASE_URL`. |
+| `DEVON_OPENAI_API_KEY` | Key for that endpoint. Optional — falls back to `AI_GATEWAY_API_KEY`. |
+| `DEVON_OPENAI_MODEL` | Model name to request. Optional — falls back to `AI_GATEWAY_MODEL`, then `@makers/deepseek-v4-flash`. |
+
+With no `DEVON_OPENAI_*` set, this provider reuses whichever gateway the Claude backend is already configured with, so it needs no setup of its own on a Devon that already has `AI_GATEWAY_API_KEY`/`AI_GATEWAY_BASE_URL`. Set the `DEVON_OPENAI_*` variables instead to point it at a different OpenAI-compatible provider. Like AirLLM, it doesn't persist chat history server-side between messages; each turn sends a short recap built from Devon's own conversation store.
 
 Routes (same on both backends, so the client — `lib/devon-ai/` — doesn't know or care which one answers): `POST /ai-chat` (SSE stream, needs the `makers-conversation-id` header), `POST /ai-stop`, `POST /ai-history`, `POST /ai-conversations`, `POST /ai-delete-conversation`, `POST /ai-page-result` (page action results), `POST /ai-session` (read or clear a chat's session; chat ID in the header), `POST /ai-filesystem` (query, read, version, diff, edit, export, soft-delete, restore, approve a promotion, or run retention cleanup), and `POST /ai-feedback` (record a thumbs up/down, or — with the admin key — read the digest). On EdgeOne, agent runs may take up to 600 s (`edgeone.json`), since page tasks can wait on your permission; on Vercel, `app/ai-chat/route.ts` sets `maxDuration = 300`, but your Vercel plan's own function-duration limit may cap that lower.
 

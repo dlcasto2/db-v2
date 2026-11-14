@@ -30,6 +30,7 @@
  *   DEVON_AI_IP_DAILY_LIMIT                    shared cap per network per day (default 0 = off)
  *   WSA_API_KEY                                only for the web search tool (optional)
  *   DEVON_AIRLLM_BASE_URL + DEVON_AIRLLM_API_KEY  the "AirLLM" provider (see _airllm.ts, airllm-server/)
+ *   DEVON_OPENAI_BASE_URL + DEVON_OPENAI_API_KEY  the "OpenAI Agents" provider (see _openai.ts); falls back to AI_GATEWAY_*
  */
 
 import type { AgentContext } from "@edgeone/types"
@@ -46,6 +47,7 @@ import { FILE_SKILLS_OVERVIEW, buildFileSkillsPrompt } from "./_file-skills"
 import { createChatStream } from "./_stream"
 import { createEveChatResponse, eveConfigured } from "./_eve"
 import { airllmConfigured, createAirllmChatResponse } from "./_airllm"
+import { openaiConfigured, createOpenaiChatResponse } from "./_openai"
 import { binaryUploadsNote, mimeTypeFor, readUploadedFiles, uploadedFilesBlock } from "../../lib/devon-ai/uploads"
 import { storeInboxUploads } from "../../lib/devon-ai/filesystem"
 import type { UploadedFile } from "../../lib/devon-ai/types"
@@ -420,7 +422,7 @@ export async function onRequest(context: AgentContext) {
   const browser = readBrowserSession(body.browser)
   const conversationId = context.conversation_id || ""
   const { store, env } = context
-  const requestedModel = body.model === "eve" || body.model === "airllm" ? body.model : "claude"
+  const requestedModel = body.model === "eve" || body.model === "airllm" || body.model === "openai" ? body.model : "claude"
 
   if (!message) return json({ error: "bad_request", message: "'message' is required" }, 400)
   if (uploaded.error) return json({ error: "bad_request", message: uploaded.error }, 400)
@@ -429,7 +431,14 @@ export async function onRequest(context: AgentContext) {
   if (message.length > MAX_MESSAGE_CHARS) {
     return json({ error: "bad_request", message: `Messages can be up to ${MAX_MESSAGE_CHARS} characters` }, 400)
   }
-  const configured = requestedModel === "eve" ? eveConfigured(env) : requestedModel === "airllm" ? airllmConfigured(env) : modelConfigured(env)
+  const configured =
+    requestedModel === "eve"
+      ? eveConfigured(env)
+      : requestedModel === "airllm"
+        ? airllmConfigured(env)
+        : requestedModel === "openai"
+          ? openaiConfigured(env)
+          : modelConfigured(env)
   if (!configured) {
     return json(
       {
@@ -438,7 +447,9 @@ export async function onRequest(context: AgentContext) {
           ? "Eve Agent isn't connected yet. Set DEVON_EVE_BASE_URL and DEVON_EVE_JWT_SECRET in EdgeOne."
           : requestedModel === "airllm"
             ? "AirLLM isn't connected yet. Run airllm-server/ on a GPU machine, then set DEVON_AIRLLM_BASE_URL and DEVON_AIRLLM_API_KEY in EdgeOne."
-            : "Devon AI isn't set up on this site yet: set AI_GATEWAY_API_KEY and AI_GATEWAY_BASE_URL (or ANTHROPIC_API_KEY) in EdgeOne.",
+            : requestedModel === "openai"
+              ? "The OpenAI Agents provider isn't connected yet. Set DEVON_OPENAI_BASE_URL and DEVON_OPENAI_API_KEY in EdgeOne (or AI_GATEWAY_BASE_URL/AI_GATEWAY_API_KEY)."
+              : "Devon AI isn't set up on this site yet: set AI_GATEWAY_API_KEY and AI_GATEWAY_BASE_URL (or ANTHROPIC_API_KEY) in EdgeOne.",
       },
       503,
     )
@@ -524,6 +535,29 @@ export async function onRequest(context: AgentContext) {
       signal: context.request.signal,
       // Finish (and save) before EdgeOne ends the run (agents.timeout in edgeone.json)
       timeoutMs: (AGENT_TIMEOUT_SECONDS - 10) * 1000,
+      logError: logger.error,
+      onAssistantMessage: async (content) => {
+        await store.appendMessage({
+          conversationId,
+          role: "assistant",
+          content,
+          ...(userId ? { userId } : {}),
+          ...(botMsgId ? { messageId: botMsgId } : {}),
+        } as Parameters<typeof store.appendMessage>[0])
+      },
+    })
+  }
+
+  if (requestedModel === "openai") {
+    await store.state.set("activeModel", "openai")
+    return createOpenaiChatResponse({
+      env,
+      message,
+      page,
+      history: history as import("../../lib/devon-ai/server/store").StoredMessage[],
+      filesBlock: uploadedFilesBlock(uploaded.files),
+      // POST /ai-stop's abortActiveRun(conversationId) aborts this signal
+      signal: context.request.signal,
       logError: logger.error,
       onAssistantMessage: async (content) => {
         await store.appendMessage({
