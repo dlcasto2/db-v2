@@ -464,6 +464,10 @@ const TOOL_LABELS: [RegExp, string, string][] = [
   [/^(commands|command_|cmd_|shell|exec)/i, "Running a command", "Ran a command"],
   [/^(skill|load_skill)$/i, "Loading a skill", "Loaded a skill"],
   [/^airllm_prompt$/, "AirLLM is reading your message", "AirLLM read your message"],
+  [/^get_weather$/i, "Checking the weather", "Checked the weather"],
+  [/^get_clothing_advice$/i, "Working out what to wear", "Worked out what to wear"],
+  [/^translate_text$/i, "Translating", "Translated"],
+  [/^text_statistics$/i, "Counting words and characters", "Counted words and characters"],
 ]
 
 function toolLabels(tool: string): { label: string; doneLabel: string } {
