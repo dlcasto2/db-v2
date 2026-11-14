@@ -261,14 +261,13 @@ export function DevonAiPage({ onOpenLink, onOpenApps, variant = "page", onClose,
           </span>
           <span className="min-w-0 truncate text-sm font-medium">Devon AI</span>
           <Select value={chat.selectedModel} onValueChange={(value) => setDevonAiModel(toDevonAiModel(value))} disabled={chat.loading}>
-            <SelectTrigger className="h-7 w-[132px] rounded-full border-border bg-background/60 px-2 text-xs" aria-label="Choose AI provider" title="Choose the provider for new messages. Eve Agent, AirLLM and OpenAI Agents run on their own services and don't get Devon's browser or sandbox tools; AirLLM runs an open model on the site owner's hardware and is slow.">
+            <SelectTrigger className="h-7 w-[112px] rounded-full border-border bg-background/60 px-2 text-xs" aria-label="Choose AI provider" title="Choose the provider for new messages. Eve Agent and AirLLM run on their own services and don't get Devon's browser or sandbox tools; AirLLM runs an open model on the site owner's hardware and is slow.">
               <SelectValue />
             </SelectTrigger>
             <SelectContent align="end">
               <SelectItem value="claude">Claude</SelectItem>
               <SelectItem value="eve">Eve Agent</SelectItem>
               <SelectItem value="airllm">AirLLM</SelectItem>
-              <SelectItem value="openai">OpenAI Agents</SelectItem>
             </SelectContent>
           </Select>
           {quotaLeft !== null && !panel && (

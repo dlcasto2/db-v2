@@ -10,7 +10,6 @@ import { FILE_SKILLS_OVERVIEW, buildFileSkillsPrompt } from "@/agents/ai-chat/_f
 import { createChatStream } from "@/agents/ai-chat/_stream"
 import { createEveChatResponse, eveConfigured } from "@/agents/ai-chat/_eve"
 import { airllmConfigured, createAirllmChatResponse } from "@/agents/ai-chat/_airllm"
-import { openaiConfigured, createOpenaiChatResponse } from "@/agents/ai-chat/_openai"
 import { createAiStore, type StoredMessage } from "@/lib/devon-ai/server/store"
 import { redis } from "@/lib/devon-ai/server/kv"
 import { SANDBOX_SERVER, SANDBOX_TOOL_NAMES, createSandboxTools, resolveSandbox, sandboxConfigured } from "@/lib/devon-ai/server/sandbox-tools"
@@ -227,7 +226,7 @@ export async function POST(request: Request): Promise<Response> {
   const browser = readBrowserSession(body.browser)
   const conversationId = request.headers.get("makers-conversation-id") || crypto.randomUUID()
   const env = process.env
-  const requestedModel = body.model === "eve" || body.model === "airllm" || body.model === "openai" ? body.model : "claude"
+  const requestedModel = body.model === "eve" || body.model === "airllm" ? body.model : "claude"
 
   if (!message) return json({ error: "bad_request", message: "'message' is required" }, 400)
   if (uploaded.error) return json({ error: "bad_request", message: uploaded.error }, 400)
@@ -238,14 +237,7 @@ export async function POST(request: Request): Promise<Response> {
   if (message.length > MAX_MESSAGE_CHARS) {
     return json({ error: "bad_request", message: `Messages can be up to ${MAX_MESSAGE_CHARS} characters` }, 400)
   }
-  const configured =
-    requestedModel === "eve"
-      ? eveConfigured(env)
-      : requestedModel === "airllm"
-        ? airllmConfigured(env)
-        : requestedModel === "openai"
-          ? openaiConfigured(env)
-          : modelConfigured(env)
+  const configured = requestedModel === "eve" ? eveConfigured(env) : requestedModel === "airllm" ? airllmConfigured(env) : modelConfigured(env)
   if (!configured) {
     return json(
       {
@@ -254,9 +246,7 @@ export async function POST(request: Request): Promise<Response> {
           ? "Eve Agent isn't connected yet. Set DEVON_EVE_BASE_URL and DEVON_EVE_JWT_SECRET in Vercel."
           : requestedModel === "airllm"
             ? "AirLLM isn't connected yet. Run airllm-server/ on a GPU machine, then set DEVON_AIRLLM_BASE_URL and DEVON_AIRLLM_API_KEY in Vercel."
-            : requestedModel === "openai"
-              ? "The OpenAI Agents provider isn't connected yet. Set DEVON_OPENAI_BASE_URL and DEVON_OPENAI_API_KEY in Vercel (or AI_GATEWAY_BASE_URL/AI_GATEWAY_API_KEY)."
-              : "Devon AI isn't set up on this site yet: set ANTHROPIC_API_KEY (or AI_GATEWAY_API_KEY and AI_GATEWAY_BASE_URL) in Vercel.",
+            : "Devon AI isn't set up on this site yet: set ANTHROPIC_API_KEY (or AI_GATEWAY_API_KEY and AI_GATEWAY_BASE_URL) in Vercel.",
       },
       503,
     )
@@ -347,27 +337,6 @@ export async function POST(request: Request): Promise<Response> {
       signal: stopSignal(request.signal, conversationId),
       // Finish (and save) before Vercel ends the function; AirLLM is slow enough to reach it
       timeoutMs: (maxDuration - 10) * 1000,
-      logError: logger.error,
-      onAssistantMessage: async (content) => {
-        await store.appendMessage({
-          conversationId,
-          role: "assistant",
-          content,
-          ...(userId ? { userId } : {}),
-          ...(botMsgId ? { messageId: botMsgId } : {}),
-        })
-      },
-    })
-  }
-  if (requestedModel === "openai") {
-    await store.state.set("activeModel", "openai")
-    return createOpenaiChatResponse({
-      env,
-      message,
-      page,
-      history,
-      filesBlock: uploadedFilesBlock(uploaded.files),
-      signal: stopSignal(request.signal, conversationId),
       logError: logger.error,
       onAssistantMessage: async (content) => {
         await store.appendMessage({
