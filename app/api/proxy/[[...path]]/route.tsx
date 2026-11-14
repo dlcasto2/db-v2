@@ -189,6 +189,14 @@ async function fetchUpstream(
   let current = new URL(startUrl)
   let method = init.method.toUpperCase()
   let body = init.body
+  // A page navigation's Accept header leads with text/html for the common
+  // case (an actual page), ending in */*;q=0.8 as a fallback. Some hosts'
+  // download endpoints — GitHub's archive/*.zip among them — negotiate on
+  // Accept strictly enough to 406 that fallback instead of honoring it.
+  // Retried only on an actual 406, so ordinary pages (which never hit this)
+  // are untouched, and only once the caller hasn't already picked an Accept.
+  const callerSetAccept = Object.keys(init.headers ?? {}).some((k) => k.toLowerCase() === "accept")
+  let acceptOverride: string | undefined
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     await assertSafeUrl(current)
@@ -197,7 +205,9 @@ async function fetchUpstream(
     // (a plain object would send both "Accept" and "accept", merged by fetch)
     const headers = new Headers({
       "User-Agent": USER_AGENT,
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+      Accept:
+        acceptOverride ??
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
       "Accept-Language": "en-US,en;q=0.9",
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
@@ -226,6 +236,12 @@ async function fetchUpstream(
         method = "GET"
         body = undefined
       }
+      continue
+    }
+
+    if (response.status === 406 && !callerSetAccept && acceptOverride !== "*/*") {
+      await response.body?.cancel().catch(() => {})
+      acceptOverride = "*/*"
       continue
     }
 
