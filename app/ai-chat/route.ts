@@ -1,5 +1,5 @@
 import { createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk"
-import { buildSdkEnv, modelConfigured, resolveModelName } from "@/agents/_model"
+import { buildFccSdkEnv, buildSdkEnv, fccConfigured, modelConfigured, resolveFccModelName, resolveModelName } from "@/agents/_model"
 import { createLogger } from "@/agents/_logger"
 import { takeQuota } from "@/agents/_quota"
 import { clearMailbox } from "@/agents/_mailbox"
@@ -226,7 +226,7 @@ export async function POST(request: Request): Promise<Response> {
   const browser = readBrowserSession(body.browser)
   const conversationId = request.headers.get("makers-conversation-id") || crypto.randomUUID()
   const env = process.env
-  const requestedModel = body.model === "eve" || body.model === "airllm" ? body.model : "claude"
+  const requestedModel = body.model === "eve" || body.model === "airllm" || body.model === "fcc" ? body.model : "claude"
 
   if (!message) return json({ error: "bad_request", message: "'message' is required" }, 400)
   if (uploaded.error) return json({ error: "bad_request", message: uploaded.error }, 400)
@@ -237,7 +237,14 @@ export async function POST(request: Request): Promise<Response> {
   if (message.length > MAX_MESSAGE_CHARS) {
     return json({ error: "bad_request", message: `Messages can be up to ${MAX_MESSAGE_CHARS} characters` }, 400)
   }
-  const configured = requestedModel === "eve" ? eveConfigured(env) : requestedModel === "airllm" ? airllmConfigured(env) : modelConfigured(env)
+  const configured =
+    requestedModel === "eve"
+      ? eveConfigured(env)
+      : requestedModel === "airllm"
+        ? airllmConfigured(env)
+        : requestedModel === "fcc"
+          ? fccConfigured(env)
+          : modelConfigured(env)
   if (!configured) {
     return json(
       {
@@ -246,7 +253,9 @@ export async function POST(request: Request): Promise<Response> {
           ? "Eve Agent isn't connected yet. Set DEVON_EVE_BASE_URL and DEVON_EVE_JWT_SECRET in Vercel."
           : requestedModel === "airllm"
             ? "AirLLM isn't connected yet. Run airllm-server/ on a GPU machine, then set DEVON_AIRLLM_BASE_URL and DEVON_AIRLLM_API_KEY in Vercel."
-            : "Devon AI isn't set up on this site yet: set ANTHROPIC_API_KEY (or AI_GATEWAY_API_KEY and AI_GATEWAY_BASE_URL) in Vercel.",
+            : requestedModel === "fcc"
+              ? "Free Claude Code isn't connected yet. Run your own Free Claude Code server (github.com/Alishahryar1/free-claude-code) somewhere Devon can reach it, then set DEVON_FCC_BASE_URL (and DEVON_FCC_API_KEY if its Proxy Authentication is on) in Vercel."
+              : "Devon AI isn't set up on this site yet: set ANTHROPIC_API_KEY (or AI_GATEWAY_API_KEY and AI_GATEWAY_BASE_URL) in Vercel.",
       },
       503,
     )
@@ -349,7 +358,7 @@ export async function POST(request: Request): Promise<Response> {
       },
     })
   }
-  await store.state.set("activeModel", "claude")
+  await store.state.set("activeModel", requestedModel === "fcc" ? "fcc" : "claude")
   if (conversationId) await clearMailbox(store, conversationId, logger.error)
   const channel: StreamChannel = { send: () => {} }
   const devonServer = createSdkMcpServer({
@@ -422,14 +431,19 @@ export async function POST(request: Request): Promise<Response> {
   const stopped = stopSignal(request.signal, conversationId)
 
   const options: Record<string, unknown> = {
-    model: resolveModelName(env),
+    model: requestedModel === "fcc" ? resolveFccModelName(env) : resolveModelName(env),
     systemPrompt: buildSystemPrompt(sandboxOn, uploaded.files),
     cwd: process.cwd(),
     tools: [], // no Claude Code built-ins (Bash/Write/Edit/...) — only the MCP tools below
     allowedTools: sandboxOn ? [...DEVON_TOOL_NAMES, ...UI_TOOL_NAMES, ...SANDBOX_TOOL_NAMES] : [...DEVON_TOOL_NAMES, ...UI_TOOL_NAMES],
     permissionMode: "bypassPermissions",
     maxTurns: 24,
-    env: buildSdkEnv(env),
+    // Free Claude Code (github.com/Alishahryar1/free-claude-code) gets full
+    // Devon tool/sandbox parity by reusing this same Claude Agent SDK path —
+    // only ANTHROPIC_BASE_URL/ANTHROPIC_API_KEY change — rather than a
+    // bespoke adapter like Eve Agent/AirLLM, since FCC's Anthropic-Messages
+    // endpoint preserves native tool use and streaming.
+    env: requestedModel === "fcc" ? buildFccSdkEnv(env) : buildSdkEnv(env),
     stderr: (line: string) => logger.error("[claude-cli stderr]", line),
     mcpServers: sandboxOn
       ? { [DEVON_SERVER]: devonServer, [UI_SERVER]: uiServer, [SANDBOX_SERVER]: sandboxServer }

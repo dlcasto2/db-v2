@@ -35,7 +35,7 @@
 import type { AgentContext } from "@edgeone/types"
 import { createSdkMcpServer, getSessionInfo, tool } from "@anthropic-ai/claude-agent-sdk"
 import { z } from "zod"
-import { buildSdkEnv, modelConfigured, resolveModelName } from "../_model"
+import { buildFccSdkEnv, buildSdkEnv, fccConfigured, modelConfigured, resolveFccModelName, resolveModelName } from "../_model"
 import { createLogger } from "../_logger"
 import { takeQuota } from "../_quota"
 import { clearMailbox } from "../_mailbox"
@@ -420,7 +420,7 @@ export async function onRequest(context: AgentContext) {
   const browser = readBrowserSession(body.browser)
   const conversationId = context.conversation_id || ""
   const { store, env } = context
-  const requestedModel = body.model === "eve" || body.model === "airllm" ? body.model : "claude"
+  const requestedModel = body.model === "eve" || body.model === "airllm" || body.model === "fcc" ? body.model : "claude"
 
   if (!message) return json({ error: "bad_request", message: "'message' is required" }, 400)
   if (uploaded.error) return json({ error: "bad_request", message: uploaded.error }, 400)
@@ -429,7 +429,14 @@ export async function onRequest(context: AgentContext) {
   if (message.length > MAX_MESSAGE_CHARS) {
     return json({ error: "bad_request", message: `Messages can be up to ${MAX_MESSAGE_CHARS} characters` }, 400)
   }
-  const configured = requestedModel === "eve" ? eveConfigured(env) : requestedModel === "airllm" ? airllmConfigured(env) : modelConfigured(env)
+  const configured =
+    requestedModel === "eve"
+      ? eveConfigured(env)
+      : requestedModel === "airllm"
+        ? airllmConfigured(env)
+        : requestedModel === "fcc"
+          ? fccConfigured(env)
+          : modelConfigured(env)
   if (!configured) {
     return json(
       {
@@ -438,7 +445,9 @@ export async function onRequest(context: AgentContext) {
           ? "Eve Agent isn't connected yet. Set DEVON_EVE_BASE_URL and DEVON_EVE_JWT_SECRET in EdgeOne."
           : requestedModel === "airllm"
             ? "AirLLM isn't connected yet. Run airllm-server/ on a GPU machine, then set DEVON_AIRLLM_BASE_URL and DEVON_AIRLLM_API_KEY in EdgeOne."
-            : "Devon AI isn't set up on this site yet: set AI_GATEWAY_API_KEY and AI_GATEWAY_BASE_URL (or ANTHROPIC_API_KEY) in EdgeOne.",
+            : requestedModel === "fcc"
+              ? "Free Claude Code isn't connected yet. Run your own Free Claude Code server (github.com/Alishahryar1/free-claude-code) somewhere Devon can reach it, then set DEVON_FCC_BASE_URL (and DEVON_FCC_API_KEY if its Proxy Authentication is on) in EdgeOne."
+              : "Devon AI isn't set up on this site yet: set AI_GATEWAY_API_KEY and AI_GATEWAY_BASE_URL (or ANTHROPIC_API_KEY) in EdgeOne.",
       },
       503,
     )
@@ -537,7 +546,7 @@ export async function onRequest(context: AgentContext) {
     })
   }
 
-  await store.state.set("activeModel", "claude")
+  await store.state.set("activeModel", requestedModel === "fcc" ? "fcc" : "claude")
   const tools = context.tools as unknown as {
     toClaudeMcpServer?: () => { name: string; tools: unknown[]; allowedTools: string[] }
   }
@@ -619,7 +628,7 @@ export async function onRequest(context: AgentContext) {
   const session = await resolveSession(context, claudeSessionStore, conversationId, cwd)
 
   const options: Record<string, unknown> = {
-    model: resolveModelName(env),
+    model: requestedModel === "fcc" ? resolveFccModelName(env) : resolveModelName(env),
     systemPrompt: buildSystemPrompt(uploaded.files),
     cwd,
     // Claude Code's own tools stay narrow: Skill loads project skills and Read
@@ -638,7 +647,10 @@ export async function onRequest(context: AgentContext) {
     },
     // Page tasks take a read and an action per step
     maxTurns: 24,
-    env: buildSdkEnv(env),
+    // Free Claude Code reuses this same path with ANTHROPIC_BASE_URL/
+    // ANTHROPIC_API_KEY swapped — see app/ai-chat/route.ts (Vercel) for the
+    // full rationale, which applies the same way here.
+    env: requestedModel === "fcc" ? buildFccSdkEnv(env) : buildSdkEnv(env),
     stderr: (line: string) => logger.error("[claude-cli stderr]", line),
     sessionStore: claudeSessionStore,
     mcpServers: { [edgeoneMcp.name]: mcpServer, [DEVON_SERVER]: devonServer, [UI_SERVER]: uiServer, [DELIVER_SERVER]: deliverFileServer },
