@@ -1,0 +1,48 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Devon Browser",
+  "version": "0.1.0",
+  "identifier": "net.lovedub.devon-browser",
+  "build": {
+    "frontendDist": "../frontend-dist",
+    "beforeDevCommand": "node scripts/prepare-standalone.mjs",
+    "beforeBuildCommand": "node scripts/prepare-standalone.mjs"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Devon Browser",
+        "url": "index.html",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "externalBin": ["binaries/node"],
+    "resources": {
+      "resources/app/": "app/"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

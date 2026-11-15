@@ -67,6 +67,14 @@ Devon runs anywhere Next.js runs, and it is currently deployed on both **EdgeOne
 - **Devon is not a static site.** Don't set `output: "export"` in `next.config.mjs`: the proxy, the YouTube routes and the page-safety route run on the server, and the export fails on the first of them (and the EdgeOne CLI then reports "No server-handler detected, generating routes.json for pure project"). For a github.io address, publish a small page that shows Devon running on the server instead.
 - **EdgeOne build disk space.** The build workspace is a small tmpfs. `app/ai-chat/route.ts` is never the route that actually answers `/ai-chat` on EdgeOne (`agents/ai-chat` is), so `next.config.mjs` only forces the Claude CLI's ~150 MB native binary into `.next/standalone` on real Vercel builds (`process.env.VERCEL`) and explicitly excludes it (plus `@e2b/*` and the build-only `@ffmpeg/core`) from EdgeOne's trace. If an EdgeOne build still runs out of space (`ENOSPC`, ret code 33) after that, the next biggest thing to trim is `public/games/**` (currently well over 100 MB and duplicated into `.edgeone/` on every build) — move it to external/CDN hosting if so.
 
+### Windows desktop app
+
+[`desktop/`](desktop/README.md) wraps Devon in a Tauri shell that runs
+Devon's own Next.js server as a bundled Node sidecar, for a real installable
+Windows 10/11 app rather than a browser tab. See `desktop/README.md` for how
+it's built, how to enable Devon AI/sign-in on your own build, and why this
+targets Windows 10/11 rather than 7 (Devon's Node 20+ requirement).
+
 ## Project layout
 
 | Path | What it is |

@@ -1,0 +1,76 @@
+name: Build Windows desktop app
+
+# Builds the Devon Browser desktop shell (desktop/) for Windows and uploads the
+# installer as a workflow artifact. Needs a real Windows runner: the Node
+# sidecar is Windows's official node.exe, and `tauri build` on Windows links
+# against WebView2 / produces an NSIS .exe installer, neither of which can be
+# produced from Linux/macOS runners.
+#
+# Trigger manually, or wire this to tags/releases once you're happy with it.
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - "desktop/**"
+      - "app/**"
+      - "components/**"
+      - "lib/**"
+      - "public/**"
+      - "next.config.mjs"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/desktop-windows.yml"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Devon's dependencies
+        run: pnpm install --frozen-lockfile
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install the Tauri CLI
+        run: pnpm --dir desktop install --frozen-lockfile
+
+      # Tauri sidecars must be named "<name>-<target-triple>.exe"
+      # (see desktop/README.md). The runner's own `node` is already the real
+      # Windows node.exe, so we just copy and rename it.
+      - name: Stage the Node sidecar binary
+        shell: bash
+        run: |
+          set -eu
+          mkdir -p desktop/src-tauri/binaries
+          node_path="$(command -v node)"
+          triple="x86_64-pc-windows-msvc"
+          cp "$node_path" "desktop/src-tauri/binaries/node-${triple}.exe"
+          desktop/src-tauri/binaries/node-${triple}.exe --version
+
+      # `pnpm --dir desktop run build` runs `tauri build`, whose
+      # beforeBuildCommand (see desktop/src-tauri/tauri.conf.json) is
+      # `node scripts/prepare-standalone.mjs` — it builds Devon itself as a
+      # standalone Next.js app and stages it as the sidecar's resources
+      # before Tauri bundles the installer. A Next.js build error shows up
+      # inline in this step's log, just without its own separate heading.
+      - name: Build the Windows installer
+        run: pnpm --dir desktop run build
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: devon-browser-windows
+          path: |
+            desktop/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error

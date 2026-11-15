@@ -5,6 +5,12 @@ const nextConfig = {
   // server, and a static export fails on the first one of them. It was added for
   // a GitHub Pages workflow and broke both the build and the EdgeOne deploy; see
   // "GitHub Pages" in README.md for the way to have a github.io address anyway.
+  //
+  // `output: "standalone"` is different: it still runs a real Node server
+  // (server.js), just traced down to the node_modules it actually needs. Only
+  // the Windows desktop build (see `desktop/README.md`) asks for it, via
+  // DEVON_DESKTOP_BUILD — EdgeOne and Vercel both keep their normal output.
+  ...(process.env.DEVON_DESKTOP_BUILD ? { output: "standalone" } : {}),
   env: {
     // Baked into the server code at build time, so the YouTube settings work even on
     // hosts that only give environment variables to the build (they're only used by
