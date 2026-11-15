@@ -181,7 +181,7 @@ Devon's version adds, on both backends:
 - **A daily limit per visitor**, counted on the server so refreshing, new chats or new tabs don't reset it. See below.
 - **Feedback:** every reply gets a thumbs up/down (hover a reply to see it). Down opens a reason chip (wrong fact · misread the page · bad/unsafe action · other) and an optional short note. It's logged as a small, append-only entry — model, a rough task-type label, the rating, the reason chip and note, a timestamp — never the page or the conversation itself, and reviewed by the site's maintainer as an aggregate digest (`POST /ai-feedback` with `{"action":"digest","admin_key":...}`), not a notification per click. See `agents/_feedback.ts`.
 - Chats keep streaming when you switch tabs, and links in replies open in a new Devon tab.
-- **Provider picker:** the Devon AI header lets you choose **Claude**, **Eve Agent** or **AirLLM**. The selection is saved in this browser and applies to new messages. Eve is a separate durable-agent runtime, not a model named “Eve”; its underlying model is configured in `eve-agent/agent/agent.ts` / `DEVON_EVE_MODEL`. AirLLM is an open model you run on your own GPU machine (see below). Eve and AirLLM are text-chat only and do not inherit Devon's live-tab tools or E2B sandbox.
+- **Provider picker:** the Devon AI header lets you choose **Claude**, **Eve Agent**, **AirLLM** or **Free Claude Code**. The selection is saved in this browser and applies to new messages. Eve is a separate durable-agent runtime, not a model named “Eve”; its underlying model is configured in `eve-agent/agent/agent.ts` / `DEVON_EVE_MODEL`. AirLLM is an open model you run on your own GPU machine (see below). Eve and AirLLM are text-chat only and do not inherit Devon's live-tab tools or E2B sandbox. Free Claude Code, by contrast, runs through this same Claude Agent SDK path — it keeps full access to Devon's tools and sandbox (see below).
 
 ### Eve Agent provider
 
@@ -207,6 +207,20 @@ The standalone Eve project, model configuration, channel authentication and depl
 | `DEVON_AIRLLM_MAX_TOKENS`, `DEVON_AIRLLM_MAX_PAGE_CHARS`, `DEVON_AIRLLM_TIMEOUT_SECONDS` | Optional: reply length (default 384), page text per question (default 6000), and a reply time limit shorter than the platform's. |
 
 Replies end cleanly, keeping their text, 10 s before the function limit (about 290 s on Vercel, 590 s on EdgeOne); for long replies from big models, use the standalone `devon-ai-api` service. No Redis is required, though without it the chat history the model sees doesn't persist between messages. Setup, hardware expectations and the API are in [`airllm-server/README.md`](airllm-server/README.md).
+
+### Free Claude Code provider
+
+[Free Claude Code](https://github.com/Alishahryar1/free-claude-code) (FCC) is an independent, AGPL-licensed project — not affiliated with or endorsed by Anthropic — that runs as a local proxy routing coding-agent CLIs to 60+ model providers (free, paid, subscription or local), while exposing a client-facing endpoint in several formats, including an Anthropic Messages (`/v1/messages`) one that preserves native tool use and streaming. Because of that, Devon doesn't need a bespoke adapter like Eve/AirLLM's: this provider just points the same Claude Agent SDK/Claude CLI subprocess Devon already uses at your FCC server, via `ANTHROPIC_BASE_URL`, so Free Claude Code gets full Devon tool and sandbox access, unlike Eve Agent or AirLLM.
+
+Run your own FCC instance (`curl -fsSL "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.sh" | sh`), pick a provider/model in its Admin UI, and make it reachable from wherever Devon's backend runs — FCC's server binds `0.0.0.0` by default, so a LAN address, tunnel, port-forward or small VPS all work; its quick-start docs only show same-machine `127.0.0.1` use, but nothing restricts it to that.
+
+| Variable | Meaning |
+| --- | --- |
+| `DEVON_FCC_BASE_URL` | Address of your Free Claude Code server, reachable from Devon's backend, e.g. `https://fcc.example.com` or `https://your-tunnel.example`. |
+| `DEVON_FCC_API_KEY` | Only needed if your FCC instance has Proxy Authentication turned on — its bearer token. Server-side only; never a `NEXT_PUBLIC_` variable. |
+| `DEVON_FCC_MODEL` | Optional: a specific FCC model string to request (e.g. one from its provider catalog). Without it, Devon sends its usual model name and FCC remaps it to whatever provider/model you've set as the default in its Admin UI. |
+
+Free Claude Code's own setup, provider catalog and Admin UI are documented in its own repository. Devon's side of the integration is `fccConfigured`/`buildFccSdkEnv`/`resolveFccModelName` in `agents/_model.ts`.
 
 Routes (same on both backends, so the client — `lib/devon-ai/` — doesn't know or care which one answers): `POST /ai-chat` (SSE stream, needs the `makers-conversation-id` header), `POST /ai-stop`, `POST /ai-history`, `POST /ai-conversations`, `POST /ai-delete-conversation`, `POST /ai-page-result` (page action results), `POST /ai-session` (read or clear a chat's session; chat ID in the header), `POST /ai-filesystem` (query, read, version, diff, edit, export, soft-delete, restore, approve a promotion, or run retention cleanup), and `POST /ai-feedback` (record a thumbs up/down, or — with the admin key — read the digest). On EdgeOne, agent runs may take up to 600 s (`edgeone.json`), since page tasks can wait on your permission; on Vercel, `app/ai-chat/route.ts` sets `maxDuration = 300`, but your Vercel plan's own function-duration limit may cap that lower.
 
