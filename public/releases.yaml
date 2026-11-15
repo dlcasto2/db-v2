@@ -1,0 +1,57 @@
+# Where Devon Browser is published.
+#
+# Each entry is a deployment of this repo. If one address is blocked or down,
+# try another. Every deployment serves this file at /releases.yaml.
+#
+# status:   live    — Devon loads and its proxy answers
+#           paused  — the host has suspended the deployment
+#           gone    — the address no longer exists
+#           broken  — the page loads but can't show Devon
+# server:   where Devon's server routes (the proxy, Devon AI) run for that address
+#
+# Statuses are as of `checked`. Update them when you add, move or retire a deployment.
+
+checked: 2026-11-15
+
+releases:
+  - name: Netlify
+    url: https://db-v2.netlify.app
+    host: netlify
+    status: live
+    server: netlify
+
+  - name: EdgeOne
+    url: https://db.edgeone.dev
+    host: edgeone
+    status: live
+    server: edgeone
+
+  - name: EdgeOne v5
+    url: https://db-v5.edgeone.dev
+    host: edgeone
+    status: gone
+    server: edgeone
+    note: EdgeOne answers that the site doesn't exist.
+
+  - name: Vercel
+    url: https://db-v2.vercel.app
+    host: vercel
+    status: paused
+    server: vercel
+    note: Vercel shows "Deployment Paused".
+
+  - name: lovedub.net
+    url: https://browser.lovedub.net
+    host: custom-domain
+    status: paused
+    note: Shows Vercel's "Deployment Paused" page.
+
+  - name: GitHub Pages
+    url: https://dlcasto2.github.io/db-v2/
+    host: github-pages
+    status: broken
+    server: edgeone
+    note: >-
+      A static page that shows Devon from https://db-v5.edgeone.dev full-page
+      (GitHub Pages can't run Devon's server). That address is gone, so this
+      page falls back to its "Devon didn't load here" message.
