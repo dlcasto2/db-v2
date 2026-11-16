@@ -10,7 +10,7 @@ name: Build Windows desktop app
 on:
   workflow_dispatch: {}
   push:
-    branches: [main]
+    branches: [main, desktop-windows-app]
     paths:
       - "desktop/**"
       - "app/**"
