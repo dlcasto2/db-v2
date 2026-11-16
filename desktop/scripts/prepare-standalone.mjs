@@ -15,11 +15,22 @@ const repoRoot = path.resolve(here, "..", "..") // desktop/scripts -> desktop ->
 const stagingDir = path.resolve(here, "..", "src-tauri", "resources", "app")
 
 console.log(`[prepare-standalone] building Devon (standalone) from ${repoRoot}`)
-const build = spawnSync(process.platform === "win32" ? "pnpm.cmd" : "pnpm", ["exec", "next", "build"], {
+// `shell: true` matters here: on Windows, pnpm is a .cmd (a batch script),
+// and spawnSync can't exec one directly without going through a shell — it
+// fails to even start the process (instantly, with nothing on stdio/stderr
+// to inherit, which otherwise silently looks just like `next build` itself
+// failing). This is harmless on POSIX too (plain `/bin/sh -c "pnpm ..."`),
+// and there's no untrusted input in the command here.
+const build = spawnSync("pnpm", ["exec", "next", "build"], {
   cwd: repoRoot,
   stdio: "inherit",
+  shell: true,
   env: { ...process.env, DEVON_DESKTOP_BUILD: "1" },
 })
+if (build.error) {
+  console.error(`[prepare-standalone] failed to start \`pnpm exec next build\`: ${build.error.message}`)
+  process.exit(1)
+}
 if (build.status !== 0) {
   console.error("[prepare-standalone] `next build` failed, aborting")
   process.exit(build.status ?? 1)
