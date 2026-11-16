@@ -73,6 +73,8 @@ import { LibraryPanel, type LibraryView } from "@/components/library-panel"
 import { NewTabPage } from "@/components/new-tab-page"
 import { GamesPage } from "@/components/games-page"
 import { GAMES, GAMES_URL, parseGamesUrl } from "@/lib/games"
+import { FccStatusPage } from "@/components/fcc-status-page"
+import { parseFccStatusUrl } from "@/lib/fcc-status"
 import { YouTubePage } from "@/components/youtube-page"
 import { YOUTUBE_ICON, parseYouTubeUrl, videoIdFromUrl, youTubePageUrl } from "@/lib/youtube"
 import { AppsPage } from "@/components/apps-page"
@@ -259,12 +261,12 @@ function persistableTabs(tabs: Tab[]) {
 /** What a tab shows, for Devon AI: a website, one of Devon's own pages, or nothing yet */
 function tabKind(tab: Tab): TabInfo["kind"] {
   if (!tab.url) return "new"
-  if (/^devon:/i.test(tab.url) || parseGamesUrl(tab.url) !== null || parseAppsUrl(tab.url) !== null || parseYouTubeUrl(tab.url)) return "devon"
+  if (/^devon:/i.test(tab.url) || parseGamesUrl(tab.url) !== null || parseAppsUrl(tab.url) !== null || parseYouTubeUrl(tab.url) || parseFccStatusUrl(tab.url)) return "devon"
   return "web"
 }
 
 function isInternalDevonTab(tab: Tab): boolean {
-  return parseGamesUrl(tab.url) !== null || parseAppsUrl(tab.url) !== null || parseYouTubeUrl(tab.url) !== null
+  return parseGamesUrl(tab.url) !== null || parseAppsUrl(tab.url) !== null || parseYouTubeUrl(tab.url) !== null || parseFccStatusUrl(tab.url)
 }
 
 function InternalDevonTab({
@@ -287,7 +289,8 @@ function InternalDevonTab({
   const gameId = parseGamesUrl(tab.url)
   const appPage = gameId === null ? parseAppsUrl(tab.url) : null
   const youtubeRoute = gameId === null && appPage === null ? parseYouTubeUrl(tab.url) : null
-  if (gameId === null && appPage === null && !youtubeRoute) return null
+  const fccStatus = gameId === null && appPage === null && !youtubeRoute ? parseFccStatusUrl(tab.url) : false
+  if (gameId === null && appPage === null && !youtubeRoute && !fccStatus) return null
 
   return (
     <div
@@ -321,6 +324,10 @@ function InternalDevonTab({
             onNavigate={(route) => onNavigate(tab.id, youTubePageUrl(route), "push")}
             onTitle={(title) => onTitle(tab.id, title)}
           />
+        </div>
+      ) : fccStatus ? (
+        <div className="relative flex min-h-0 flex-1">
+          <FccStatusPage onOpenApps={() => onOpenApps(tab.id)} />
         </div>
       ) : (
         <div className="relative flex min-h-0 flex-1">
