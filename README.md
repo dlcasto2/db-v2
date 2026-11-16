@@ -3,7 +3,7 @@
 A web proxy browser that runs in a browser tab. Devon has tabs, an address bar, bookmarks, history, Chrome extensions, developer tools, built-in Games and an Apps page (YouTube, Devon AI, Prompt Gen, Go Fish and HTML Lab). Pages load through Devon's own proxy.
 
 **Official links**
-- https://db-v5.edgeone.dev
+- https://db-v2.netlify.app/
 
 Built with Next.js 16 (App Router), TypeScript, Tailwind CSS v4 and shadcn/ui.
 
