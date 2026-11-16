@@ -10,11 +10,11 @@ use std::{
     collections::HashMap,
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
-use tauri::{Manager, RunEvent};
+use tauri::{Manager, RunEvent, WebviewWindow};
 use tauri_plugin_shell::{process::CommandChild, ShellExt};
 
 /// Holds the running sidecar's handle so we can kill it when the app exits.
@@ -97,29 +97,75 @@ fn user_env_path(app: &tauri::AppHandle) -> Option<PathBuf> {
         .map(|dir| dir.join("devon.env"))
 }
 
+/// Replaces the splash page's status text — shown instead of leaving
+/// "Starting Devon…" up forever if the server never comes up. `eval` runs on
+/// whatever page is currently loaded, which is still the splash page at every
+/// point this is called from (we only call `navigate` once we know better).
+fn show_status(window: &WebviewWindow, message: &str) {
+    let payload = serde_json::to_string(message).unwrap_or_else(|_| "\"(error)\"".into());
+    let js = format!("var s = document.getElementById('status'); if (s) s.textContent = {payload};");
+    if let Err(e) = window.eval(js) {
+        log::error!("Failed to update the splash page: {e}");
+    }
+}
+
+/// `devon-desktop.log` under app_log_dir() — included in on-screen error
+/// messages so a stuck launch points at something to go look at or send.
+fn log_file_hint(app: &tauri::AppHandle) -> String {
+    app.path()
+        .app_log_dir()
+        .ok()
+        .map(|dir| format!("\n\nDetails were written to:\n{}", dir.join("devon-desktop.log").display()))
+        .unwrap_or_default()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        // Always on — not just in `tauri dev`. A shipped build has no
+        // attached console, so this file is the only way to find out what
+        // went wrong when the server doesn't come up (see show_status /
+        // log_file_hint below). Written to app_log_dir() (on Windows:
+        // %LOCALAPPDATA%\<identifier>\logs\devon-desktop.log).
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .target(tauri_plugin_log::Target::new(
+                    tauri_plugin_log::TargetKind::LogDir {
+                        file_name: Some("devon-desktop".into()),
+                    },
+                ))
+                .level(log::LevelFilter::Info)
+                .build(),
+        )
         .manage(SidecarState(Mutex::new(None)))
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
-
             let app_handle = app.handle().clone();
+            let window = app_handle
+                .get_webview_window("main")
+                .expect("main window declared in tauri.conf.json");
 
-            let app_dir = find_app_dir(&app_handle).ok_or(
-                "Could not find Devon's standalone build (server.js) next to the app. \
-                 Run `node scripts/prepare-standalone.mjs` before `tauri build`/`tauri dev` \
-                 — see desktop/README.md.",
-            )?;
+            // From here on we report problems onto the splash page itself
+            // instead of just returning Err from setup(): a setup error has
+            // nowhere visible to go in a windowed, console-less release
+            // build, so the app would just vanish with no explanation.
+            let Some(app_dir) = find_app_dir(&app_handle) else {
+                let msg = "Could not find Devon's own files next to the app \
+                           (server.js is missing). This build is broken — please report it.";
+                log::error!("{msg}");
+                show_status(&window, msg);
+                return Ok(());
+            };
 
-            let port = pick_free_port()?;
+            let port = match pick_free_port() {
+                Ok(p) => p,
+                Err(e) => {
+                    let msg = format!("Couldn't find a free local port to use: {e}");
+                    log::error!("{msg}");
+                    show_status(&window, &format!("{msg}{}", log_file_hint(&app_handle)));
+                    return Ok(());
+                }
+            };
             log::info!("Starting Devon on 127.0.0.1:{port} from {app_dir:?}");
 
             let mut user_env = HashMap::new();
@@ -130,23 +176,45 @@ pub fn run() {
                 }
             }
 
-            let (mut rx, child) = app_handle
-                .shell()
-                .sidecar("node")?
+            let sidecar_cmd = match app_handle.shell().sidecar("node") {
+                Ok(cmd) => cmd,
+                Err(e) => {
+                    let msg = format!("Couldn't locate the bundled node sidecar: {e}");
+                    log::error!("{msg}");
+                    show_status(&window, &format!("{msg}{}", log_file_hint(&app_handle)));
+                    return Ok(());
+                }
+            };
+
+            let spawned = sidecar_cmd
                 .current_dir(app_dir.clone())
                 .args(["server.js"])
                 .env("PORT", port.to_string())
                 .env("HOSTNAME", "127.0.0.1")
                 .env("NODE_ENV", "production")
                 .envs(user_env)
-                .spawn()?;
+                .spawn();
+
+            let (mut rx, child) = match spawned {
+                Ok(pair) => pair,
+                Err(e) => {
+                    let msg = format!("Couldn't start Devon's server (node sidecar failed to launch): {e}");
+                    log::error!("{msg}");
+                    show_status(&window, &format!("{msg}{}", log_file_hint(&app_handle)));
+                    return Ok(());
+                }
+            };
 
             app_handle.state::<SidecarState>().0.lock().unwrap().replace(child);
 
-            // Surface the Node server's own stdout/stderr in our log output,
-            // which is the only way to see what went wrong if it exits early.
+            // Surface the Node server's own stdout/stderr in our log output
+            // (the only way to see what went wrong if it exits early) and,
+            // via `early_exit`, let the polling loop below notice a crash
+            // immediately instead of silently waiting out the full timeout.
             // Each event is already one line (CommandEvent::Stdout/Stderr
             // split on newlines themselves unless raw output is requested).
+            let early_exit: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+            let early_exit_for_task = early_exit.clone();
             tauri::async_runtime::spawn(async move {
                 use tauri_plugin_shell::process::CommandEvent;
                 while let Some(event) = rx.recv().await {
@@ -154,9 +222,20 @@ pub fn run() {
                         CommandEvent::Stdout(line) | CommandEvent::Stderr(line) => {
                             log::info!("[devon-server] {}", String::from_utf8_lossy(&line).trim_end());
                         }
-                        CommandEvent::Error(err) => log::error!("[devon-server] error: {err}"),
+                        CommandEvent::Error(err) => {
+                            log::error!("[devon-server] error: {err}");
+                            early_exit_for_task
+                                .lock()
+                                .unwrap()
+                                .get_or_insert_with(|| format!("Devon's server reported an error: {err}"));
+                        }
                         CommandEvent::Terminated(payload) => {
                             log::warn!("[devon-server] exited: {payload:?}");
+                            early_exit_for_task.lock().unwrap().get_or_insert_with(|| {
+                                format!(
+                                    "Devon's server exited unexpectedly before it finished starting ({payload:?})."
+                                )
+                            });
                         }
                         _ => {}
                     }
@@ -165,23 +244,35 @@ pub fn run() {
 
             // Poll the port on a plain OS thread (simplest way to block
             // without pulling in more async machinery) and navigate the
-            // splash window to Devon once it answers.
-            let window = app_handle
-                .get_webview_window("main")
-                .expect("main window declared in tauri.conf.json");
+            // splash window to Devon once it answers — or show whatever
+            // went wrong instead of leaving the splash page up forever.
+            let window_for_thread = window.clone();
+            let hint = log_file_hint(&app_handle);
             std::thread::spawn(move || {
                 let deadline = Instant::now() + Duration::from_secs(30);
-                while Instant::now() < deadline {
+                loop {
                     if port_is_open(port) {
                         let url = format!("http://127.0.0.1:{port}/").parse().unwrap();
-                        if let Err(e) = window.navigate(url) {
-                            log::error!("Failed to navigate to Devon: {e}");
+                        if let Err(e) = window_for_thread.navigate(url) {
+                            let msg = format!("Devon's server started, but the window failed to load it: {e}");
+                            log::error!("{msg}");
+                            show_status(&window_for_thread, &format!("{msg}{hint}"));
                         }
+                        return;
+                    }
+                    if let Some(reason) = early_exit.lock().unwrap().clone() {
+                        log::error!("{reason}");
+                        show_status(&window_for_thread, &format!("{reason}{hint}"));
+                        return;
+                    }
+                    if Instant::now() >= deadline {
+                        let msg = format!("Devon's server didn't start within 30 seconds.{hint}");
+                        log::error!("{msg}");
+                        show_status(&window_for_thread, &msg);
                         return;
                     }
                     std::thread::sleep(Duration::from_millis(200));
                 }
-                log::error!("Devon's server never came up on port {port} within 30s");
             });
 
             Ok(())

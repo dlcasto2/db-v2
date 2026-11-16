@@ -101,6 +101,18 @@ for real Vercel builds — same as EdgeOne, this build's `output:
 in the bundle at all. Devon AI's other providers (Eve Agent, AirLLM, OpenAI
 Agents) aren't affected; they're plain HTTP calls, not a subprocess.
 
+## If it gets stuck on "Starting Devon…"
+
+The splash screen now replaces itself with whatever actually went wrong
+(the sidecar failed to launch, Devon's server crashed on startup, or it
+just never answered within 30 seconds) instead of sitting there forever —
+if you're on an older build that doesn't do this, update first. Either
+way, more detail is always written to a log file, regardless of build
+type: on Windows, `%LOCALAPPDATA%\net.lovedub.devon-browser\logs\devon-desktop.log`
+(substitute your own `identifier` if you changed it in `tauri.conf.json`).
+That file's last few lines are the first thing to check or share when
+reporting a stuck launch.
+
 ## Known rough edges
 
 - Closing the window kills the sidecar; there's no "minimize to tray and
