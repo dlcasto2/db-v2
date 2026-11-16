@@ -45,6 +45,25 @@ if (!existsSync(standaloneDir)) {
   process.exit(1)
 }
 
+// pnpm's node_modules is a tree of symlinks (or, on Windows, junctions) into
+// a shared .pnpm store. Tauri's resource copy and NSIS packaging don't carry
+// those through reliably onto a different machine than the one that built
+// them, which is exactly what made the installed app's server crash right
+// on startup — `require('next')` failing once the links were gone. Flatten
+// standaloneDir in place, before it gets copied below, so there's nothing
+// left for either step to mishandle.
+const flatten = spawnSync(process.execPath, [path.join(here, "flatten-standalone.mjs"), standaloneDir], {
+  stdio: "inherit",
+})
+if (flatten.error) {
+  console.error(`[prepare-standalone] failed to start flatten-standalone.mjs: ${flatten.error.message}`)
+  process.exit(1)
+}
+if (flatten.status !== 0) {
+  console.error("[prepare-standalone] flatten-standalone.mjs failed, aborting")
+  process.exit(flatten.status ?? 1)
+}
+
 console.log(`[prepare-standalone] staging into ${stagingDir}`)
 rmSync(stagingDir, { recursive: true, force: true })
 mkdirSync(stagingDir, { recursive: true })
