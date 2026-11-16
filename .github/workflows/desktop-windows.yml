@@ -25,6 +25,8 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write # needed to publish the Release step below
     steps:
       - uses: actions/checkout@v4
 
@@ -74,3 +76,24 @@ jobs:
           path: |
             desktop/src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error
+
+      # Workflow artifacts (above) require being signed into GitHub and
+      # redirect to Azure Blob Storage to download, which isn't reachable
+      # from every environment. A Release asset downloads straight from
+      # github.com with no sign-in, so that's the easy link to hand anyone.
+      # This re-publishes the same tag/release every run so the link stays
+      # stable — it's a preview build off this branch, not a tagged version.
+      - name: Publish installer to a GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          tag="desktop-app-preview"
+          gh release delete "$tag" --yes --cleanup-tag --repo "${{ github.repository }}" 2>/dev/null || true
+          exe="$(ls desktop/src-tauri/target/release/bundle/nsis/*.exe)"
+          gh release create "$tag" "$exe" \
+            --repo "${{ github.repository }}" \
+            --title "Devon Browser desktop app (preview build)" \
+            --target "${{ github.sha }}" \
+            --notes "Automated preview build from commit ${{ github.sha }} on \`${{ github.ref_name }}\` — see desktop/README.md. Not yet merged to main; this release is overwritten by the next build."
