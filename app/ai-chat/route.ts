@@ -250,12 +250,12 @@ export async function POST(request: Request): Promise<Response> {
       {
         error: "not_configured",
         message: requestedModel === "eve"
-          ? "Eve Agent isn't connected yet. Set DEVON_EVE_BASE_URL and DEVON_EVE_JWT_SECRET in Vercel."
+          ? "Eve Agent isn't connected yet. Set DEVON_EVE_BASE_URL and DEVON_EVE_JWT_SECRET in this site's environment variables."
           : requestedModel === "airllm"
-            ? "AirLLM isn't connected yet. Run airllm-server/ on a GPU machine, then set DEVON_AIRLLM_BASE_URL and DEVON_AIRLLM_API_KEY in Vercel."
+            ? "AirLLM isn't connected yet. Run airllm-server/ on a GPU machine, then set DEVON_AIRLLM_BASE_URL and DEVON_AIRLLM_API_KEY in this site's environment variables."
             : requestedModel === "fcc"
-              ? "Free Claude Code isn't connected yet. Run your own Free Claude Code server (github.com/Alishahryar1/free-claude-code) somewhere Devon can reach it, then set DEVON_FCC_BASE_URL (and DEVON_FCC_API_KEY if its Proxy Authentication is on) in Vercel."
-              : "Devon AI isn't set up on this site yet: set ANTHROPIC_API_KEY (or AI_GATEWAY_API_KEY and AI_GATEWAY_BASE_URL) in Vercel.",
+              ? "Free Claude Code isn't connected yet. Run your own Free Claude Code server (github.com/Alishahryar1/free-claude-code) somewhere Devon can reach it, then set DEVON_FCC_BASE_URL (and DEVON_FCC_API_KEY if its Proxy Authentication is on) in this site's environment variables."
+              : "Devon AI isn't set up on this site yet: set ANTHROPIC_API_KEY (or AI_GATEWAY_API_KEY and AI_GATEWAY_BASE_URL) in this site's environment variables.",
       },
       503,
     )
