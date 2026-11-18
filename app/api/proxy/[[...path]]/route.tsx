@@ -674,71 +674,13 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
   }
 
   // ---- window.open(): open proxied pages in a new Devon tab
-  //
-  // Some sites — eBay's rover.ebay.com click-tracking links are a common
-  // example — call window.open() with NO url to get a window handle
-  // synchronously (the only way a popup survives popup blockers), then set
-  // its .location once a tracking request finishes. allow-popups-to-escape-
-  // sandbox means a window opened that way is a normal, un-proxied tab with
-  // none of this script in it: once the site holds that reference, nothing
-  // Devon injects can see what gets assigned to it afterward, so the eventual
-  // navigation goes straight to the real site, outside Devon entirely. A
-  // blank open gets a stand-in object instead, whose .location Devon can
-  // still intercept and hand to send() like any other navigation.
   var nativeOpen = window.open;
-  function openProxied(url, target) {
-    var t = String(target || '_blank').toLowerCase();
-    send({ url: url, newTab: t !== '_self' && t !== '_parent' && t !== '_top' });
-  }
-  function pendingPopup(target) {
-    var closed = false;
-    var go = function (value) {
-      var dest = realUrl(value);
-      if (isHttp(dest)) openProxied(dest, target);
-    };
-    // One stable object, reused on every access — not rebuilt per read, or
-    // popup.location.href = url (at least as common as popup.location = url
-    // or .assign()/.replace()) would set .href on a throwaway object that's
-    // discarded immediately after, silently going nowhere instead of opening a
-    // Devon tab. Its own href is an accessor for the same reason.
-    var fakeLocation = {
-      assign: go,
-      replace: go,
-      reload: function () {},
-      toString: function () { return ''; },
-    };
-    Object.defineProperty(fakeLocation, 'href', { get: function () { return ''; }, set: go });
-    var pending = {
-      close: function () { closed = true; },
-      focus: function () {},
-      blur: function () {},
-      postMessage: function () {},
-      document: {
-        write: function () {},
-        writeln: function () {},
-        close: function () {},
-        open: function () { return pending.document; },
-      },
-    };
-    Object.defineProperty(pending, 'closed', { get: function () { return closed; } });
-    try {
-      // The setter covers whole-property reassignment (popup.location = url);
-      // the getter hands back the same object every time so href/assign/replace
-      // on it keep working too.
-      Object.defineProperty(pending, 'location', { get: function () { return fakeLocation; }, set: go });
-    } catch (e) {
-      pending.location = fakeLocation;
-    }
-    return pending;
-  }
   window.open = function (u, target) {
     var url = u === undefined || u === '' ? null : realUrl(u);
-    if (isHttp(url)) {
-      openProxied(url, target);
-      return null; // same as a blocked popup
-    }
-    if (u === undefined || u === '' || u === 'about:blank') return pendingPopup(target);
-    return nativeOpen.apply(window, arguments);
+    if (!isHttp(url)) return nativeOpen.apply(window, arguments);
+    var t = String(target || '_blank').toLowerCase();
+    send({ url: url, newTab: t !== '_self' && t !== '_parent' && t !== '_top' });
+    return null; // same as a blocked popup
   };
 
   // ---- history.pushState/replaceState: the site passes URLs on its own origin, which
@@ -1561,27 +1503,6 @@ function processHTML(content: string, pageUrl: string, proxyOrigin: string, expe
       return `<link${before}href=${q}${href}${q}${after}>`
     })
 
-    // <meta http-equiv="refresh" content="N;url=..."> navigates the document on
-    // its own timer, outside any click/form/history hook. The injected script's
-    // Navigation API listener (below) is meant to catch it like any other
-    // navigation, but that's a client-side assumption about a non-standard
-    // cross-browser corner of a fairly new API — interstitial/"please wait"
-    // pages (bot-check, redirect gateways) that are little more than a bare
-    // refresh tag are exactly the case where, if that assumption is ever wrong,
-    // the frame navigates itself straight to the real site. Rewriting the URL
-    // here means that even if the client-side hook never fires, the timer
-    // still lands back on the proxy.
-    markup = markup.replace(/<meta\b[^>]*>/gi, (tag) => {
-      if (!/\bhttp-equiv\s*=\s*["']?refresh["']?/i.test(tag)) return tag
-      return tag.replace(/\bcontent\s*=\s*(["'])([\s\S]*?)\1/i, (whole, q: string, raw: string) => {
-        const m = /^([^;]*;\s*)(?:url\s*=\s*)?(['"])?([^'"]*)\2?\s*$/i.exec(raw)
-        if (!m || !m[3]) return whole
-        const abs = proxiable(m[3], pageUrl)
-        if (!abs) return whole
-        return `content=${q}${m[1]}url=${proxied(proxyOrigin, abs)}${q}`
-      })
-    })
-
     // Subresource Integrity hashes can't match content the proxy rewrote
     markup = markup.replace(/<(script|link)\b[^>]*>/gi, (tag) =>
       tag.includes(PROXY_PATH) || tag.includes(MIRROR_PATH) ? tag.replace(/\sintegrity=(["'])[^"']*\1/i, "") : tag,
@@ -1654,52 +1575,6 @@ function encodeBody(text: string, acceptEncoding: string | null): { body: Uint8A
   return { body, headers }
 }
 
-/**
- * The most one function response reliably carries. EdgeOne Pages (like most
- * serverless hosts) caps a single response at a few MB and fails anything
- * bigger outright — which is why the slice mode below exists.
- */
-const SINGLE_RESPONSE_LIMIT = 4 * 1024 * 1024
-
-/**
- * Types a browser downloads instead of showing (archives, installers, raw
- * bytes; binary/octet-stream is what S3 labels files it can't identify)
- */
-const DOWNLOAD_TYPE_RE =
-  /^(?:binary\/octet-stream|application\/(?:octet-stream|zip|x-zip|x-zip-compressed|x-7z-compressed|x-rar|x-rar-compressed|vnd\.rar|x-tar|gzip|x-gzip|x-bzip2?|x-xz|zstd|x-msdownload|x-msi|x-ms-installer|x-apple-diskimage|vnd\.android\.package-archive|java-archive|x-java-archive|x-iso9660-image|x-debian-package|x-rpm|x-sh|x-executable|vnd\.microsoft\.portable-executable))\b/i
-
-/**
- * Whether a page navigation landed on a file to save rather than a page to
- * show: the site said so (Content-Disposition: attachment), it's a type no
- * frame can display, or it's too big to come back in one response at all.
- */
-function isDownloadResponse(upstream: Response, contentType: string): boolean {
-  if (/^\s*attachment\b/i.test(upstream.headers.get("content-disposition") || "")) return true
-  if (DOWNLOAD_TYPE_RE.test(contentType.trim())) return true
-  // Pages, scripts and styles are rewritten and re-compressed, so their size on
-  // the wire isn't what's sent on; everything else is passed on as-is
-  if (/text\/html|application\/xhtml|javascript|text\/css/i.test(contentType)) return false
-  const length = Number(upstream.headers.get("content-length"))
-  return Number.isFinite(length) && length > SINGLE_RESPONSE_LIMIT
-}
-
-/** The file name a Content-Disposition header asks for (RFC 6266), or null */
-function fileNameFromDisposition(header: string | null): string | null {
-  if (!header) return null
-  const extended = /filename\*\s*=\s*([^']*)'[^']*'([^;]+)/i.exec(header)
-  if (extended) {
-    try {
-      const name = decodeURIComponent(extended[2].trim().replace(/^"|"$/g, ""))
-      if (name) return name
-    } catch {
-      // malformed; fall back to the plain filename=
-    }
-  }
-  const plain = /(?:^|;)\s*filename\s*=\s*(?:"([^"]*)"|([^;]+))/i.exec(header)
-  const name = (plain?.[1] ?? plain?.[2] ?? "").trim()
-  return name || null
-}
-
 async function buildProxyResponse(
   upstream: Response,
   finalUrl: string,
@@ -1708,7 +1583,6 @@ async function buildProxyResponse(
   isHead = false,
   experimental = false,
   acceptEncoding: string | null = null,
-  navigation = false,
 ): Promise<NextResponse> {
   const status = upstream.status
   const contentType = upstream.headers.get("content-type") || "application/octet-stream"
@@ -1719,32 +1593,6 @@ async function buildProxyResponse(
 
   if (status === 204 || status === 205 || status === 304) {
     return new NextResponse(null, { status, headers: baseHeaders })
-  }
-
-  // A tab navigated to a file download (a GitHub "Download ZIP" link, an
-  // installer...). Don't try to push the file through this one response: past
-  // a few MB the host refuses it, and the visitor got a bare error (a 190 MB
-  // repo archive came back as "HTTP 406"). Answer with what the file is, and
-  // the app downloads it in slices (?slice=) and saves it, like a browser
-  // download, leaving the current page where it was.
-  if (navigation && !raw && !isHead && status >= 200 && status < 300 && isDownloadResponse(upstream, contentType)) {
-    await upstream.body?.cancel().catch(() => {})
-    // A compressed transfer's length isn't the file's
-    const encoding = (upstream.headers.get("content-encoding") || "identity").toLowerCase()
-    const length = encoding === "identity" ? Number(upstream.headers.get("content-length")) : NaN
-    const name = (fileNameFromDisposition(upstream.headers.get("content-disposition")) || fileNameFromUrl(finalUrl))
-      .replace(/[\\/\r\n]+/g, "_")
-      .slice(0, 200)
-    return NextResponse.json(
-      {
-        download: {
-          name: name || "download",
-          type: contentType.split(";")[0].trim() || "application/octet-stream",
-          size: Number.isFinite(length) && length > 0 ? length : null,
-        },
-      },
-      { status: 200, headers: { ...baseHeaders, "X-Devon-Download": "1", "Cache-Control": "no-store" } },
-    )
   }
 
   // Raw mode (the page's own fetch/XHR calls): pass the body through untouched
@@ -1948,10 +1796,6 @@ async function handle(
       init.method.toUpperCase() === "HEAD",
       experimental,
       request.headers.get("accept-encoding"),
-      // Only the app's own tab loads (fetchThroughProxy) ask for this. A page's
-      // subresources (a font served as octet-stream, say) must keep getting
-      // their bytes, and a POST result can't be re-fetched in GET slices.
-      !raw && method === "GET" && request.nextUrl.searchParams.get("nav") === "1",
     )
     if (jar) {
       for (const header of jarSetCookieHeaders(jar, request.nextUrl.protocol === "https:")) {
@@ -2109,13 +1953,6 @@ async function handleSlice(request: NextRequest, targetUrl: string, index: numbe
     const range = response.headers.get("content-range")
     const total = range ? Number(range.split("/")[1]) : NaN
     if (!more && Number.isFinite(total) && total > start + kept) more = true
-    // The whole file's size, when the site says (lets downloads show progress)
-    const wholeLength =
-      response.status === 206
-        ? total
-        : !response.headers.get("content-encoding")
-          ? Number(response.headers.get("content-length"))
-          : NaN
 
     const body = new Uint8Array(kept)
     let offset = 0
@@ -2123,14 +1960,15 @@ async function handleSlice(request: NextRequest, targetUrl: string, index: numbe
       body.set(c, offset)
       offset += c.byteLength
     }
-    const sliceHeaders: Record<string, string> = {
-      "Content-Type": response.headers.get("content-type") || "application/octet-stream",
-      "X-Devon-More": more ? "1" : "0",
-      "X-Proxy-Final-Url": finalUrl,
-      "Cache-Control": "public, max-age=3600",
-    }
-    if (Number.isFinite(wholeLength) && wholeLength > 0) sliceHeaders["X-Devon-Total"] = String(wholeLength)
-    return new NextResponse(body, { status: 200, headers: sliceHeaders })
+    return new NextResponse(body, {
+      status: 200,
+      headers: {
+        "Content-Type": response.headers.get("content-type") || "application/octet-stream",
+        "X-Devon-More": more ? "1" : "0",
+        "X-Proxy-Final-Url": finalUrl,
+        "Cache-Control": "public, max-age=3600",
+      },
+    })
   } catch (error) {
     return errorResponse(error)
   } finally {
@@ -2155,42 +1993,7 @@ function subpathResponse(request: NextRequest, method: "GET" | "HEAD"): Promise<
   return handle(request, moduleUrl, { method })
 }
 
-/**
- * Every proxy response depends on its query string (?url=, raw, slice...), so
- * a shared cache must key on all of it. Netlify's Next.js runtime keys its CDN
- * cache on only the __nextDataReq and _rsc query params unless a response says
- * otherwise, and turns "Cache-Control: public, max-age=3600" into a durable
- * edge cache entry. The first cacheable response (an image a page loaded) was
- * stored under the bare /api/proxy address and then served for every other
- * ?url= — every visitor's every tab got the same Wikipedia logo instead of the
- * page, and showed up blank. Netlify-Vary: query keys on the whole query
- * string; other hosts ignore the header.
- */
-function keyedOnQuery(response: Response): Response {
-  try {
-    response.headers.set("Netlify-Vary", "query")
-    return response
-  } catch {
-    // Immutable headers (a fetch() response passed straight through): copy them
-    const headers = new Headers(response.headers)
-    headers.set("Netlify-Vary", "query")
-    return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
-  }
-}
-
 export async function GET(request: NextRequest) {
-  return keyedOnQuery(await handleGet(request))
-}
-
-export async function HEAD(request: NextRequest) {
-  return keyedOnQuery(await handleHead(request))
-}
-
-export async function POST(request: NextRequest) {
-  return keyedOnQuery(await handlePost(request))
-}
-
-async function handleGet(request: NextRequest): Promise<Response> {
   const sub = subpathResponse(request, "GET")
   if (sub) return sub
   if (request.nextUrl.searchParams.get("clearCookies") === "1") return clearJarCookies(request)
@@ -2247,7 +2050,7 @@ function attachmentHeader(name: string): string {
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(clean)}`
 }
 
-async function handleHead(request: NextRequest): Promise<Response> {
+export async function HEAD(request: NextRequest) {
   const sub = subpathResponse(request, "HEAD")
   if (sub) return sub
   const targetUrl = request.nextUrl.searchParams.get("url")
@@ -2262,7 +2065,7 @@ async function handleHead(request: NextRequest): Promise<Response> {
  *   used by the app for form submissions. A string body is forwarded as-is
  *   (urlencoded); an object body is sent as JSON, for backwards compatibility.
  */
-async function handlePost(request: NextRequest): Promise<Response> {
+export async function POST(request: NextRequest) {
   if (isSubpath(request)) return NextResponse.json({ error: "Only GET is supported here" }, { status: 405 })
   const raw = rawTarget(request)
   if (raw) return handleRaw(request, raw)
@@ -2286,11 +2089,11 @@ async function handlePost(request: NextRequest): Promise<Response> {
   return handle(request, targetUrl, { method: "POST", body, contentType })
 }
 
-async function rawOnly(request: NextRequest): Promise<Response> {
-  if (isSubpath(request)) return keyedOnQuery(NextResponse.json({ error: "Only GET is supported here" }, { status: 405 }))
+async function rawOnly(request: NextRequest): Promise<NextResponse> {
+  if (isSubpath(request)) return NextResponse.json({ error: "Only GET is supported here" }, { status: 405 })
   const raw = rawTarget(request)
-  if (!raw) return keyedOnQuery(NextResponse.json({ error: "Only supported with raw=1" }, { status: 405 }))
-  return keyedOnQuery(await handleRaw(request, raw))
+  if (!raw) return NextResponse.json({ error: "Only supported with raw=1" }, { status: 405 })
+  return handleRaw(request, raw)
 }
 
 export const PUT = rawOnly
