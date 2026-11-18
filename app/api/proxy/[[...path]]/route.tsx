@@ -2155,7 +2155,42 @@ function subpathResponse(request: NextRequest, method: "GET" | "HEAD"): Promise<
   return handle(request, moduleUrl, { method })
 }
 
+/**
+ * Every proxy response depends on its query string (?url=, raw, slice...), so
+ * a shared cache must key on all of it. Netlify's Next.js runtime keys its CDN
+ * cache on only the __nextDataReq and _rsc query params unless a response says
+ * otherwise, and turns "Cache-Control: public, max-age=3600" into a durable
+ * edge cache entry. The first cacheable response (an image a page loaded) was
+ * stored under the bare /api/proxy address and then served for every other
+ * ?url= — every visitor's every tab got the same Wikipedia logo instead of the
+ * page, and showed up blank. Netlify-Vary: query keys on the whole query
+ * string; other hosts ignore the header.
+ */
+function keyedOnQuery(response: Response): Response {
+  try {
+    response.headers.set("Netlify-Vary", "query")
+    return response
+  } catch {
+    // Immutable headers (a fetch() response passed straight through): copy them
+    const headers = new Headers(response.headers)
+    headers.set("Netlify-Vary", "query")
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+  }
+}
+
 export async function GET(request: NextRequest) {
+  return keyedOnQuery(await handleGet(request))
+}
+
+export async function HEAD(request: NextRequest) {
+  return keyedOnQuery(await handleHead(request))
+}
+
+export async function POST(request: NextRequest) {
+  return keyedOnQuery(await handlePost(request))
+}
+
+async function handleGet(request: NextRequest): Promise<Response> {
   const sub = subpathResponse(request, "GET")
   if (sub) return sub
   if (request.nextUrl.searchParams.get("clearCookies") === "1") return clearJarCookies(request)
@@ -2212,7 +2247,7 @@ function attachmentHeader(name: string): string {
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(clean)}`
 }
 
-export async function HEAD(request: NextRequest) {
+async function handleHead(request: NextRequest): Promise<Response> {
   const sub = subpathResponse(request, "HEAD")
   if (sub) return sub
   const targetUrl = request.nextUrl.searchParams.get("url")
@@ -2227,7 +2262,7 @@ export async function HEAD(request: NextRequest) {
  *   used by the app for form submissions. A string body is forwarded as-is
  *   (urlencoded); an object body is sent as JSON, for backwards compatibility.
  */
-export async function POST(request: NextRequest) {
+async function handlePost(request: NextRequest): Promise<Response> {
   if (isSubpath(request)) return NextResponse.json({ error: "Only GET is supported here" }, { status: 405 })
   const raw = rawTarget(request)
   if (raw) return handleRaw(request, raw)
@@ -2251,11 +2286,11 @@ export async function POST(request: NextRequest) {
   return handle(request, targetUrl, { method: "POST", body, contentType })
 }
 
-async function rawOnly(request: NextRequest): Promise<NextResponse> {
-  if (isSubpath(request)) return NextResponse.json({ error: "Only GET is supported here" }, { status: 405 })
+async function rawOnly(request: NextRequest): Promise<Response> {
+  if (isSubpath(request)) return keyedOnQuery(NextResponse.json({ error: "Only GET is supported here" }, { status: 405 }))
   const raw = rawTarget(request)
-  if (!raw) return NextResponse.json({ error: "Only supported with raw=1" }, { status: 405 })
-  return handleRaw(request, raw)
+  if (!raw) return keyedOnQuery(NextResponse.json({ error: "Only supported with raw=1" }, { status: 405 }))
+  return keyedOnQuery(await handleRaw(request, raw))
 }
 
 export const PUT = rawOnly
