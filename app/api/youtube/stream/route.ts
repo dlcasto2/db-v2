@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { CHUNK_SIZE, VIDEO_ID_RE, YTError, browserCookieFrom, streamSlice } from "@/lib/youtube-server"
+import { CHUNK_SIZE, VIDEO_ID_RE, YTError, browserCookieFrom, corsPreflight, streamSlice, withCors } from "@/lib/youtube-server"
 
 export const runtime = "nodejs"
 export const maxDuration = 60
@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
   const client = params.get("c") ?? undefined
   const dl = params.get("dl")
   if (!VIDEO_ID_RE.test(id) || !Number.isInteger(itag) || itag <= 0) {
-    return NextResponse.json({ error: "Bad video or format." }, { status: 400 })
+    return withCors(request, NextResponse.json({ error: "Bad video or format." }, { status: 400 }))
   }
 
   let start = 0
@@ -44,12 +44,16 @@ export async function GET(request: NextRequest) {
       "content-encoding": "identity",
     })
     if (dl) headers.set("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent(dl)}`)
-    return new Response(slice.body, { status: 206, headers })
+    return withCors(request, new Response(slice.body, { status: 206, headers }))
   } catch (error) {
     if (request.signal.aborted) return new Response(null, { status: 499 })
     if (!(error instanceof YTError) || error.status >= 500) console.error("[youtube/stream]", id, itag, error)
     const status = error instanceof YTError ? error.status : 502
     const message = error instanceof Error ? error.message : "Stream failed."
-    return NextResponse.json({ error: message }, { status })
+    return withCors(request, NextResponse.json({ error: message }, { status }))
   }
+}
+
+export function OPTIONS(request: NextRequest) {
+  return corsPreflight(request)
 }
