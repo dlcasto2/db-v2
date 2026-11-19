@@ -20,13 +20,13 @@ export const GAMES_URL = "devon://games"
 export const GAMES: Game[] = [
   {
     id: "abyssal-transcendence",
-    title: "Abyssal Transcendence: Dimensions Demo",
+    title: "Abyssal Transcendence 2 Dimensions",
     author: "Independent",
-    description: "Explore the Origin and take on the Bedrock Labyrinth in this free demo of the dark voxel multiverse.",
+    description: "Gather and craft at the Origin, forge the Rift Beacon, and cross into the dimensions of a dark voxel multiverse.",
     src: "/games/abyssal-transcendence/index.html",
     cover: "/games/abyssal-transcendence/cover.svg",
     icon: "/games/abyssal-transcendence/cover.svg",
-    size: "6 MB",
+    size: "7 MB",
   },
   {
     id: "game-inside-a-game",
