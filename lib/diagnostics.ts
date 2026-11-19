@@ -46,6 +46,182 @@ function shortUrl(url: string) {
   }
 }
 
+/** MP4 sample-entry codes: readable name and a type string to ask the browser about */
+const VIDEO_CODECS: Record<string, [string, string]> = {
+  avc1: ["H.264", 'video/mp4; codecs="avc1.640028"'],
+  avc3: ["H.264", 'video/mp4; codecs="avc3.640028"'],
+  hvc1: ["HEVC (H.265)", 'video/mp4; codecs="hvc1.1.6.L120.90"'],
+  hev1: ["HEVC (H.265)", 'video/mp4; codecs="hev1.1.6.L120.90"'],
+  dvh1: ["Dolby Vision (HEVC)", 'video/mp4; codecs="dvh1.05.06"'],
+  dvhe: ["Dolby Vision (HEVC)", 'video/mp4; codecs="dvhe.05.06"'],
+  av01: ["AV1", 'video/mp4; codecs="av01.0.08M.08"'],
+  vp09: ["VP9", 'video/mp4; codecs="vp09.00.40.08"'],
+  vp08: ["VP8", 'video/mp4; codecs="vp08.00.41.08"'],
+  mp4v: ["MPEG-4 Visual", 'video/mp4; codecs="mp4v.20.9"'],
+}
+const AUDIO_CODECS: Record<string, string> = { mp4a: "AAC", Opus: "Opus", "ac-3": "AC-3", "ec-3": "E-AC-3", fLaC: "FLAC", ".mp3": "MP3" }
+/** WebM/Matroska codec IDs, found by plain text search in the header */
+const WEBM_CODECS: [string, string][] = [
+  ["V_VP9", "VP9"], ["V_VP8", "VP8"], ["V_AV1", "AV1"], ["V_MPEG4/ISO/AVC", "H.264"], ["V_MPEGH/ISO/HEVC", "HEVC (H.265)"],
+  ["A_OPUS", "Opus"], ["A_VORBIS", "Vorbis"], ["A_AAC", "AAC"],
+]
+
+const fourcc = (b: Uint8Array, o: number) => String.fromCharCode(b[o], b[o + 1], b[o + 2], b[o + 3])
+
+/** Reads `length` bytes from `start` with a Range request (streams the file up to there if Range is ignored) */
+async function readBytes(url: string, start: number, length: number): Promise<{ bytes: Uint8Array; total: number } | null> {
+  const res = await fetch(url, { headers: { Range: `bytes=${start}-${start + length - 1}` }, cache: "no-store" })
+  if (!res.ok || !res.body) return null
+  const range = res.headers.get("content-range")
+  const total = range ? Number(range.split("/")[1]) : NaN
+  const skip = res.status === 206 ? 0 : start
+  // Without Range support the whole file streams from byte 0: don't wade through a big one
+  if (skip > 16 * 1024 * 1024) {
+    res.body.cancel().catch(() => {})
+    return null
+  }
+  const reader = res.body.getReader()
+  const out = new Uint8Array(length)
+  let got = 0
+  let seen = 0
+  while (got < length) {
+    const { done, value } = await reader.read()
+    if (done || !value) break
+    let chunk = value
+    if (seen + chunk.length <= skip) {
+      seen += chunk.length
+      continue
+    }
+    if (seen < skip) {
+      chunk = chunk.subarray(skip - seen)
+      seen = skip
+    }
+    const n = Math.min(chunk.length, length - got)
+    out.set(chunk.subarray(0, n), got)
+    got += n
+    seen += n
+  }
+  reader.cancel().catch(() => {})
+  return { bytes: out.subarray(0, got), total }
+}
+
+interface Mp4Box {
+  type: string
+  start: number
+  body: number
+  end: number
+}
+function readBox(b: Uint8Array, o: number, limit: number): Mp4Box | null {
+  if (o + 8 > limit) return null
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength)
+  let size = dv.getUint32(o)
+  let head = 8
+  if (size === 1) {
+    if (o + 16 > limit) return null
+    size = dv.getUint32(o + 8) * 2 ** 32 + dv.getUint32(o + 12)
+    head = 16
+  } else if (size === 0) size = limit - o
+  if (size < head) return null
+  return { type: fourcc(b, o + 4), start: o, body: o + head, end: o + size }
+}
+function childBoxes(b: Uint8Array, from: number, to: number): Mp4Box[] {
+  const list: Mp4Box[] = []
+  for (let o = from; o + 8 <= to; ) {
+    const box = readBox(b, o, to)
+    if (!box || box.end <= o) break
+    list.push(box)
+    o = box.end
+  }
+  return list
+}
+/** Each track's handler (vide/soun) and sample-entry code (avc1, hvc1, mp4a...) from a moov box */
+function trackCodecs(moov: Uint8Array): { kind: string; code: string }[] {
+  const found: { kind: string; code: string }[] = []
+  const top = readBox(moov, 0, moov.length)
+  if (!top) return found
+  const child = (box: Mp4Box, type: string) => childBoxes(moov, box.body, Math.min(box.end, moov.length)).find((c) => c.type === type)
+  for (const trak of childBoxes(moov, top.body, moov.length).filter((c) => c.type === "trak")) {
+    const mdia = child(trak, "mdia")
+    if (!mdia) continue
+    const hdlr = child(mdia, "hdlr")
+    const kind = hdlr && hdlr.body + 12 <= moov.length ? fourcc(moov, hdlr.body + 8) : "?"
+    const stsd = (() => {
+      const minf = child(mdia, "minf")
+      const stbl = minf && child(minf, "stbl")
+      return stbl && child(stbl, "stsd")
+    })()
+    if (!stsd || stsd.body + 16 > moov.length) continue
+    found.push({ kind, code: fourcc(moov, stsd.body + 12) })
+  }
+  return found
+}
+
+/**
+ * Downloads just the header of a failed video (through the proxy, with Range requests)
+ * and says which codec it uses and whether this browser can decode it. "No supported
+ * streams" errors are usually a codec the device lacks (HEVC without hardware support),
+ * not a broken download; this tells the two apart.
+ */
+async function probeMediaFile(url: string, doc: Document): Promise<string> {
+  try {
+    const first = await readBytes(url, 0, 65536)
+    if (!first || first.bytes.length < 12) return "could not read the file"
+    const b = first.bytes
+    if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) {
+      const text = new TextDecoder("latin1").decode(b)
+      const codecs = WEBM_CODECS.filter(([id]) => text.includes(id)).map(([, name]) => name)
+      return `WebM, codecs: ${codecs.join(", ") || "not found in the first 64 KB"}`
+    }
+    if (fourcc(b, 4) !== "ftyp") {
+      const start = new TextDecoder().decode(b.subarray(0, 60)).replace(/\s+/g, " ")
+      return `not a video file: starts with ${JSON.stringify(start)}`
+    }
+    // Walk the top-level boxes to moov (it may come after a large mdat)
+    let pos = 0
+    let buf = b
+    let bufStart = 0
+    const total = first.total
+    for (let hop = 0; hop < 12; hop++) {
+      if (pos + 16 > bufStart + buf.length) {
+        if (Number.isFinite(total) && pos >= total) break
+        const more = await readBytes(url, pos, 65536)
+        if (!more || more.bytes.length < 8) break
+        buf = more.bytes
+        bufStart = pos
+      }
+      const box = readBox(buf, pos - bufStart, buf.length)
+      if (!box) break
+      const size = box.end - box.start
+      if (box.type === "moov") {
+        let moov = buf.subarray(box.start, Math.min(box.end, buf.length))
+        if (moov.length < size) {
+          const whole = await readBytes(url, pos, Math.min(size, 8 * 1024 * 1024))
+          if (whole) moov = whole.bytes
+        }
+        const tracks = trackCodecs(moov)
+        if (!tracks.length) return "MP4, but no tracks were found in its header"
+        const probe = doc.createElement("video")
+        return tracks
+          .map((t) => {
+            const video = VIDEO_CODECS[t.code]
+            if (video) {
+              const answer = probe.canPlayType(video[1])
+              return `video ${t.code} = ${video[0]}, this browser ${answer ? "can" : "CAN'T"} decode it (canPlayType "${answer}")`
+            }
+            if (t.code === "encv" || t.code === "enca") return `${t.kind === "soun" ? "audio" : "video"} is encrypted (DRM)`
+            return `${t.kind === "soun" ? "audio" : t.kind === "vide" ? "video" : t.kind} ${t.code}${AUDIO_CODECS[t.code] ? ` = ${AUDIO_CODECS[t.code]}` : ""}`
+          })
+          .join("; ")
+      }
+      if (box.end <= box.start || size <= 0) break
+      pos += size
+    }
+    return "MP4, but its header (moov) wasn't found"
+  } catch (error) {
+    return `check failed: ${error instanceof Error ? error.message : String(error)}`
+  }
+}
+
 /** State of every <video>/<audio> in the page (and same-origin frames) */
 function describePlayers(win: Window | null | undefined): string[] {
   const out: string[] = []
@@ -90,6 +266,13 @@ function describePlayers(win: Window | null | undefined): string[] {
       `MediaSource: ${w.MediaSource ? "yes" : "no"}, ManagedMediaSource: ${w.ManagedMediaSource ? "yes" : "no"}, H.264 MSE: ${
         w.MediaSource?.isTypeSupported?.('video/mp4; codecs="avc1.42E01E"') ? "yes" : "no"
       }, VP9 MSE: ${w.MediaSource?.isTypeSupported?.('video/webm; codecs="vp9"') ? "yes" : "no"}`,
+    )
+    // Which video formats this browser/device can decode at all (HEVC depends on the hardware)
+    const probe = win.document.createElement("video")
+    out.push(
+      `Codecs this browser plays: ${["avc1", "hvc1", "av01", "vp09"]
+        .map((c) => `${VIDEO_CODECS[c][0]} ${probe.canPlayType(VIDEO_CODECS[c][1]) ? "yes" : "no"}`)
+        .join(", ")}`,
     )
   } catch (error) {
     out.push(`(could not read players: ${error instanceof Error ? error.message : String(error)})`)
@@ -226,6 +409,23 @@ export async function buildReport(
     lines.push("")
     lines.push("Media players:")
     lines.push(...players)
+  }
+  // Failed videos: read the file's header to see if it's the codec or the download
+  try {
+    const win = extra.frame
+    const failed = win
+      ? (Array.from(win.document.querySelectorAll("video, audio")) as HTMLMediaElement[])
+          .map((m, i) => ({ i, url: m.currentSrc || m.getAttribute("src") || "", failed: !!m.error || m.networkState === 3 }))
+          .filter((m) => m.failed && (m.url.includes("/api/proxy?") || m.url.includes("/api/proxy/m/")))
+          .slice(0, 3)
+      : []
+    if (failed.length && win) {
+      lines.push("")
+      lines.push("Failed media file checks:")
+      for (const m of failed) lines.push(`${m.i + 1}. ${await probeMediaFile(m.url, win.document)}`)
+    }
+  } catch {
+    // ignore
   }
 
   const activity = extra.activity ?? []
