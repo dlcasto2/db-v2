@@ -6,6 +6,7 @@ import https from "node:https"
 import { Readable } from "node:stream"
 import { brotliCompressSync, constants as zlibConstants, gzipSync } from "node:zlib"
 import { CookieJar, JAR_PATH, JAR_PREFIX, jarSetCookieHeaders } from "@/lib/cookie-jar"
+import { refererFromRef } from "@/lib/proxy-referer"
 
 // DNS lookups need the Node.js runtime (not Edge)
 export const runtime = "nodejs"
@@ -2080,7 +2081,13 @@ async function handleGet(request: NextRequest): Promise<Response> {
     }
     return response
   }
-  return handle(request, targetUrl, { method: "GET" })
+  // A page load can name the page it's shown on with ref= (Devon's YouTube
+  // player, CoreView). Send it as the Referer, as a browser loading that page in
+  // an iframe would: YouTube's embed page answers "Error 153 Video player
+  // configuration error" when the request has no Referer. Navigations carry no
+  // Origin, so only the Referer is set.
+  const referer = refererFromRef(request.nextUrl.searchParams.get("ref"))
+  return handle(request, targetUrl, { method: "GET", headers: referer ? { referer } : undefined })
 }
 
 function fileNameFromUrl(url: string): string {
