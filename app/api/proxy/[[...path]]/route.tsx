@@ -751,7 +751,10 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
         integrity: (init && init.integrity) || req.integrity,
         keepalive: init && 'keepalive' in init ? init.keepalive : req.keepalive,
         signal: (init && init.signal) || req.signal,
-        referrerPolicy: (init && init.referrerPolicy) || req.referrerPolicy
+        // The request goes to Devon, not the site: keep the page's same-origin
+        // Referer on it (see the <meta name="referrer"> Devon adds). The site's
+        // own policy doesn't matter here; the proxy sets the Referer upstream.
+        referrerPolicy: 'same-origin'
       };
       if (init && 'body' in init) {
         opts.body = init.body;
@@ -777,6 +780,7 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
           p = retarget(input, target, init).then(function (opts) { return nativeFetch.call(window, target, opts); });
         } else if (target) {
           input = target;
+          if (init && init.referrerPolicy) { init = Object.assign({}, init); init.referrerPolicy = 'same-origin'; }
         }
       } catch (e) {}
       // Always call the real fetch on window: sites often call fetch as a method of
@@ -941,6 +945,13 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
     }).join(', ');
     return changed ? out : null;
   }
+  // An element whose request now goes to Devon loses the site's referrerpolicy
+  // (e.g. "no-referrer"), so it carries the page's same-origin Referer like the
+  // rest of the page's requests. The real site never sees it: the proxy sets its
+  // own Referer upstream.
+  function dropReferrerPolicy(el) {
+    try { if (el.hasAttribute && el.hasAttribute('referrerpolicy')) el.removeAttribute('referrerpolicy'); } catch (e) {}
+  }
   // Reading the property gives the site back the real URL, so its own checks still work
   function unproxied(v) {
     return typeof v === 'string' && isProxyAddress(v) ? (realUrl(v) || v) : v;
@@ -968,6 +979,7 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
       set: function (v) {
         var r = null;
         try { r = isSet ? subSrcset(this, v) : subUrl(this, v); } catch (e) {}
+        if (r) dropReferrerPolicy(this);
         d.set.call(this, r || v);
       }
     });
@@ -987,6 +999,7 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
   Element.prototype.setAttribute = function (name, value) {
     var r = null;
     try { r = attrValue(this, name, value); } catch (e) {}
+    if (r) dropReferrerPolicy(this);
     return nativeSetAttr.call(this, name, r || value);
   };
 
@@ -1013,7 +1026,7 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
       if (!el.hasAttribute || !el.hasAttribute(a)) return;
       var r = null;
       try { r = attrValue(el, a, el.getAttribute(a)); } catch (e) {}
-      if (r) nativeSetAttr.call(el, a, r);
+      if (r) { nativeSetAttr.call(el, a, r); dropReferrerPolicy(el); }
     });
   }
   new MutationObserver(function (records) {
@@ -1522,6 +1535,13 @@ function processHTML(content: string, pageUrl: string, proxyOrigin: string, expe
     markup = markup.replace(/<(script|link)\b[^>]*>/gi, (tag) =>
       tag.includes(PROXY_PATH) || tag.includes(MIRROR_PATH) ? tag.replace(/\sintegrity=(["'])[^"']*\1/i, "") : tag,
     )
+    // A site's own referrerpolicy="no-referrer" on a tag would take away the
+    // same-origin Referer the page gives requests to Devon (see the <meta
+    // name="referrer"> below). The real site never sees it either way: the proxy
+    // sets its own Referer upstream.
+    markup = markup.replace(/<(img|source|video|audio|track|iframe|embed|input|script|link)\b[^>]*>/gi, (tag) =>
+      tag.includes(PROXY_PATH) || tag.includes(MIRROR_PATH) ? tag.replace(/\sreferrerpolicy=(["'])[^"']*\1/i, "") : tag,
+    )
     return markup
   }
 
@@ -1536,14 +1556,28 @@ function processHTML(content: string, pageUrl: string, proxyOrigin: string, expe
 
   // <a> and <form> are left as-is: <base> resolves them and the injected
   // script intercepts clicks/submits and hands navigation to the parent app.
+  //
+  // Referrer policy: "same-origin". Everything the page loads goes to Devon
+  // itself, so those requests carry a Referer (Devon's own address); anything
+  // that escapes the proxy to a real site still sends none. It used to be
+  // "no-referrer", which made every image, stylesheet and script request from
+  // a proxied page arrive with no Referer at all. On one visitor's network that
+  // was the difference between failing and working: github.com on
+  // db-v2.netlify.app showed up as bare unstyled text in Safari, with every
+  // image, stylesheet and script "failed to load" (and the in-page retries
+  // too), yet the same files loaded fine when the page report fetched them from
+  // the app, with a Referer. The same page loaded completely in Chromium and
+  // WebKit elsewhere, so the server wasn't at fault; web filters that stop
+  // "proxy" URLs unless they come from a known page behave exactly like this.
+  //
   // YouTube's embedded player refuses to start without referrer information
   // ("Error 153 Video player configuration error"), so its embed pages keep the
-  // browser's default policy instead of no-referrer.
+  // browser's default policy.
   const isYouTubeEmbed =
     /(^|\.)(youtube\.com|youtube-nocookie\.com)$/i.test(page.hostname) && page.pathname.startsWith("/embed/")
-  const referrerPolicy = isYouTubeEmbed ? "strict-origin-when-cross-origin" : "no-referrer"
+  const referrerPolicy = isYouTubeEmbed ? "strict-origin-when-cross-origin" : "same-origin"
   const injection = `<base href="${page.href.replace(/"/g, "&quot;")}">
-<meta name="referrer" content="${referrerPolicy}">
+<meta name="referrer" content="${referrerPolicy}" data-devon="">
 ${buildInjectedScript(page.href, proxyOrigin, experimental)}`
 
   // Match <head> but not <header>

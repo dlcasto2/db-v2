@@ -359,7 +359,8 @@ function snapshot(doc: Document): HTMLElement {
   // Dev tools (Eruda) mounted by Devon
   root.querySelectorAll("#eruda, script[data-devon-eruda]").forEach((n) => n.remove())
   root.querySelectorAll("base").forEach((n) => n.remove())
-  root.querySelectorAll('meta[name="referrer"][content="no-referrer"]').forEach((n) => n.remove())
+  // Devon's referrer policy (marked data-devon; older pages had a bare no-referrer)
+  root.querySelectorAll('meta[name="referrer"][data-devon], meta[name="referrer"][content="no-referrer"]').forEach((n) => n.remove())
   root.querySelectorAll("[integrity]").forEach((n) => n.removeAttribute("integrity"))
   root.querySelectorAll("[crossorigin]").forEach((n) => n.removeAttribute("crossorigin"))
   root.querySelectorAll("meta[http-equiv]").forEach((n) => {
