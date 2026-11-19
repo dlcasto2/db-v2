@@ -993,7 +993,22 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
   // Elements created from HTML strings (innerHTML, insertAdjacentHTML, templates) skip
   // the setters above; fix them up as soon as they're added
   var SUB_SELECTOR = 'img,source,video,audio,track,script[src],link[href],iframe[src],embed[src],object[data],input[src]';
+  // Scripts the HOST adds to every HTML page it serves, Devon's proxied pages included:
+  // Netlify's edge appends its "Powered by Netlify" badge / pre-launch toolbar
+  // (<script src="/.netlify/scripts/hud?variant=...">) after the proxy has rewritten the
+  // page. The address is relative, so it would resolve against the proxied site
+  // (https://github.com/.netlify/... -> 404, reported as a failed script) and, even
+  // served from the host, would only put Netlify's badge inside every site. The parser
+  // runs this observer before it runs a parsed script, so removing it here keeps it from
+  // loading through the proxy or running. Chrome's preload scanner may still request it
+  // once, silently, straight from the site; only turning the badge off in Netlify
+  // (Project configuration > General > Powered by Netlify badge) stops that too.
+  var HOST_SCRIPT = new RegExp('^/[.]netlify/scripts/', 'i');
   function fixNode(el) {
+    if (el.tagName === 'SCRIPT' && HOST_SCRIPT.test((el.getAttribute('src') || '').trim())) {
+      if (el.parentNode) el.parentNode.removeChild(el);
+      return;
+    }
     ['src', 'srcset', 'poster', 'href', 'data'].forEach(function (a) {
       if (!el.hasAttribute || !el.hasAttribute(a)) return;
       var r = null;
