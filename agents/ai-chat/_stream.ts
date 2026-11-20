@@ -22,6 +22,7 @@
 
 import { query } from "@anthropic-ai/claude-agent-sdk"
 import type { AgentMemory } from "@edgeone/types"
+import { cachedClaudeCli, ensureClaudeCli, isMissingCliError } from "../_claude-cli"
 import { redactBase64Deep } from "../_redact"
 import type { QuotaStatus } from "../_quota"
 import type { SessionState } from "../_session"
@@ -244,7 +245,28 @@ export function createChatStream({
         if (signal?.aborted) abortController.abort()
         else signal?.addEventListener("abort", () => abortController.abort(), { once: true })
 
-        const q = query({ prompt, options: { ...options, abortController } as Parameters<typeof query>[0]["options"] })
+        // The SDK looks for the Claude CLI binary itself; serverless deploys
+        // (Netlify) leave it out, so fetch it once and point the SDK at it.
+        // See _claude-cli.ts.
+        type QueryOptions = Parameters<typeof query>[0]["options"]
+        const runOptions: Record<string, unknown> = { ...options, abortController }
+        if (!runOptions.pathToClaudeCodeExecutable) {
+          const cached = await cachedClaudeCli()
+          if (cached) runOptions.pathToClaudeCodeExecutable = cached
+        }
+        let q: ReturnType<typeof query>
+        try {
+          q = query({ prompt, options: runOptions as QueryOptions })
+        } catch (e) {
+          if (runOptions.pathToClaudeCodeExecutable || !isMissingCliError(e)) throw e
+          logger.log("[stream] Claude CLI not in this deploy; fetching it")
+          send("notice", {
+            code: "cli_setup",
+            message: "Starting Devon AI on this server for the first time. This message takes a few extra seconds.",
+          })
+          runOptions.pathToClaudeCodeExecutable = await ensureClaudeCli(logger)
+          q = query({ prompt, options: runOptions as QueryOptions })
+        }
         let lastMsgType = ""
 
         for await (const raw of q) {
