@@ -12,6 +12,8 @@ import vm from "node:vm"
 import { createHash } from "node:crypto"
 import { Innertube, Platform, YTNodes, type Types } from "youtubei.js"
 import { describeIfUnreachable, UNREACHABLE_PREFIX } from "./youtube-network-error"
+import { corsHeaders, describeCors, parseCorsSetting } from "./youtube-cors"
+import { CHANNEL_ID_RE, parseChannelInput } from "./youtube-channel-input"
 
 /**
  * A stray error from a background timer or socket (a probe aborted after its
@@ -184,6 +186,31 @@ const INVIDIOUS: string[] = (() => {
     .filter((u) => /^https?:\/\/[^/]+$/i.test(u))
 })()
 
+/**
+ * DEVON_YT_CORS: which other sites may call this YouTube API from the browser
+ * (e.g. a player front-end on another domain). Unset = any site, "off" = none,
+ * or a comma-separated list of origins. See lib/youtube-cors.ts.
+ */
+const CORS = parseCorsSetting(setting("DEVON_YT_CORS"))
+
+/** Adds the cross-origin headers DEVON_YT_CORS allows to an API response */
+export function withCors<T extends Response>(request: Request, response: T): T {
+  for (const [name, value] of Object.entries(corsHeaders(CORS, request.headers.get("origin")))) {
+    if (name === "Vary") {
+      const vary = response.headers.get("vary")
+      response.headers.set("vary", vary ? `${vary}, ${value}` : value)
+    } else {
+      response.headers.set(name, value)
+    }
+  }
+  return response
+}
+
+/** The answer to a CORS preflight (OPTIONS) for one of the YouTube API routes */
+export function corsPreflight(request: Request): Response {
+  return new Response(null, { status: 204, headers: corsHeaders(CORS, request.headers.get("origin"), true) })
+}
+
 function parseCookies(raw: string): string {
   const text = raw.trim()
   if (!text) return ""
@@ -238,6 +265,7 @@ export function settingsStatus(browserCookie = "") {
     browserCookie: describeCookie(browserCookie),
     proxy: { set: Boolean(PROXY) },
     invidious: INVIDIOUS,
+    cors: describeCors(CORS),
     clients: clientsFor(browserCookie || COOKIE),
     built: process.env.DEVON_BUILD_TIME || null,
   }
@@ -426,15 +454,20 @@ const text = (t: unknown): string => {
   return s === "[object Object]" || s === "N/A" ? "" : s
 }
 
+/**
+ * One video from a parsed list. `owner` is set for a channel's own tabs, where
+ * the channel name isn't repeated on every video (and the lockup's only
+ * metadata row is [views · published] instead of [channel] [views · published]).
+ */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function toItem(node: any): YTSearchItem | null {
+function toItem(node: any, owner?: string): YTSearchItem | null {
   if (node?.is?.(YTNodes.Video)) {
     const v = node as InstanceType<typeof YTNodes.Video>
     if (!v.video_id) return null
     return {
       id: v.video_id,
       title: text(v.title),
-      channel: v.author?.name && v.author.name !== "N/A" ? v.author.name : "",
+      channel: v.author?.name && v.author.name !== "N/A" ? v.author.name : owner ?? "",
       duration: v.length_text ? text(v.length_text) : v.duration?.text || "",
       views: text(v.short_view_count) || text(v.view_count),
       published: text(v.published),
@@ -455,6 +488,21 @@ function toItem(node: any): YTSearchItem | null {
       for (const b of o?.badges ?? []) if (!duration && b?.text) duration = String(b.text)
       if (!duration && o?.text) duration = String(o.text)
     }
+    if (owner !== undefined) {
+      // Usually [161K · 18h ago]; members-only videos have just [6d ago] and a badge row
+      const flat: string[] = parts.flat()
+      const published = flat.find((t) => /\bago\b|^streamed|^premier|^scheduled/i.test(t)) ?? ""
+      const views = flat.find((t) => t !== published && /\bviews?\b|watching|^\d[\d.,]*\s?[KMB]?$/i.test(t)) ?? ""
+      return {
+        id: l.content_id,
+        title: text(l.metadata?.title),
+        channel: owner,
+        duration,
+        views,
+        published,
+        live: /live/i.test(duration),
+      }
+    }
     return {
       id: l.content_id,
       title: text(l.metadata?.title),
@@ -469,11 +517,11 @@ function toItem(node: any): YTSearchItem | null {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function collect(nodes: any[], memo?: any): YTSearchPage {
+function collect(nodes: any[], memo?: any, owner?: string): YTSearchPage {
   const seen = new Set<string>()
   const items: YTSearchItem[] = []
   for (const n of nodes) {
-    const item = toItem(n)
+    const item = toItem(n, owner)
     if (item && !seen.has(item.id)) {
       seen.add(item.id)
       items.push(item)
@@ -517,6 +565,136 @@ export async function searchMore(token: string): Promise<YTSearchPage> {
 export async function suggestions(query: string): Promise<string[]> {
   const client = await yt()
   return client.getSearchSuggestions(query)
+}
+
+// ---------------------------------------------------------------------------
+// Channels
+// ---------------------------------------------------------------------------
+
+export interface YTChannelInfo {
+  id: string
+  name: string
+  /** "@handle", or "" when the channel has none */
+  handle: string
+  avatar: string
+  subscribers: string
+  description: string
+  url: string
+}
+
+/** A channel's latest uploads (newest first), plus who it is */
+export interface YTChannelPage extends YTSearchPage {
+  channel: YTChannelInfo
+}
+
+/** The first channel in a channel search, in the order YouTube ranked them */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function firstChannelId(nodes: any[]): string | null {
+  for (const n of nodes) {
+    if (n?.is?.(YTNodes.Channel) && CHANNEL_ID_RE.test(n.id)) return n.id
+    if (n?.is?.(YTNodes.LockupView) && n.content_type === "CHANNEL" && CHANNEL_ID_RE.test(n.content_id)) return n.content_id
+  }
+  return null
+}
+
+/** Finds the UC… channel ID for whatever was typed: an ID, @handle, link or name */
+async function channelIdFor(input: string): Promise<string> {
+  const ref = parseChannelInput(input)
+  if (!ref) throw new YTError("Type a channel name, an @handle or a youtube.com channel link.", 400, "bad-channel")
+  if (ref.kind === "id") return ref.id
+  const client = await yt()
+  if (ref.kind === "url" || ref.kind === "handle") {
+    try {
+      const endpoint = await client.resolveURL(ref.url)
+      const id = endpoint?.payload?.browseId
+      if (typeof id === "string" && CHANNEL_ID_RE.test(id)) return id
+    } catch (error) {
+      // Not reaching YouTube at all isn't "no such channel"
+      if (describeIfUnreachable(error)) throw error
+      // Otherwise YouTube doesn't know that handle/link; a bare word is searched for below
+    }
+    if (ref.kind === "url") throw new YTError("YouTube doesn't know that channel.", 404, "channel-not-found")
+  }
+  const results = await client.search(ref.query, { type: "channel" })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const memo = (results as any).page?.contents_memo ?? (results as any).memo
+  const id =
+    firstChannelId([...(results.results ?? [])]) ??
+    firstChannelId(memo?.getType?.(YTNodes.Channel, YTNodes.LockupView) ?? [])
+  if (!id) throw new YTError(`No channel matches “${ref.query}”.`, 404, "channel-not-found")
+  return id
+}
+
+/** Name, handle, avatar and subscriber count from a parsed channel page */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function channelInfoFrom(page: any, id: string): YTChannelInfo {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const m: any = page?.metadata ?? {}
+  // The page header's rows look like [@handle] [8.63M subscribers · 4.4K videos]
+  const parts: string[] = []
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rows: any[] = page?.header?.content?.metadata?.metadata_rows ?? []
+  for (const row of rows) {
+    for (const part of row?.metadata_parts ?? []) {
+      const t = text(part?.text).trim()
+      if (t) parts.push(t)
+    }
+  }
+  let vanity = String(m.vanity_channel_url || "").match(/\/(@[^/?#]+)/)?.[1] ?? ""
+  try {
+    vanity = decodeURIComponent(vanity)
+  } catch {
+    // keep it as it came
+  }
+  const handle = parts.find((t) => /^@\S+$/.test(t)) ?? vanity
+  const channelId = CHANNEL_ID_RE.test(String(m.external_id || "")) ? String(m.external_id) : id
+  return {
+    id: channelId,
+    name: String(m.title || page?.header?.page_title || ""),
+    handle,
+    avatar: String(m.avatar?.[0]?.url || m.thumbnail?.[0]?.url || ""),
+    subscribers: parts.find((t) => /subscriber/i.test(t)) ?? "",
+    description: String(m.description || "").slice(0, 1000),
+    url: handle ? `https://www.youtube.com/${handle}` : `https://www.youtube.com/channel/${channelId}`,
+  }
+}
+
+/** Reads a channel's Videos tab (already parsed) into a page of uploads */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function channelPageFrom(page: any, id: string): YTChannelPage {
+  const channel = channelInfoFrom(page, id)
+  const memo = page?.memo ?? page?.page?.contents_memo
+  return { channel, ...collect(allNodes(memo), memo, channel.name) }
+}
+
+/**
+ * A channel's latest uploads (its Videos tab), from a channel ID, @handle,
+ * youtube.com link or plain name. Only page data is asked for here, never
+ * video streams, so this works even where YouTube bot-checks this server's
+ * downloads.
+ */
+export async function channelVideos(input: string): Promise<YTChannelPage> {
+  const id = await channelIdFor(input)
+  const client = await yt()
+  const home = await client.getChannel(id)
+  let videos: typeof home
+  try {
+    videos = await home.getVideos()
+  } catch {
+    // No Videos tab (e.g. a topic or music-only channel): who it is, with no uploads
+    return { channel: channelInfoFrom(home, id), items: [], next: null }
+  }
+  return channelPageFrom(videos, id)
+}
+
+/** The next page of a channel's uploads, from the `next` token of the previous one */
+export async function channelVideosMore(token: string, owner = ""): Promise<YTSearchPage> {
+  const client = await yt()
+  const page = await client.actions.execute("/browse", { continuation: token, parse: true })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const p = page as any
+  const memo = p.on_response_received_actions_memo ?? p.continuation_contents_memo ?? p.contents_memo
+  return collect(allNodes(memo), memo, owner)
 }
 
 // ---------------------------------------------------------------------------

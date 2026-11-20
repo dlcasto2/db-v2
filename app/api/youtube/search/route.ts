@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { search, searchMore, suggestions } from "@/lib/youtube-server"
+import { corsPreflight, search, searchMore, suggestions, withCors } from "@/lib/youtube-server"
 
 export const runtime = "nodejs"
 export const maxDuration = 30
@@ -16,15 +16,22 @@ export async function GET(request: NextRequest) {
   const suggest = params.get("suggest")?.trim() ?? ""
   try {
     if (suggest) {
-      return NextResponse.json({ suggestions: (await suggestions(suggest.slice(0, 200))).slice(0, 8) })
+      return withCors(request, NextResponse.json({ suggestions: (await suggestions(suggest.slice(0, 200))).slice(0, 8) }))
     }
-    if (next) return NextResponse.json(await searchMore(next))
-    if (!q) return NextResponse.json({ error: "Type something to search for." }, { status: 400 })
-    return NextResponse.json(await search(q.slice(0, 200)), {
-      headers: { "cache-control": "private, max-age=300" },
-    })
+    if (next) return withCors(request, NextResponse.json(await searchMore(next)))
+    if (!q) return withCors(request, NextResponse.json({ error: "Type something to search for." }, { status: 400 }))
+    return withCors(
+      request,
+      NextResponse.json(await search(q.slice(0, 200)), {
+        headers: { "cache-control": "private, max-age=300" },
+      }),
+    )
   } catch (error) {
     console.error("[youtube/search]", error)
-    return NextResponse.json({ error: "YouTube search failed. Try again in a moment." }, { status: 502 })
+    return withCors(request, NextResponse.json({ error: "YouTube search failed. Try again in a moment." }, { status: 502 }))
   }
+}
+
+export function OPTIONS(request: NextRequest) {
+  return corsPreflight(request)
 }
