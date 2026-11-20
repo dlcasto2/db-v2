@@ -305,6 +305,21 @@ interface FileCheck {
   parses?: string
   tail?: string
   hostHeaders?: Record<string, string>
+  /** The same file requested with no Referer, as proxied pages used to send it */
+  withoutReferer?: string
+  /** The same file through the browser's HTTP cache, like the page's own request */
+  viaCache?: string
+}
+
+/** Status of one request, or why it failed, without reading the body */
+async function probe(url: string, init: RequestInit): Promise<string> {
+  try {
+    const res = await fetch(url, init)
+    await res.body?.cancel().catch(() => {})
+    return `status ${res.status}${res.headers.get("x-proxy-final-url") ? "" : " (not from Devon's proxy)"}`
+  } catch (error) {
+    return `failed: ${error instanceof Error ? error.message : String(error)}`
+  }
 }
 
 async function checkFile(proxiedUrl: string): Promise<FileCheck> {
@@ -328,7 +343,11 @@ async function checkFile(proxiedUrl: string): Promise<FileCheck> {
     }
     const text = new TextDecoder().decode(buf)
     check.tail = JSON.stringify(text.slice(-80))
-    if (/javascript|ecmascript/i.test(check.contentType || "")) {
+    if (/javascript|ecmascript/i.test(check.contentType || "") && proxiedUrl.includes("/api/proxy/m/")) {
+      // Module address: new Function() can't compile import/export, so it would
+      // always say "NO" ("Unexpected keyword 'export'"), which says nothing
+      check.parses = "not checked (ES module)"
+    } else if (/javascript|ecmascript/i.test(check.contentType || "")) {
       try {
         // Compiles without running anything
         new Function(text)
@@ -340,6 +359,12 @@ async function checkFile(proxiedUrl: string): Promise<FileCheck> {
   } catch (error) {
     check.status = `fetch failed: ${error instanceof Error ? error.message : String(error)}`
   }
+  // The check above comes from Devon's own page, fresh and with a Referer. The
+  // page's request differed on both counts, so try each on its own: a network
+  // filter that drops requests without a Referer, or a bad copy in the browser
+  // cache, only shows up here.
+  check.withoutReferer = await probe(proxiedUrl, { cache: "no-store", referrerPolicy: "no-referrer" })
+  check.viaCache = await probe(proxiedUrl, { cache: "default" })
   return check
 }
 
@@ -387,7 +412,23 @@ export async function buildReport(
       if (c.complete) lines.push(`  complete: ${c.complete}`)
       if (c.parses) lines.push(`  parses: ${c.parses}`)
       if (c.tail) lines.push(`  ends with: ${c.tail}`)
+      if (c.withoutReferer) lines.push(`  without Referer: ${c.withoutReferer}`)
+      if (c.viaCache) lines.push(`  via browser cache: ${c.viaCache}`)
       if (c.hostHeaders && Object.keys(c.hostHeaders).length) lines.push(`  host headers: ${JSON.stringify(c.hostHeaders)}`)
+    }
+    // Devon served the file, yet the page couldn't load it: the request was
+    // stopped between this browser and Devon, not by Devon
+    const servedFine = checks.filter((c) => c.status === 200)
+    if (servedFine.length && errors.some((e) => e.kind === "load" && servedFine.some((c) => c.url === e.proxied))) {
+      const noReferer = servedFine.some((c) => c.withoutReferer?.startsWith("failed") || /status [45]/.test(c.withoutReferer || ""))
+      const cache = servedFine.some((c) => c.viaCache?.startsWith("failed") || /status [45]/.test(c.viaCache || ""))
+      lines.push(
+        noReferer
+          ? "  -> Devon sent these files, but requests without a Referer are blocked: likely a network filter."
+          : cache
+            ? "  -> Devon sent these files, but the browser's cached copy fails: clear this browser's cached files for the Devon site."
+            : "  -> Devon sent these files, but the page's own request failed: likely a content blocker or extension, or a network filter.",
+      )
     }
   } else {
     // Still useful to know the host
