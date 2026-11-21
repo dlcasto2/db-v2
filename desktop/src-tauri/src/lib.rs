@@ -1,11 +1,27 @@
 // Devon Browser desktop shell.
 //
-// This app has no real frontend of its own: `frontend-dist/index.html` is just
-// a "Starting Devon…" splash. On startup we spawn Devon's actual Next.js app
-// (built with `output: "standalone"`, see ../scripts/prepare-standalone.mjs)
-// as a bundled Node sidecar, wait for it to start answering on localhost, then
-// navigate the window to it. The sidecar is killed when the app exits.
-
+// This crate builds two different apps, chosen by the `static-build` Cargo
+// feature (off by default) and paired with a matching Tauri config:
+//
+// - Default (`pnpm build`, tauri.conf.json): no real frontend of its own —
+//   `frontend-dist/index.html` is just a "Starting Devon…" splash. On startup
+//   we spawn Devon's actual Next.js app (built with `output: "standalone"`,
+//   see ../scripts/prepare-standalone.mjs) as a bundled Node sidecar, wait for
+//   it to start answering on localhost, then navigate the window to it. The
+//   sidecar is killed when the app exits. Has Devon's full feature set
+//   (proxy, YouTube downloads, Devon AI, etc.) since it's a real server.
+//
+// - Static (`pnpm build:static`, tauri.static.conf.json): no sidecar, no
+//   server, nothing to spawn or poll. tauri.static.conf.json points
+//   frontendDist straight at Devon's static export (`output: "export"`, see
+//   ../scripts/prepare-static.mjs), so Tauri just loads it directly — the
+//   window shows the real thing from the moment it opens. Everything that
+//   needs a server (the proxy, YouTube downloads, page-safety checks, Devon
+//   AI chat, sign-in) doesn't work in this build; see desktop/README.md.
+//
+// Everything below down to the non-static `run()` is only compiled for the
+// default build — none of it is needed once there's no sidecar to manage.
+#[cfg(not(feature = "static-build"))]
 use std::{
     collections::HashMap,
     net::{TcpListener, TcpStream},
@@ -14,10 +30,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(not(feature = "static-build"))]
 use tauri::{Manager, RunEvent, WebviewWindow};
+#[cfg(not(feature = "static-build"))]
 use tauri_plugin_shell::{process::CommandChild, ShellExt};
 
 /// Holds the running sidecar's handle so we can kill it when the app exits.
+#[cfg(not(feature = "static-build"))]
 struct SidecarState(Mutex<Option<CommandChild>>);
 
 /// Where we look for the standalone Next.js build (`server.js` + its
@@ -27,6 +46,7 @@ struct SidecarState(Mutex<Option<CommandChild>>);
 /// dev` does not materialize bundle.resources at all — it only exists once
 /// prepare-standalone.mjs has run against *this* checkout. So: try the
 /// packaged locations first, then fall back to the dev checkout.
+#[cfg(not(feature = "static-build"))]
 fn candidate_app_dirs(app: &tauri::AppHandle) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
 
@@ -51,6 +71,7 @@ fn candidate_app_dirs(app: &tauri::AppHandle) -> Vec<PathBuf> {
     dirs
 }
 
+#[cfg(not(feature = "static-build"))]
 fn find_app_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
     candidate_app_dirs(app)
         .into_iter()
@@ -60,11 +81,13 @@ fn find_app_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
 /// Binds to a loopback port chosen by the OS, then immediately drops the
 /// listener so the sidecar can bind it instead. Small race in theory; fine
 /// for a single-user desktop app.
+#[cfg(not(feature = "static-build"))]
 fn pick_free_port() -> std::io::Result<u16> {
     let listener = TcpListener::bind(("127.0.0.1", 0))?;
     listener.local_addr().map(|addr| addr.port())
 }
 
+#[cfg(not(feature = "static-build"))]
 fn port_is_open(port: u16) -> bool {
     TcpStream::connect(("127.0.0.1", port)).is_ok()
 }
@@ -73,6 +96,7 @@ fn port_is_open(port: u16) -> bool {
 /// ignored) from a user-editable env file, if present. This is how someone
 /// building their own copy of this app can turn on Devon AI, Auth0 sign-in,
 /// etc. without rebuilding — see desktop/README.md.
+#[cfg(not(feature = "static-build"))]
 fn read_user_env_file(path: &Path) -> HashMap<String, String> {
     let mut vars = HashMap::new();
     let Ok(contents) = std::fs::read_to_string(path) else {
@@ -90,6 +114,7 @@ fn read_user_env_file(path: &Path) -> HashMap<String, String> {
     vars
 }
 
+#[cfg(not(feature = "static-build"))]
 fn user_env_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     app.path()
         .app_config_dir()
@@ -101,6 +126,7 @@ fn user_env_path(app: &tauri::AppHandle) -> Option<PathBuf> {
 /// "Starting Devon…" up forever if the server never comes up. `eval` runs on
 /// whatever page is currently loaded, which is still the splash page at every
 /// point this is called from (we only call `navigate` once we know better).
+#[cfg(not(feature = "static-build"))]
 fn show_status(window: &WebviewWindow, message: &str) {
     let payload = serde_json::to_string(message).unwrap_or_else(|_| "\"(error)\"".into());
     let js = format!("var s = document.getElementById('status'); if (s) s.textContent = {payload};");
@@ -111,6 +137,7 @@ fn show_status(window: &WebviewWindow, message: &str) {
 
 /// `devon-desktop.log` under app_log_dir() — included in on-screen error
 /// messages so a stuck launch points at something to go look at or send.
+#[cfg(not(feature = "static-build"))]
 fn log_file_hint(app: &tauri::AppHandle) -> String {
     app.path()
         .app_log_dir()
@@ -120,6 +147,7 @@ fn log_file_hint(app: &tauri::AppHandle) -> String {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+#[cfg(not(feature = "static-build"))]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -286,4 +314,30 @@ pub fn run() {
                 }
             }
         });
+}
+
+/// Static build: no sidecar, no port, no splash page. tauri.static.conf.json
+/// points `build.frontendDist` straight at Devon's static export (built by
+/// ../scripts/prepare-static.mjs) and the window's `url` at its "index.html",
+/// so Tauri loads the real thing directly — there's nothing left for setup()
+/// to do here. Logging stays on (same as the default build) since it's cheap
+/// and still useful for diagnosing anything that goes wrong at the Tauri
+/// level itself (window/webview failures, for instance).
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+#[cfg(feature = "static-build")]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .target(tauri_plugin_log::Target::new(
+                    tauri_plugin_log::TargetKind::LogDir {
+                        file_name: Some("devon-desktop".into()),
+                    },
+                ))
+                .level(log::LevelFilter::Info)
+                .build(),
+        )
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, _event| {});
 }

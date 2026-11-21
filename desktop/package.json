@@ -5,7 +5,8 @@
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",
-    "build": "tauri build"
+    "build": "tauri build",
+    "build:static": "tauri build --config src-tauri/tauri.static.conf.json --features static-build"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

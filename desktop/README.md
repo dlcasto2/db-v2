@@ -23,6 +23,34 @@ If that changes (Devon moves back to an older Next.js, or Node grows a real
 Windows 7 story again), the Tauri side of this doesn't need to change — only
 `desktop/scripts/prepare-standalone.mjs`'s Node version would.
 
+## The other build: static, no server at all
+
+There's a second, separate installer — **Devon Browser (Static)** — built
+from the same checkout via `pnpm build:static` (or the second half of the
+`desktop-windows` CI run, see below). It has no Node sidecar and no server
+of any kind: `scripts/prepare-static.mjs` builds Devon with `next build
+--output export` instead, producing a plain folder of static HTML/CSS/JS,
+and Tauri's window loads that directly — nothing to spawn, nothing to wait
+for, nothing that can get "stuck starting."
+
+The trade-off is real, not cosmetic: Devon's proxy, YouTube downloads,
+page-safety checks, Devon AI chat, and sign-in all run on the server, and
+there isn't one in this build, so none of them work. Concretely,
+`prepare-static.mjs` physically removes `app/api/**` and every
+`app/<name>/route.ts` directory (auth, Devon AI, account sync) from the tree
+before this one build, because Next's static export refuses to build with
+them present at all — then puts them straight back, whether the build
+succeeded or not. What's left and still works: the browser UI shell itself,
+`/games`, and `/youtube` (the page, not downloading — that's the part that
+needs a server).
+
+Pick this one if you want the lightest possible installer and don't need
+those features; pick the regular one (the rest of this file) if you do. Both
+builds share the same Rust crate, split by the `static-build` Cargo feature
+— see `src-tauri/src/lib.rs`'s two `run()` functions and
+`src-tauri/tauri.static.conf.json` (merged onto the base `tauri.conf.json`
+via `tauri build --config`, same mechanism `pnpm build:static` uses).
+
 ## Building it
 
 You need [Rust](https://rustup.rs/) and Node 20+ installed. From the repo
@@ -36,8 +64,9 @@ pnpm --dir desktop install  # the Tauri CLI
 Then, from `desktop/`:
 
 ```bash
-pnpm dev     # cargo tauri dev   — runs Devon locally and opens a dev window
-pnpm build   # cargo tauri build — produces the installer
+pnpm dev          # cargo tauri dev   — runs Devon locally and opens a dev window
+pnpm build        # cargo tauri build — produces the server-backed installer
+pnpm build:static # produces the static, no-server installer (see above)
 ```
 
 Either command first runs `scripts/prepare-standalone.mjs`, which builds
@@ -67,9 +96,13 @@ way.
 
 The `desktop-windows` GitHub Actions workflow (`workflow_dispatch`, and on
 pushes to `main` that touch Devon or `desktop/`) builds this on a
-`windows-latest` runner and uploads the `.exe` installer (NSIS) as a
-workflow artifact — that's the easiest way to get an actual, working
-Windows build without owning a Windows machine yourself.
+`windows-latest` runner, producing *both* installers (server-backed and
+static) and uploading each `.exe` (NSIS) as its own workflow artifact —
+that's the easiest way to get an actual, working Windows build without
+owning a Windows machine yourself. It also publishes both to the
+`desktop-app-preview` GitHub Release, which is the easier of the two to
+actually download (workflow artifacts need you to be signed into GitHub and
+go through Azure Blob Storage; the Release doesn't).
 
 ## Devon AI, Auth0 sign-in, and other things that need secrets
 
@@ -103,6 +136,10 @@ Agents) aren't affected; they're plain HTTP calls, not a subprocess.
 
 ## If it gets stuck on "Starting Devon…"
 
+This section is about the server-backed build only — the static build (see
+above) has no sidecar to start and no splash page; its window shows the real
+thing immediately.
+
 The splash screen now replaces itself with whatever actually went wrong
 (the sidecar failed to launch, Devon's server crashed on startup, or it
 just never answered within 30 seconds) instead of sitting there forever —
@@ -116,12 +153,20 @@ reporting a stuck launch.
 ## Known rough edges
 
 - Closing the window kills the sidecar; there's no "minimize to tray and
-  keep running" yet.
+  keep running" yet. (Doesn't apply to the static build — no sidecar.)
 - The app always needs to actually boot Devon's Next.js server first (a
   second or two), unlike a plain static desktop app — the splash screen in
-  `frontend-dist/index.html` covers that gap.
+  `frontend-dist/index.html` covers that gap. (The static build doesn't have
+  this gap at all; that's the whole point of it.)
 - `bundle.resources` / sidecar path resolution in `src-tauri/src/lib.rs`
   tries a few plausible locations before giving up, since exactly where
   Tauri lands bundled resources has shifted across versions — if you
   upgrade `@tauri-apps/cli`/`tauri` and the app can't find `server.js` at
-  startup, that's the first place to look.
+  startup, that's the first place to look. (Static build: n/a, no resources
+  to resolve.)
+- The static build's missing proxy/YouTube/AI/sign-in features (see "The
+  other build" above) are deliberate, not a bug — if a new server route
+  gets added to `app/` later, `scripts/prepare-static.mjs` fails loudly
+  (rather than silently exporting a site that's missing it) until it's
+  either added to that script's `EXCLUDED` list or it's genuinely static
+  itself.

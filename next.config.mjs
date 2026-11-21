@@ -1,16 +1,30 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // NOTE: do not add `output: "export"`. Devon is not a static site — the proxy
-  // (app/api/proxy), the YouTube routes and the page-safety route all run on the
-  // server, and a static export fails on the first one of them. It was added for
-  // a GitHub Pages workflow and broke both the build and the EdgeOne deploy; see
-  // "GitHub Pages" in README.md for the way to have a github.io address anyway.
+  // NOTE: do not add a bare `output: "export"` here. Devon is not a static site —
+  // the proxy (app/api/proxy), the YouTube routes and the page-safety route all
+  // run on the server, and a static export fails on the first one of them. It
+  // was added once for a GitHub Pages workflow and broke both that build and the
+  // EdgeOne deploy; see "GitHub Pages" in README.md for the way to have a
+  // github.io address anyway.
   //
   // `output: "standalone"` is different: it still runs a real Node server
   // (server.js), just traced down to the node_modules it actually needs. Only
   // the Windows desktop build (see `desktop/README.md`) asks for it, via
   // DEVON_DESKTOP_BUILD — EdgeOne and Vercel both keep their normal output.
-  ...(process.env.DEVON_DESKTOP_BUILD ? { output: "standalone" } : {}),
+  //
+  // DEVON_DESKTOP_STATIC_BUILD is the one place `output: "export"` is used, for
+  // the separate no-server Windows build (desktop/scripts/prepare-static.mjs).
+  // It's only safe there because that script physically moves app/api/** and
+  // every other app/**/route.ts directory out of the tree before this runs, so
+  // the export never actually hits a route handler — it builds the remaining
+  // pages (the proxy UI shell, /games, /youtube) as plain static HTML/CSS/JS and
+  // nothing else. Don't set this for any other build; those routes are real
+  // features and this flag is what turns them off.
+  ...(process.env.DEVON_DESKTOP_STATIC_BUILD
+    ? { output: "export" }
+    : process.env.DEVON_DESKTOP_BUILD
+      ? { output: "standalone" }
+      : {}),
   env: {
     // Baked into the server code at build time, so the YouTube settings work even on
     // hosts that only give environment variables to the build (they're only used by

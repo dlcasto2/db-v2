@@ -17,6 +17,13 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2.7.4" }
 
+[features]
+# Off by default — the normal build still bundles the real Node sidecar
+# (see src/lib.rs). Built via `pnpm build:static` (package.json), which pairs
+# this with tauri.static.conf.json so the no-sidecar code path and the
+# no-sidecar bundle config always travel together.
+static-build = []
+
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }

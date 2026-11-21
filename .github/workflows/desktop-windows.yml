@@ -66,15 +66,38 @@ jobs:
       # standalone Next.js app and stages it as the sidecar's resources
       # before Tauri bundles the installer. A Next.js build error shows up
       # inline in this step's log, just without its own separate heading.
-      - name: Build the Windows installer
+      - name: Build the Windows installer (server-backed)
         run: pnpm --dir desktop run build
 
-      - name: Upload installer
+      - name: Upload installer (server-backed)
         uses: actions/upload-artifact@v4
         with:
           name: devon-browser-windows
           path: |
             desktop/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+      # Second, separate installer: no Node sidecar, no server — just Devon's
+      # own frontend exported as static HTML/CSS/JS (see
+      # desktop/scripts/prepare-static.mjs and desktop/README.md for what
+      # that drops — the proxy, YouTube downloads, page-safety checks and
+      # Devon AI chat all need a real server and don't work in this build).
+      # tauri.static.conf.json gives it a different productName/identifier,
+      # so this lands as its own .exe alongside the one above rather than
+      # overwriting it.
+      - name: Build the Windows installer (static, no server)
+        run: pnpm --dir desktop run build:static
+
+      - name: Upload installer (static, no server)
+        uses: actions/upload-artifact@v4
+        with:
+          name: devon-browser-windows-static
+          # Avoiding the literal "(" / ")" from productName here — actions/glob
+          # (minimatch-based) treats parens as pattern syntax, not literal
+          # characters the way a plain shell glob would. "Static" alone is
+          # enough to pick this installer out from the server-backed one.
+          path: |
+            desktop/src-tauri/target/release/bundle/nsis/*Static*.exe
           if-no-files-found: error
 
       # Workflow artifacts (above) require being signed into GitHub and
@@ -83,7 +106,7 @@ jobs:
       # github.com with no sign-in, so that's the easy link to hand anyone.
       # This re-publishes the same tag/release every run so the link stays
       # stable — it's a preview build off this branch, not a tagged version.
-      - name: Publish installer to a GitHub Release
+      - name: Publish installers to a GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -91,9 +114,18 @@ jobs:
           set -eu
           tag="desktop-app-preview"
           gh release delete "$tag" --yes --cleanup-tag --repo "${{ github.repository }}" 2>/dev/null || true
-          exe="$(ls desktop/src-tauri/target/release/bundle/nsis/*.exe)"
-          gh release create "$tag" "$exe" \
+          shopt -s nullglob
+          exes=(desktop/src-tauri/target/release/bundle/nsis/*.exe)
+          if [ "${#exes[@]}" -ne 2 ]; then
+            echo "expected exactly 2 installers (server-backed + static), found ${#exes[@]}: ${exes[*]}" >&2
+            exit 1
+          fi
+          gh release create "$tag" "${exes[@]}" \
             --repo "${{ github.repository }}" \
             --title "Devon Browser desktop app (preview build)" \
             --target "${{ github.sha }}" \
-            --notes "Automated preview build from commit ${{ github.sha }} on \`${{ github.ref_name }}\` — see desktop/README.md. Not yet merged to main; this release is overwritten by the next build."
+            --notes "Automated preview build from commit ${{ github.sha }} on \`${{ github.ref_name }}\` — see desktop/README.md.
+
+          Two installers, same build: **Devon Browser** bundles a real server, so the proxy, YouTube downloads, page-safety checks and Devon AI chat all work. **Devon Browser (Static)** has no server at all — lighter and nothing to get stuck starting, but those features don't work in it.
+
+          Not yet merged to main; this release is overwritten by the next build."
