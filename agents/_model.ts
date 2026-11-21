@@ -46,6 +46,54 @@ export function modelConfigured(env: Env): boolean {
   return hasAnthropicKey(env) || usesGateway(env)
 }
 
+/**
+ * True when a Free Claude Code (github.com/Alishahryar1/free-claude-code)
+ * server has been pointed at. FCC is an independent, AGPL-licensed local
+ * proxy that fronts 60+ model providers behind an Anthropic-Messages-compatible
+ * endpoint (among others), preserving native tool use and streaming — so unlike
+ * Eve Agent or AirLLM, it can run through this same Claude Agent SDK path
+ * rather than a bespoke adapter; see buildFccSdkEnv below. A Proxy
+ * Authentication token (DEVON_FCC_API_KEY) is optional — only required if
+ * the site owner's FCC instance has that setting turned on.
+ */
+export function fccConfigured(env: Env): boolean {
+  return Boolean(clean(env.DEVON_FCC_BASE_URL))
+}
+
+/** The model name to send when FCC is the active provider: an explicit override, or the usual resolution (FCC remaps whatever model string it's given to the provider/model configured in its own Admin UI). */
+export function resolveFccModelName(env: Env): string {
+  return clean(env.DEVON_FCC_MODEL) || resolveModelName(env)
+}
+
+/**
+ * Environment for the Claude CLI subprocess when routed through Free Claude
+ * Code instead of Anthropic directly or the AI Gateway. Points the CLI's
+ * ANTHROPIC_BASE_URL at the site owner's FCC instance (DEVON_FCC_BASE_URL —
+ * e.g. a tunnel or reachable address for their own machine, since FCC itself
+ * defaults to binding 0.0.0.0, not just loopback) and its ANTHROPIC_API_KEY
+ * at FCC's own Proxy Authentication token, if one is set (DEVON_FCC_API_KEY).
+ * The CLI needs some non-empty key even when FCC has no Proxy Authentication
+ * configured, hence the placeholder fallback.
+ */
+export function buildFccSdkEnv(env: Env): Record<string, string | undefined> {
+  const out: Record<string, string | undefined> = {}
+  for (const [key, value] of Object.entries(env)) {
+    if (key.startsWith("DEVON_")) continue
+    out[key] = value
+  }
+
+  out.ANTHROPIC_BASE_URL = clean(env.DEVON_FCC_BASE_URL)
+  out.ANTHROPIC_API_KEY = clean(env.DEVON_FCC_API_KEY) || "free-claude-code"
+
+  const model = resolveFccModelName(env)
+  out.ANTHROPIC_SMALL_FAST_MODEL = clean(env.DEVON_FCC_SMALL_MODEL) || model
+  if (clean(env.ANTHROPIC_CUSTOM_HEADERS)) out.ANTHROPIC_CUSTOM_HEADERS = env.ANTHROPIC_CUSTOM_HEADERS
+
+  out.CLAUDE_CONFIG_DIR = "/tmp/claude-agent-sdk"
+  out.CLAUDE_CODE_TMPDIR = "/tmp"
+  return out
+}
+
 export function resolveModelName(env: Env): string {
   return (
     clean(env.AI_GATEWAY_MODEL) ||
