@@ -456,7 +456,7 @@ function ResultsSkeleton() {
   )
 }
 
-function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void }) {
+function ErrorCard({ message, details, onRetry }: { message: string; details?: string[]; onRetry: () => void }) {
   return (
     <div className="mx-auto my-8 max-w-md rounded-2xl bg-toolbar p-5 text-sm ring-1 ring-border">
       <div className="flex items-start gap-3">
@@ -464,6 +464,7 @@ function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void 
         <div className="min-w-0">
           <p className="font-medium">Something went wrong</p>
           <p className="mt-1 break-words text-muted-foreground">{message}</p>
+          <FailureDetails details={details} />
           <Button size="sm" className="mt-3 rounded-full" onClick={onRetry}>
             <RotateCw /> Try again
           </Button>
@@ -512,7 +513,30 @@ function VideoDescription({ text }: { text: string }) {
   )
 }
 
-function DownloadUnavailableCard({ message, onRetry }: { message: string; onRetry: () => void }) {
+/** What each YouTube client answered, folded away under an error */
+function FailureDetails({ details }: { details?: string[] }) {
+  if (!details?.length) return null
+  return (
+    <details className="mt-2 text-xs text-muted-foreground">
+      <summary className="cursor-pointer select-none hover:text-foreground">What each YouTube client said</summary>
+      <ul className="mt-1.5 space-y-1 break-words font-mono">
+        {details.map((line, i) => (
+          <li key={i}>{line}</li>
+        ))}
+      </ul>
+    </details>
+  )
+}
+
+function DownloadUnavailableCard({
+  message,
+  details,
+  onRetry,
+}: {
+  message: string
+  details?: string[]
+  onRetry: () => void
+}) {
   const [open, setOpen] = useState(false)
   return (
     <div className="mt-4 rounded-2xl bg-toolbar p-5 text-sm ring-1 ring-border">
@@ -521,6 +545,7 @@ function DownloadUnavailableCard({ message, onRetry }: { message: string; onRetr
         <div className="min-w-0">
           <p className="font-medium">Downloads are unavailable from this server</p>
           <p className="mt-1 break-words text-muted-foreground">{message}</p>
+          <FailureDetails details={details} />
           <p className="mt-2 text-muted-foreground">
             Watching above may hit the same wall: “Through Devon” loads YouTube&apos;s player through this same server,
             so YouTube can refuse it too (“Sign in to confirm you&apos;re not a bot”). “Direct” loads it from your own
@@ -1045,6 +1070,7 @@ function WatchView({
   const [video, setVideo] = useState<YTVideo | null>(null)
   const [error, setError] = useState("")
   const [errorCode, setErrorCode] = useState("")
+  const [errorDetails, setErrorDetails] = useState<string[]>([])
   const [attempt, setAttempt] = useState(0)
   const [tab, setTab] = useState<"video" | "audio">("video")
 
@@ -1052,6 +1078,7 @@ function WatchView({
     const controller = new AbortController()
     setError("")
     setErrorCode("")
+    setErrorDetails([])
     setVideo(null)
     getVideo(id, controller.signal)
       .then((v) => {
@@ -1062,6 +1089,7 @@ function WatchView({
         if (controller.signal.aborted) return
         setError(e.message)
         setErrorCode(e.code || "")
+        setErrorDetails(e.details || [])
       })
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1087,9 +1115,13 @@ function WatchView({
           {error && errorCode === "network-unreachable" ? (
             <NetworkUnreachableCard message={error} onRetry={() => setAttempt((n) => n + 1)} />
           ) : error && (errorCode === "bot-check" || errorCode === "stream-unavailable") ? (
-            <DownloadUnavailableCard message={error} onRetry={() => setAttempt((n) => n + 1)} />
+            <DownloadUnavailableCard
+              message={error}
+              details={errorDetails}
+              onRetry={() => setAttempt((n) => n + 1)}
+            />
           ) : error ? (
-            <ErrorCard message={error} onRetry={() => setAttempt((n) => n + 1)} />
+            <ErrorCard message={error} details={errorDetails} onRetry={() => setAttempt((n) => n + 1)} />
           ) : video ? (
             <div className="mt-4">
               <h1 className="text-lg font-semibold leading-snug sm:text-xl">{video.title}</h1>

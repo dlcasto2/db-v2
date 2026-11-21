@@ -763,6 +763,8 @@ export class YTError extends Error {
      * "stream-unavailable" — neither of the above; a catch-all.
      */
     public code?: string,
+    /** What each YouTube client (and the Invidious relay) answered, for the error card */
+    public details?: string[],
   ) {
     super(message)
   }
@@ -994,6 +996,10 @@ export async function resolve(id: string, preferred?: string, userCookie = ""): 
     const pref = preferred?.toUpperCase() as Types.InnerTubeClient | undefined
     if (pref && order.includes(pref)) order.unshift(...order.splice(order.indexOf(pref), 1))
     const reasons: string[] = []
+    // The same answers labelled with the client that gave them, shown to the
+    // viewer: without them a failure is one catch-all sentence
+    const tried: string[] = []
+    let freshSessionWave = -1
 
     // The host cuts a request off after a while (EdgeOne answers 504), so the whole
     // search has a time budget: clients are tried a few at a time, the Invidious
@@ -1025,9 +1031,13 @@ export async function resolve(id: string, preferred?: string, userCookie = ""): 
       const found = results.find((out): out is Resolved => typeof out !== "string")
       if (found) return remember(found)
       reasons.push(...(results as string[]))
+      results.forEach((out, n) =>
+        tried.push(`${wave[n]}${freshSessionWave === i ? " (fresh session)" : ""}: ${String(out)}`),
+      )
       // A stale player script breaks deciphering; start a fresh session once and redo this wave
       if (!retried && results.some((m) => /decipher|player|signature|n param|nsig/i.test(m as string))) {
         retried = true
+        freshSessionWave = i
         resetSession(cookie)
         continue
       }
@@ -1044,6 +1054,9 @@ export async function resolve(id: string, preferred?: string, userCookie = ""): 
     // YouTube refused this server: use an Invidious relay if one got through
     const relayed = await relay
     if (typeof relayed !== "string") return remember(relayed)
+    tried.push(`Invidious relay: ${relayed}`)
+    const skipped = order.filter((name) => !tried.some((t) => t.startsWith(`${name}:`) || t.startsWith(`${name} (`)))
+    if (skipped.length) tried.push(`Not tried, out of time: ${skipped.join(", ")}`)
 
     if (allClientsUnreachable) {
       throw new YTError(
@@ -1051,6 +1064,7 @@ export async function resolve(id: string, preferred?: string, userCookie = ""): 
           "That's a network/DNS problem on this deployment, not something a cookie, a different client or a different video fixes — it needs outbound access to *.googlevideo.com, or a reachable Invidious relay (DEVON_INVIDIOUS).",
         503,
         "network-unreachable",
+        tried,
       )
     }
     reasons.push(relayed)
@@ -1060,6 +1074,7 @@ export async function resolve(id: string, preferred?: string, userCookie = ""): 
         "YouTube took too long to answer this server. Try again in a moment.",
         503,
         "stream-unavailable",
+        tried,
       )
     }
 
@@ -1072,12 +1087,14 @@ export async function resolve(id: string, preferred?: string, userCookie = ""): 
           : "YouTube refused all available download clients from this server. The server needs an IP that YouTube allows to fetch video files.",
         503,
         "bot-check",
+        tried,
       )
     }
     throw new YTError(
       "The download server could not get working video and audio streams for this video. Playback in the embedded player may still work.",
       503,
       "stream-unavailable",
+      tried,
     )
   })()
   pending.set(cacheKey, job)
