@@ -58,6 +58,7 @@ const EXCLUDED = [
   "ai-chat",
   "ai-conversations",
   "ai-delete-conversation",
+  "ai-fcc-status",
   "ai-feedback",
   "ai-filesystem",
   "ai-history",
