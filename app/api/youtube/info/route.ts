@@ -19,7 +19,8 @@ export async function GET(request: NextRequest) {
     const status = error instanceof YTError ? error.status : 502
     const message = error instanceof Error ? error.message : "Couldn't load this video."
     const code = error instanceof YTError ? error.code : undefined
-    return withCors(request, NextResponse.json({ error: message, code }, { status }))
+    const details = error instanceof YTError ? error.details : undefined
+    return withCors(request, NextResponse.json({ error: message, code, details }, { status }))
   }
 }
 
