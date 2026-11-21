@@ -583,6 +583,36 @@ function CookieButton({ className, onChange }: { className?: string; onChange?: 
   )
 }
 
+/**
+ * The keys for the cookie steps on the viewer's own computer. The dialog only
+ * renders after a click, so reading navigator here can't cause a hydration
+ * mismatch.
+ */
+function shortcutKeys(): { privateWindow: string; devtools: string; note?: string; mobile: boolean } {
+  const ua = typeof navigator === "undefined" ? "" : navigator.userAgent
+  const firefox = /Firefox\//.test(ua)
+  // iPads ask for desktop sites as a Mac; touch points give them away
+  const touchMac = /Macintosh/.test(ua) && typeof navigator !== "undefined" && navigator.maxTouchPoints > 1
+  if (/Android|iPhone|iPad|iPod/.test(ua) || touchMac) {
+    return { privateWindow: "Ctrl+Shift+N", devtools: "Ctrl+Shift+I", mobile: true }
+  }
+  if (/\bCrOS\b/.test(ua)) return { privateWindow: "Ctrl+Shift+N", devtools: "Ctrl+Shift+I", mobile: false }
+  if (/Macintosh|Mac OS X/.test(ua)) {
+    const safari = /Safari\//.test(ua) && !/Chrome\/|Chromium\/|Edg\/|Firefox\//.test(ua)
+    return {
+      privateWindow: firefox ? "Cmd+Shift+P" : "Cmd+Shift+N",
+      devtools: "Cmd+Option+I",
+      note: safari ? "first turn on Safari → Settings → Advanced → Show features for web developers" : undefined,
+      mobile: false,
+    }
+  }
+  return { privateWindow: firefox ? "Ctrl+Shift+P" : "Ctrl+Shift+N", devtools: "F12 or Ctrl+Shift+I", mobile: false }
+}
+
+function Keys({ children }: { children: React.ReactNode }) {
+  return <span className="font-mono text-foreground">{children}</span>
+}
+
 function CookieDialog({
   open,
   onOpenChange,
@@ -593,6 +623,7 @@ function CookieDialog({
   onChange?: () => void
 }) {
   const state = useCookieState()
+  const keys = shortcutKeys()
   const [value, setValue] = useState("")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
@@ -677,11 +708,21 @@ function CookieDialog({
           </p>
         )}
 
+        {keys.mobile && (
+          <p className="text-xs leading-relaxed text-amber-400">
+            Phones and tablets can&apos;t show this, so do steps 1–3 on a computer, then send yourself the text and paste
+            it here in this browser.
+          </p>
+        )}
         <ol className="list-decimal space-y-1 pl-5 text-xs leading-relaxed text-muted-foreground">
-          <li>Open a private/incognito window and sign in to YouTube, ideally with a spare account.</li>
           <li>
-            Go to <span className="font-mono text-foreground">youtube.com/robots.txt</span>, press F12, open{" "}
-            <b>Network</b>, and reload.
+            Open a private window (<Keys>{keys.privateWindow}</Keys>) and sign in to YouTube, ideally with a spare
+            account.
+          </li>
+          <li>
+            Go to <span className="font-mono text-foreground">youtube.com/robots.txt</span>, open developer tools (
+            <Keys>{keys.devtools}</Keys>
+            {keys.note ? `; ${keys.note}` : ""}), click <b>Network</b>, and reload.
           </li>
           <li>
             Click <b>robots.txt</b> → <b>Headers</b> → <b>Request Headers</b>, right-click the <b>cookie</b> value →{" "}
@@ -689,6 +730,12 @@ function CookieDialog({
           </li>
           <li>Paste it below, then close the private window without signing out.</li>
         </ol>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          Developer tools keys: Chromebook <Keys>Ctrl+Shift+I</Keys> (there&apos;s no F12 key), Mac{" "}
+          <Keys>Cmd+Option+I</Keys>, Windows <Keys>F12</Keys>. If they won&apos;t open (school or work devices often
+          block them), copy the cookie on another computer and paste it here: it only works in the browser you paste it
+          into.
+        </p>
 
         <textarea
           value={value}
