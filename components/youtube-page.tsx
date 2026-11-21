@@ -970,7 +970,14 @@ const embedUrl = (id: string) => `https://www.youtube-nocookie.com/embed/${id}?a
  *    this server.
  * Direct mode loads youtube-nocookie.com straight from the viewer's connection.
  */
-function DevonPlayer({ id, video }: { id: string; video: YTVideo | null }) {
+/**
+ * `loading`: Devon is still asking its server for the video. In "Through Devon"
+ * mode the player waits on a thumbnail meanwhile instead of showing YouTube's
+ * embed: on a server YouTube bot-checks (Netlify), the embed flashed "Sign in to
+ * confirm you're not a bot" for a moment before Devon's own player replaced it.
+ * The embed is still the fallback when the server can't get the video.
+ */
+function DevonPlayer({ id, video, loading }: { id: string; video: YTVideo | null; loading: boolean }) {
   const [mode, setModeState] = useState<PlayerMode>("devon")
   const [nativeFailed, setNativeFailed] = useState(false)
   useEffect(() => setModeState(readPlayerMode()), [])
@@ -987,6 +994,7 @@ function DevonPlayer({ id, video }: { id: string; video: YTVideo | null }) {
 
   const preview = video ? previewFormat(video) : undefined
   const native = mode === "devon" && video && preview && !nativeFailed
+  const waiting = mode === "devon" && loading && !nativeFailed
   // YouTube's embed refuses to start without knowing which site embeds it
   // (Error 153 "Video player configuration error"). Through the proxy, the
   // upstream Referer only exists if we pass one as ref=, so name this Devon site.
@@ -1013,6 +1021,14 @@ function DevonPlayer({ id, video }: { id: string; video: YTVideo | null }) {
           />
         ) : mode === "direct" ? (
           <OfficialYouTubePlayer key={id} id={id} onError={() => setModeState("devon")} />
+        ) : waiting ? (
+          <div className="relative size-full" aria-busy="true" aria-label="Loading video">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={thumbnailUrl(id, "hq")} alt="" className="size-full object-cover opacity-50" />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <Loader2 className="size-9 animate-spin text-white/85" />
+            </div>
+          </div>
         ) : (
           <iframe
             key={src}
@@ -1051,7 +1067,9 @@ function DevonPlayer({ id, video }: { id: string; video: YTVideo | null }) {
             ? "youtube-nocookie.com from your own connection (if it shows a 403, your network blocks it: use Through Devon)"
             : native
               ? "Streaming from this Devon server"
-              : "youtube-nocookie.com loaded through Devon's proxy"}
+              : waiting
+                ? "Getting the video from this Devon server…"
+                : "youtube-nocookie.com loaded through Devon's proxy"}
         </span>
       </div>
     </div>
@@ -1110,7 +1128,7 @@ function WatchView({
 
       <div className="mx-auto grid w-full max-w-6xl gap-6 p-4 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="min-w-0">
-          <DevonPlayer id={id} video={video} />
+          <DevonPlayer id={id} video={video} loading={!video && !error} />
 
           {error && errorCode === "network-unreachable" ? (
             <NetworkUnreachableCard message={error} onRetry={() => setAttempt((n) => n + 1)} />
