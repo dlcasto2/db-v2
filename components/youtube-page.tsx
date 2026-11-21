@@ -473,6 +473,45 @@ function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void 
   )
 }
 
+/**
+ * The video's description: four lines, then "Show more" when there's more.
+ * The padding sits on the box, not on the clamped text, or the cut-off fifth
+ * line would show half-hidden in the padding.
+ */
+function VideoDescription({ text }: { text: string }) {
+  const [open, setOpen] = useState(false)
+  const [overflows, setOverflows] = useState(false)
+  const ref = useRef<HTMLParagraphElement | null>(null)
+  useEffect(() => setOpen(false), [text])
+  useEffect(() => {
+    const el = ref.current
+    if (!el || open) return
+    const measure = () => setOverflows(el.scrollHeight > el.clientHeight + 1)
+    measure()
+    if (typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [text, open])
+  return (
+    <div className="mt-3 rounded-xl bg-white/[0.03] p-3 text-sm text-muted-foreground ring-1 ring-border">
+      <p ref={ref} className={cn("whitespace-pre-line break-words", !open && "line-clamp-4")}>
+        {text}
+      </p>
+      {(overflows || open) && (
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          className="mt-1.5 text-xs font-medium text-foreground hover:underline"
+        >
+          {open ? "Show less" : "Show more"}
+        </button>
+      )}
+    </div>
+  )
+}
+
 function DownloadUnavailableCard({ message, onRetry }: { message: string; onRetry: () => void }) {
   const [open, setOpen] = useState(false)
   return (
@@ -1063,11 +1102,7 @@ function WatchView({
                   .filter(Boolean)
                   .join(" · ")}
               </p>
-              {video.description && (
-                <p className="mt-3 line-clamp-4 whitespace-pre-line rounded-xl bg-white/[0.03] p-3 text-sm text-muted-foreground ring-1 ring-border">
-                  {video.description}
-                </p>
-              )}
+              {video.description && <VideoDescription text={video.description} />}
               <a
                 href={`https://www.youtube-nocookie.com/embed/${video.id}`}
                 target="_blank"
