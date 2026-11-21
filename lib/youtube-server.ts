@@ -888,7 +888,8 @@ async function tryInvidious(base: string, id: string): Promise<Resolved> {
       channel: d.author || "",
       duration: Number(d.lengthSeconds) || 0,
       views: typeof d.viewCount === "number" ? d.viewCount : null,
-      description: String(d.description || "").slice(0, 2000),
+      // YouTube allows 5,000 characters
+      description: String(d.description || "").slice(0, 5000),
       live: Boolean(d.liveNow),
       client: "INVIDIOUS",
       formats,
