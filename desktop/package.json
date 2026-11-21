@@ -1,0 +1,17 @@
+{
+  "name": "devon-browser-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "build:static": "tauri build --config src-tauri/tauri.static.conf.json --features static-build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  },
+  "dependencies": {
+    "@tauri-apps/plugin-shell": "~2.6.0"
+  }
+}

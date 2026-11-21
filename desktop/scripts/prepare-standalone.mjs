@@ -1,0 +1,90 @@
+#!/usr/bin/env node
+// Builds Devon as a standalone Next.js server and stages it where the Tauri
+// bundler expects resources (see tauri.conf.json -> bundle.resources), so the
+// desktop app has a real `server.js` + pruned `node_modules` to run as its
+// Node sidecar. Safe to re-run: wipes and rewrites the staging directory.
+//
+// Run from anywhere; paths are resolved relative to this file, not cwd.
+import { spawnSync } from "node:child_process"
+import { existsSync, cpSync, rmSync, mkdirSync } from "node:fs"
+import { fileURLToPath } from "node:url"
+import path from "node:path"
+
+const here = path.dirname(fileURLToPath(import.meta.url))
+const repoRoot = path.resolve(here, "..", "..") // desktop/scripts -> desktop -> repo root
+const stagingDir = path.resolve(here, "..", "src-tauri", "resources", "app")
+
+console.log(`[prepare-standalone] building Devon (standalone) from ${repoRoot}`)
+// `shell: true` matters here: on Windows, pnpm is a .cmd (a batch script),
+// and spawnSync can't exec one directly without going through a shell — it
+// fails to even start the process (instantly, with nothing on stdio/stderr
+// to inherit, which otherwise silently looks just like `next build` itself
+// failing). This is harmless on POSIX too (plain `/bin/sh -c "pnpm ..."`),
+// and there's no untrusted input in the command here.
+const build = spawnSync("pnpm", ["exec", "next", "build"], {
+  cwd: repoRoot,
+  stdio: "inherit",
+  shell: true,
+  env: { ...process.env, DEVON_DESKTOP_BUILD: "1" },
+})
+if (build.error) {
+  console.error(`[prepare-standalone] failed to start \`pnpm exec next build\`: ${build.error.message}`)
+  process.exit(1)
+}
+if (build.status !== 0) {
+  console.error("[prepare-standalone] `next build` failed, aborting")
+  process.exit(build.status ?? 1)
+}
+
+const standaloneDir = path.join(repoRoot, ".next", "standalone")
+if (!existsSync(standaloneDir)) {
+  console.error(
+    `[prepare-standalone] ${standaloneDir} is missing — did next.config.mjs's ` +
+      "DEVON_DESKTOP_BUILD -> output:'standalone' branch run? (check next.config.mjs)",
+  )
+  process.exit(1)
+}
+
+// pnpm's node_modules is a tree of symlinks (or, on Windows, junctions) into
+// a shared .pnpm store. Tauri's resource copy and NSIS packaging don't carry
+// those through reliably onto a different machine than the one that built
+// them, which is exactly what made the installed app's server crash right
+// on startup — `require('next')` failing once the links were gone. Flatten
+// standaloneDir in place, before it gets copied below, so there's nothing
+// left for either step to mishandle.
+const flatten = spawnSync(process.execPath, [path.join(here, "flatten-standalone.mjs"), standaloneDir], {
+  stdio: "inherit",
+})
+if (flatten.error) {
+  console.error(`[prepare-standalone] failed to start flatten-standalone.mjs: ${flatten.error.message}`)
+  process.exit(1)
+}
+if (flatten.status !== 0) {
+  console.error("[prepare-standalone] flatten-standalone.mjs failed, aborting")
+  process.exit(flatten.status ?? 1)
+}
+
+console.log(`[prepare-standalone] staging into ${stagingDir}`)
+rmSync(stagingDir, { recursive: true, force: true })
+mkdirSync(stagingDir, { recursive: true })
+
+// The standalone output is already a self-contained server + pruned
+// node_modules, but it deliberately excludes .next/static and public/ (Next
+// expects you to copy those in yourself — see
+// https://nextjs.org/docs/app/api-reference/config/next-config-js/output).
+cpSync(standaloneDir, stagingDir, { recursive: true })
+cpSync(path.join(repoRoot, ".next", "static"), path.join(stagingDir, ".next", "static"), {
+  recursive: true,
+})
+cpSync(path.join(repoRoot, "public"), path.join(stagingDir, "public"), { recursive: true })
+
+if (!existsSync(path.join(stagingDir, "server.js"))) {
+  console.error(
+    `[prepare-standalone] expected ${stagingDir}/server.js — Devon's standalone output layout ` +
+      "may have changed (e.g. if this ever becomes a monorepo, server.js nests under a workspace " +
+      "path instead of sitting at the standalone root). Check .next/standalone's actual layout.",
+  )
+  process.exit(1)
+}
+
+console.log("[prepare-standalone] done")

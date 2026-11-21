@@ -1,0 +1,33 @@
+[package]
+name = "app"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["you"]
+license = ""
+repository = ""
+edition = "2024"
+rust-version = "1.90"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.4" }
+
+[features]
+# Off by default — the normal build still bundles the real Node sidecar
+# (see src/lib.rs). Built via `pnpm build:static` (package.json), which pairs
+# this with tauri.static.conf.json so the no-sidecar code path and the
+# no-sidecar bundle config always travel together.
+static-build = []
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.12.5" }
+tauri-plugin-log = "2"
+tauri-plugin-shell = "2"
