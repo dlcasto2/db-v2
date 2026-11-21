@@ -736,6 +736,43 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
   var MEDIA_REQ = new RegExp('googlevideo[.]com|videoplayback|/youtubei/v1/(player|next|browse|search|reel)|[.](m3u8|mpd)([?]|$)', 'i');
   var activityHook = null;
   function logActivity(info) { try { if (activityHook) activityHook(info); } catch (e) {} }
+  // ---- Binary request bodies. Some hosts (Netlify) give Devon's code a request
+  // body whose Content-Type looks like text (application/json, text/plain) as
+  // decoded text, so any binary bytes in it arrive mangled. YouTube's player
+  // gzips its JSON requests (Content-Encoding: gzip): they reached YouTube
+  // corrupted, it answered "Request contains an invalid argument", and the
+  // video went black. So binary bodies go to Devon labelled
+  // application/octet-stream, which hosts pass through untouched, with their
+  // real type in X-Devon-Content-Type ("none" = no type); the proxy restores it.
+  var BODY_TYPE_HEADER = 'X-Devon-Content-Type';
+  function isBinaryBody(b) {
+    if (b === null || b === undefined || typeof b === 'string') return false;
+    if (typeof URLSearchParams !== 'undefined' && b instanceof URLSearchParams) return false;
+    return (typeof ArrayBuffer !== 'undefined' && (b instanceof ArrayBuffer || ArrayBuffer.isView(b))) ||
+      (typeof Blob !== 'undefined' && b instanceof Blob) ||
+      (typeof FormData !== 'undefined' && b instanceof FormData);
+  }
+  function labelBinary(headers, type) {
+    headers.set(BODY_TYPE_HEADER, type || 'none');
+    headers.set('Content-Type', 'application/octet-stream');
+  }
+  // fetch() options with a binary body, relabelled. The type is the one the
+  // browser would have sent: the explicit Content-Type, else the body's own
+  // (a Blob's type, FormData's multipart boundary), read off a throwaway Request
+  function relabelBody(opts) {
+    var probe;
+    try { probe = new Request(PROXY_ORIGIN + '/', { method: opts.method || 'POST', headers: opts.headers, body: opts.body }); } catch (e) { return Promise.resolve(opts); }
+    var type = probe.headers.get('content-type');
+    return probe.arrayBuffer().then(function (buf) {
+      var out = Object.assign({}, opts);
+      var h = new Headers(opts.headers || undefined);
+      labelBinary(h, type);
+      out.headers = h;
+      out.body = buf;
+      return out;
+    }, function () { return opts; });
+  }
+
   var nativeFetch = window.fetch;
   if (typeof nativeFetch === 'function') {
     // Copies a Request to a new URL. Its body is read into memory first: re-wrapping a
@@ -759,11 +796,17 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
       };
       if (init && 'body' in init) {
         opts.body = init.body;
-        return Promise.resolve(opts);
+        return isBinaryBody(opts.body) ? relabelBody(opts) : Promise.resolve(opts);
       }
       if (m === 'GET' || m === 'HEAD') return Promise.resolve(opts);
       return req.clone().arrayBuffer().then(function (buf) {
         opts.body = buf.byteLength ? buf : undefined;
+        if (opts.body) {
+          // Bytes now, whatever the page passed in: label them as such
+          var h = new Headers(opts.headers || undefined);
+          labelBinary(h, h.get('content-type'));
+          opts.headers = h;
+        }
         return opts;
       });
     }
@@ -782,6 +825,9 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
         } else if (target) {
           input = target;
           if (init && init.referrerPolicy) { init = Object.assign({}, init); init.referrerPolicy = 'same-origin'; }
+          if (init && isBinaryBody(init.body)) {
+            p = relabelBody(init).then(function (opts) { return nativeFetch.call(window, target, opts); });
+          }
         }
       } catch (e) {}
       // Always call the real fetch on window: sites often call fetch as a method of
@@ -834,6 +880,8 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
     try {
       var target = toProxy(u);
       if (target) args[1] = target;
+      xhr.__devonProxied = !!target;
+      xhr.__devonType = undefined;
       if (!xhr.__devonWatched) {
         xhr.__devonWatched = true;
         xhr.addEventListener('loadend', function () {
@@ -868,6 +916,34 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
       xhr.__devonAborted = false;
     } catch (e) {}
     return nativeXhrOpen.apply(this, args);
+  };
+
+  // A proxied XHR's Content-Type waits for send(), which knows the body: binary
+  // bodies are relabelled like fetch()'s above. (FormData is left as it was:
+  // relabelling it would mean reading it first, which XHR's send() can't wait for.)
+  var nativeXhrSend = XMLHttpRequest.prototype.send;
+  var nativeXhrSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+  XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+    if (this.__devonProxied && String(name).toLowerCase() === 'content-type') {
+      // Repeated calls combine, as XHR itself does
+      this.__devonType = this.__devonType === undefined ? String(value) : this.__devonType + ', ' + value;
+      return;
+    }
+    return nativeXhrSetHeader.apply(this, arguments);
+  };
+  XMLHttpRequest.prototype.send = function (body) {
+    if (this.__devonProxied) {
+      try {
+        if (isBinaryBody(body) && !(typeof FormData !== 'undefined' && body instanceof FormData)) {
+          var type = this.__devonType || (typeof Blob !== 'undefined' && body instanceof Blob ? body.type : '');
+          nativeXhrSetHeader.call(this, BODY_TYPE_HEADER, type || 'none');
+          nativeXhrSetHeader.call(this, 'Content-Type', 'application/octet-stream');
+        } else if (this.__devonType !== undefined) {
+          nativeXhrSetHeader.call(this, 'Content-Type', this.__devonType);
+        }
+      } catch (e) {}
+    }
+    return nativeXhrSend.apply(this, arguments);
   };
 
   if (typeof EventSource === 'function') {
@@ -1786,6 +1862,8 @@ const DROPPED_REQUEST_HEADERS = new Set([
   "x-forwarded-proto",
   "x-real-ip",
   "forwarded",
+  // The real type of a relabelled binary body (see handleRaw)
+  "x-devon-content-type",
 ])
 
 function forwardableHeaders(request: NextRequest): Record<string, string> {
@@ -1889,13 +1967,21 @@ async function handleRaw(request: NextRequest, targetUrl: string): Promise<NextR
     }
   }
 
+  // The page script sends binary bodies labelled application/octet-stream, with
+  // their real type in X-Devon-Content-Type ("none" = the page sent none):
+  // hosts like Netlify hand Devon a body with a text-like type (JSON...) as
+  // decoded text, which mangles binary bytes such as YouTube's gzipped requests.
+  const declared = request.headers.get("x-devon-content-type")
+  const contentType =
+    declared !== null ? (declared === "none" ? undefined : declared) : request.headers.get("content-type") || undefined
+
   return handle(
     request,
     targetUrl,
     {
       method,
       body: body && body.byteLength > 0 ? body : undefined,
-      contentType: request.headers.get("content-type") || undefined,
+      contentType,
       headers,
     },
     true,

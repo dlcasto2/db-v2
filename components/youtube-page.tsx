@@ -483,12 +483,13 @@ function DownloadUnavailableCard({ message, onRetry }: { message: string; onRetr
           <p className="font-medium">Downloads are unavailable from this server</p>
           <p className="mt-1 break-words text-muted-foreground">{message}</p>
           <p className="mt-2 text-muted-foreground">
-            You can still try watching above: “Through Devon” loads the youtube-nocookie.com player through Devon&apos;s
-            proxy, and “Direct” loads it from your own connection. Neither gives Devon a file to download.
+            Watching above may hit the same wall: “Through Devon” loads YouTube&apos;s player through this same server,
+            so YouTube can refuse it too (“Sign in to confirm you&apos;re not a bot”). “Direct” loads it from your own
+            connection instead, if your network allows YouTube.
           </p>
           <p className="mt-2 text-muted-foreground">
-            To download, add the cookie from a signed-in YouTube account (ideally a spare one). It&apos;s saved only in
-            this browser.
+            Adding the cookie from a signed-in YouTube account (ideally a spare one) can get this server past the check,
+            so Devon can play the video in its own player and download it. It&apos;s saved only in this browser.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <Button size="sm" className="rounded-full" onClick={() => setOpen(true)}>
