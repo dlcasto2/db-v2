@@ -507,11 +507,15 @@ Platform.shim.eval = (data, env) => {
 const sessions = new Map<string, { promise: Promise<Innertube>; born: number }>()
 const SESSION_TTL = 6 * 60 * 60 * 1000
 
-function yt(cookie = ""): Promise<Innertube> {
-  const key = keyOf(cookie)
+function yt(cookie = "", usePoToken = false): Promise<Innertube> {
+  // Search, suggestions and channel browsing don't need a BotGuard token.
+  // Only video resolution/player work opts in, so a slow challenge cannot
+  // stall the search API or consume its shorter serverless time budget.
+  const key = `${keyOf(cookie)}:${usePoToken ? "po" : "plain"}`
   const hit = sessions.get(key)
   if (hit && Date.now() - hit.born < SESSION_TTL) return hit.promise
-  const promise = Promise.all([ytFetch(), getPoTokenOrNull()])
+  const token = usePoToken ? getPoTokenOrNull() : Promise.resolve(null)
+  const promise = Promise.all([ytFetch(), token])
     .then(([f, po]) =>
       Innertube.create({
         retrieve_player: true,
@@ -531,9 +535,11 @@ function yt(cookie = ""): Promise<Innertube> {
   return promise
 }
 
-/** Throws away a session, e.g. after YouTube rotated its player script */
+/** Throws away both plain and PO-token sessions after YouTube rotates its player script. */
 function resetSession(cookie = "") {
-  sessions.delete(keyOf(cookie))
+  const key = keyOf(cookie)
+  sessions.delete(`${key}:plain`)
+  sessions.delete(`${key}:po`)
 }
 
 // ---------------------------------------------------------------------------
@@ -916,7 +922,7 @@ async function decipher(r: Resolved, itag: number): Promise<string> {
   if (r.source === "invidious") throw new YTError("That format isn't available for this video.", 404)
   const f = r.raw.get(itag)
   if (!f) throw new YTError("That format isn't available for this video.", 404)
-  const client = await yt(r.cookie)
+  const client = await yt(r.cookie, true)
   const url = await f.decipher(client.session.player)
   if (!url) throw new YTError("Couldn't unlock this format.", 502)
 
@@ -1042,7 +1048,7 @@ async function resolveInvidious(id: string): Promise<Resolved | string> {
 }
 
 async function resolveWith(id: string, clientName: Types.InnerTubeClient, cookie: string): Promise<Resolved | string> {
-  const client = await yt(cookie)
+  const client = await yt(cookie, true)
   const info = await client.getBasicInfo(id, { client: clientName })
   const status = info.playability_status
   if (status?.status && status.status !== "OK") {
