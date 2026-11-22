@@ -11,6 +11,8 @@
 import vm from "node:vm"
 import { createHash } from "node:crypto"
 import { Innertube, Platform, YTNodes, type Types } from "youtubei.js"
+import { BG } from "bgutils-js"
+import { JSDOM } from "jsdom"
 import { describeIfUnreachable, UNREACHABLE_PREFIX } from "./youtube-network-error"
 import { corsHeaders, describeCors, parseCorsSetting } from "./youtube-cors"
 import { CHANNEL_ID_RE, parseChannelInput } from "./youtube-channel-input"
@@ -341,6 +343,60 @@ export const BOT_CHECK_RE = /not a bot|sign in to confirm|confirm you.re not|unu
 
 export { describeIfUnreachable, UNREACHABLE_PREFIX } from "./youtube-network-error"
 
+// --- PO token (BotGuard proof-of-origin) --------------------------------
+// YouTube's bot check is keyed on whether a request carries a valid
+// integrity token minted by running Google's BotGuard challenge. Without
+// one, a datacenter IP (EdgeOne/Render) gets "sign in to confirm you're
+// not a bot" on every client, cookie or not. This runs the challenge once
+// per server session and reuses the minter to stamp every player request.
+//
+// Defeats: IP-reputation bot check on /youtubei/v1/player
+// Caught by: BotGuard challenge rotation — bump REQUEST_KEY below if youtubei.js
+//   upstream changes it (check their examples/po_token.js for the current value)
+const REQUEST_KEY = "O43z0dpjhgX20SCx4KAo"
+
+let poTokenPromise: Promise<{ visitorData: string; poToken: string; mint: (id: string) => Promise<string> }> | null = null
+
+function getPoToken() {
+  if (!poTokenPromise) {
+    poTokenPromise = (async () => {
+      const dom = new JSDOM()
+      Object.assign(globalThis as Record<string, unknown>, { window: dom.window, document: dom.window.document })
+
+      const visitorResp = await (await ytFetch())("https://www.youtube.com/youtubei/v1/visitor_id?prettyPrint=false", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ context: { client: { clientName: "WEB", clientVersion: "2.20241201.01.00" } } }),
+      })
+      const { responseContext } = await visitorResp.json()
+      const visitorData: string = responseContext.visitorData
+
+      const bgConfig = {
+        fetch: (input: RequestInfo, init?: RequestInit) => fetch(input, init),
+        globalObj: globalThis,
+        identifier: visitorData,
+        requestKey: REQUEST_KEY,
+      }
+      const challenge = await BG.Challenge.create(bgConfig)
+      if (!challenge) throw new Error("po_token: botguard challenge creation failed")
+      const script = challenge.interpreterJavascript?.privateDoNotAccessOrElseTrustedTypesWillSeizeTheOpportunityToBreakThisCode
+      if (script) new Function(script)()
+      else throw new Error("po_token: no interpreter script in challenge")
+
+      const result = await BG.PoToken.generate({ program: challenge.program, globalName: challenge.globalName, bgConfig })
+      return {
+        visitorData,
+        poToken: result.poToken,
+        mint: (id: string) => result.integrityTokenBasedMinter.mintAsWebsafeString(id),
+      }
+    })().catch((e) => {
+      poTokenPromise = null
+      throw e
+    })
+  }
+  return poTokenPromise
+}
+
 type Fetch = typeof fetch
 let proxiedFetch: Promise<Fetch> | null = null
 
@@ -404,13 +460,14 @@ function yt(cookie = ""): Promise<Innertube> {
   const key = keyOf(cookie)
   const hit = sessions.get(key)
   if (hit && Date.now() - hit.born < SESSION_TTL) return hit.promise
-  const promise = ytFetch()
-    .then((f) =>
+  const promise = Promise.all([ytFetch(), getPoToken().catch(() => null)])
+    .then(([f, po]) =>
       Innertube.create({
         retrieve_player: true,
         lang: "en",
         location: "US",
         fetch: f,
+        ...(po ? { po_token: po.poToken, visitor_data: po.visitorData } : {}),
         ...(cookie ? { cookie } : {}),
       }),
     )
