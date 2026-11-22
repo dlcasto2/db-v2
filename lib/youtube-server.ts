@@ -11,7 +11,10 @@
 import vm from "node:vm"
 import { createHash } from "node:crypto"
 import { Innertube, Platform, YTNodes, type Types } from "youtubei.js"
-import { BG } from "bgutils-js"
+import { BotGuardClient, getChallenge } from "bgutils-js/botguard"
+import type { WebPoSignalOutput } from "bgutils-js/shared-types"
+import { buildURL, getHeaders, USER_AGENT } from "bgutils-js/utils"
+import { WebPoMinter } from "bgutils-js/webpo"
 import { JSDOM } from "jsdom"
 import { describeIfUnreachable, UNREACHABLE_PREFIX } from "./youtube-network-error"
 import { corsHeaders, describeCors, parseCorsSetting } from "./youtube-cors"
@@ -360,34 +363,72 @@ let poTokenPromise: Promise<{ visitorData: string; poToken: string; mint: (id: s
 function getPoToken() {
   if (!poTokenPromise) {
     poTokenPromise = (async () => {
-      const dom = new JSDOM()
-      Object.assign(globalThis as Record<string, unknown>, { window: dom.window, document: dom.window.document })
+      const dom = new JSDOM("<!DOCTYPE html><html lang=\"en\"><head><title></title></head><body></body></html>", {
+        url: "https://www.youtube.com",
+        referrer: "https://www.youtube.com/",
+        userAgent: USER_AGENT,
+      })
+      Object.assign(globalThis as Record<string, unknown>, {
+        window: dom.window,
+        document: dom.window.document,
+        location: dom.window.location,
+        origin: dom.window.origin,
+      })
+      if (!("navigator" in globalThis)) {
+        Object.defineProperty(globalThis, "navigator", { value: dom.window.navigator })
+      }
 
-      const visitorResp = await (await ytFetch())("https://www.youtube.com/youtubei/v1/visitor_id?prettyPrint=false", {
+      const f = await ytFetch()
+      const visitorResp = await f("https://www.youtube.com/youtubei/v1/visitor_id?prettyPrint=false", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ context: { client: { clientName: "WEB", clientVersion: "2.20241201.01.00" } } }),
       })
-      const { responseContext } = await visitorResp.json()
-      const visitorData: string = responseContext.visitorData
+      if (!visitorResp.ok) throw new Error(`po_token: visitor id request failed (HTTP ${visitorResp.status})`)
+      const visitorJson = await visitorResp.json()
+      const visitorData: string | undefined = visitorJson?.responseContext?.visitorData
+      if (!visitorData) throw new Error("po_token: YouTube did not return visitor data")
 
-      const bgConfig = {
-        fetch: (input: RequestInfo, init?: RequestInit) => fetch(input, init),
-        globalObj: globalThis,
-        identifier: visitorData,
+      const challenge = await getChallenge({
         requestKey: REQUEST_KEY,
+        fetchFunction: f,
+      })
+      const script = challenge.interpreterJavascript?.privateDoNotAccessOrElseSafeScriptWrappedValue
+      if (!script || !challenge.program || !challenge.globalName) {
+        throw new Error("po_token: BotGuard challenge was incomplete")
       }
-      const challenge = await BG.Challenge.create(bgConfig)
-      if (!challenge) throw new Error("po_token: botguard challenge creation failed")
-      const script = challenge.interpreterJavascript?.privateDoNotAccessOrElseTrustedTypesWillSeizeTheOpportunityToBreakThisCode
-      if (script) new Function(script)()
-      else throw new Error("po_token: no interpreter script in challenge")
+      new Function(script)()
 
-      const result = await BG.PoToken.generate({ program: challenge.program, globalName: challenge.globalName, bgConfig })
+      const botGuard = await BotGuardClient.create({
+        program: challenge.program,
+        globalName: challenge.globalName,
+        globalObject: globalThis,
+      })
+      const webPoSignalOutput: WebPoSignalOutput = []
+      const botGuardResponse = await botGuard.snapshot({ webPoSignalOutput })
+
+      const integrityResp = await f(buildURL("GenerateIT", true), {
+        method: "POST",
+        headers: getHeaders(),
+        body: JSON.stringify([REQUEST_KEY, botGuardResponse]),
+      })
+      if (!integrityResp.ok) {
+        throw new Error(`po_token: integrity request failed (HTTP ${integrityResp.status})`)
+      }
+      const [integrityToken, estimatedTtlSecs, mintRefreshThreshold, websafeFallbackToken] =
+        await integrityResp.json() as [string, number, number, string]
+
+      const minter = await WebPoMinter.create({
+        integrityToken,
+        estimatedTtlSecs,
+        mintRefreshThreshold,
+        websafeFallbackToken,
+      }, webPoSignalOutput)
+
       return {
         visitorData,
-        poToken: result.poToken,
-        mint: (id: string) => result.integrityTokenBasedMinter.mintAsWebsafeString(id),
+        poToken: await minter.mintAsWebsafeString(visitorData),
+        mint: (id: string) => minter.mintAsWebsafeString(id),
       }
     })().catch((e) => {
       poTokenPromise = null
