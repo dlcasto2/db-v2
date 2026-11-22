@@ -1,0 +1,29 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Devon Browser (Static)",
+  "identifier": "net.lovedub.devon-browser-static",
+  "build": {
+    "frontendDist": "../static-dist",
+    "beforeDevCommand": "node scripts/prepare-static.mjs",
+    "beforeBuildCommand": "node scripts/prepare-static.mjs"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Devon Browser (Static)",
+        "url": "index.html",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ]
+  },
+  "bundle": {
+    "externalBin": [],
+    "resources": []
+  }
+}

@@ -1,5 +1,11 @@
 import type { MetadataRoute } from "next"
 
+// Always the same constant object — no request-specific data — so this is
+// safe to mark static everywhere. Required (not just allowed) for the static
+// desktop build's `output: "export"`: Next refuses to export manifest.ts
+// without it ("export const dynamic" not configured).
+export const dynamic = "force-static"
+
 export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Devon Browser",
