@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { browserCookieFrom, settingsStatus } from "@/lib/youtube-server"
+import { browserCookieFrom, corsPreflight, settingsStatus, withCors } from "@/lib/youtube-server"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -9,5 +9,14 @@ export const dynamic = "force-dynamic"
  * and when this build was made. Only yes/no and counts; never the values.
  */
 export async function GET(request: NextRequest) {
-  return NextResponse.json(settingsStatus(browserCookieFrom(request.headers.get("cookie"))), { headers: { "cache-control": "no-store" } })
+  return withCors(
+    request,
+    NextResponse.json(settingsStatus(browserCookieFrom(request.headers.get("cookie"))), {
+      headers: { "cache-control": "no-store" },
+    }),
+  )
+}
+
+export function OPTIONS(request: NextRequest) {
+  return corsPreflight(request)
 }

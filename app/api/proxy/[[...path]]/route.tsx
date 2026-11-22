@@ -6,6 +6,7 @@ import https from "node:https"
 import { Readable } from "node:stream"
 import { brotliCompressSync, constants as zlibConstants, gzipSync } from "node:zlib"
 import { CookieJar, JAR_PATH, JAR_PREFIX, jarSetCookieHeaders } from "@/lib/cookie-jar"
+import { refererFromRef } from "@/lib/proxy-referer"
 
 // DNS lookups need the Node.js runtime (not Edge)
 export const runtime = "nodejs"
@@ -735,6 +736,43 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
   var MEDIA_REQ = new RegExp('googlevideo[.]com|videoplayback|/youtubei/v1/(player|next|browse|search|reel)|[.](m3u8|mpd)([?]|$)', 'i');
   var activityHook = null;
   function logActivity(info) { try { if (activityHook) activityHook(info); } catch (e) {} }
+  // ---- Binary request bodies. Some hosts (Netlify) give Devon's code a request
+  // body whose Content-Type looks like text (application/json, text/plain) as
+  // decoded text, so any binary bytes in it arrive mangled. YouTube's player
+  // gzips its JSON requests (Content-Encoding: gzip): they reached YouTube
+  // corrupted, it answered "Request contains an invalid argument", and the
+  // video went black. So binary bodies go to Devon labelled
+  // application/octet-stream, which hosts pass through untouched, with their
+  // real type in X-Devon-Content-Type ("none" = no type); the proxy restores it.
+  var BODY_TYPE_HEADER = 'X-Devon-Content-Type';
+  function isBinaryBody(b) {
+    if (b === null || b === undefined || typeof b === 'string') return false;
+    if (typeof URLSearchParams !== 'undefined' && b instanceof URLSearchParams) return false;
+    return (typeof ArrayBuffer !== 'undefined' && (b instanceof ArrayBuffer || ArrayBuffer.isView(b))) ||
+      (typeof Blob !== 'undefined' && b instanceof Blob) ||
+      (typeof FormData !== 'undefined' && b instanceof FormData);
+  }
+  function labelBinary(headers, type) {
+    headers.set(BODY_TYPE_HEADER, type || 'none');
+    headers.set('Content-Type', 'application/octet-stream');
+  }
+  // fetch() options with a binary body, relabelled. The type is the one the
+  // browser would have sent: the explicit Content-Type, else the body's own
+  // (a Blob's type, FormData's multipart boundary), read off a throwaway Request
+  function relabelBody(opts) {
+    var probe;
+    try { probe = new Request(PROXY_ORIGIN + '/', { method: opts.method || 'POST', headers: opts.headers, body: opts.body }); } catch (e) { return Promise.resolve(opts); }
+    var type = probe.headers.get('content-type');
+    return probe.arrayBuffer().then(function (buf) {
+      var out = Object.assign({}, opts);
+      var h = new Headers(opts.headers || undefined);
+      labelBinary(h, type);
+      out.headers = h;
+      out.body = buf;
+      return out;
+    }, function () { return opts; });
+  }
+
   var nativeFetch = window.fetch;
   if (typeof nativeFetch === 'function') {
     // Copies a Request to a new URL. Its body is read into memory first: re-wrapping a
@@ -751,15 +789,24 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
         integrity: (init && init.integrity) || req.integrity,
         keepalive: init && 'keepalive' in init ? init.keepalive : req.keepalive,
         signal: (init && init.signal) || req.signal,
-        referrerPolicy: (init && init.referrerPolicy) || req.referrerPolicy
+        // The request goes to Devon, not the site: keep the page's same-origin
+        // Referer on it (see the <meta name="referrer"> Devon adds). The site's
+        // own policy doesn't matter here; the proxy sets the Referer upstream.
+        referrerPolicy: 'same-origin'
       };
       if (init && 'body' in init) {
         opts.body = init.body;
-        return Promise.resolve(opts);
+        return isBinaryBody(opts.body) ? relabelBody(opts) : Promise.resolve(opts);
       }
       if (m === 'GET' || m === 'HEAD') return Promise.resolve(opts);
       return req.clone().arrayBuffer().then(function (buf) {
         opts.body = buf.byteLength ? buf : undefined;
+        if (opts.body) {
+          // Bytes now, whatever the page passed in: label them as such
+          var h = new Headers(opts.headers || undefined);
+          labelBinary(h, h.get('content-type'));
+          opts.headers = h;
+        }
         return opts;
       });
     }
@@ -777,6 +824,10 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
           p = retarget(input, target, init).then(function (opts) { return nativeFetch.call(window, target, opts); });
         } else if (target) {
           input = target;
+          if (init && init.referrerPolicy) { init = Object.assign({}, init); init.referrerPolicy = 'same-origin'; }
+          if (init && isBinaryBody(init.body)) {
+            p = relabelBody(init).then(function (opts) { return nativeFetch.call(window, target, opts); });
+          }
         }
       } catch (e) {}
       // Always call the real fetch on window: sites often call fetch as a method of
@@ -829,6 +880,8 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
     try {
       var target = toProxy(u);
       if (target) args[1] = target;
+      xhr.__devonProxied = !!target;
+      xhr.__devonType = undefined;
       if (!xhr.__devonWatched) {
         xhr.__devonWatched = true;
         xhr.addEventListener('loadend', function () {
@@ -863,6 +916,34 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
       xhr.__devonAborted = false;
     } catch (e) {}
     return nativeXhrOpen.apply(this, args);
+  };
+
+  // A proxied XHR's Content-Type waits for send(), which knows the body: binary
+  // bodies are relabelled like fetch()'s above. (FormData is left as it was:
+  // relabelling it would mean reading it first, which XHR's send() can't wait for.)
+  var nativeXhrSend = XMLHttpRequest.prototype.send;
+  var nativeXhrSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+  XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+    if (this.__devonProxied && String(name).toLowerCase() === 'content-type') {
+      // Repeated calls combine, as XHR itself does
+      this.__devonType = this.__devonType === undefined ? String(value) : this.__devonType + ', ' + value;
+      return;
+    }
+    return nativeXhrSetHeader.apply(this, arguments);
+  };
+  XMLHttpRequest.prototype.send = function (body) {
+    if (this.__devonProxied) {
+      try {
+        if (isBinaryBody(body) && !(typeof FormData !== 'undefined' && body instanceof FormData)) {
+          var type = this.__devonType || (typeof Blob !== 'undefined' && body instanceof Blob ? body.type : '');
+          nativeXhrSetHeader.call(this, BODY_TYPE_HEADER, type || 'none');
+          nativeXhrSetHeader.call(this, 'Content-Type', 'application/octet-stream');
+        } else if (this.__devonType !== undefined) {
+          nativeXhrSetHeader.call(this, 'Content-Type', this.__devonType);
+        }
+      } catch (e) {}
+    }
+    return nativeXhrSend.apply(this, arguments);
   };
 
   if (typeof EventSource === 'function') {
@@ -941,6 +1022,13 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
     }).join(', ');
     return changed ? out : null;
   }
+  // An element whose request now goes to Devon loses the site's referrerpolicy
+  // (e.g. "no-referrer"), so it carries the page's same-origin Referer like the
+  // rest of the page's requests. The real site never sees it: the proxy sets its
+  // own Referer upstream.
+  function dropReferrerPolicy(el) {
+    try { if (el.hasAttribute && el.hasAttribute('referrerpolicy')) el.removeAttribute('referrerpolicy'); } catch (e) {}
+  }
   // Reading the property gives the site back the real URL, so its own checks still work
   function unproxied(v) {
     return typeof v === 'string' && isProxyAddress(v) ? (realUrl(v) || v) : v;
@@ -968,6 +1056,7 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
       set: function (v) {
         var r = null;
         try { r = isSet ? subSrcset(this, v) : subUrl(this, v); } catch (e) {}
+        if (r) dropReferrerPolicy(this);
         d.set.call(this, r || v);
       }
     });
@@ -987,18 +1076,34 @@ function buildInjectedScript(pageUrl: string, proxyOrigin: string, experimental 
   Element.prototype.setAttribute = function (name, value) {
     var r = null;
     try { r = attrValue(this, name, value); } catch (e) {}
+    if (r) dropReferrerPolicy(this);
     return nativeSetAttr.call(this, name, r || value);
   };
 
   // Elements created from HTML strings (innerHTML, insertAdjacentHTML, templates) skip
   // the setters above; fix them up as soon as they're added
   var SUB_SELECTOR = 'img,source,video,audio,track,script[src],link[href],iframe[src],embed[src],object[data],input[src]';
+  // Scripts the HOST adds to every HTML page it serves, Devon's proxied pages included:
+  // Netlify's edge appends its "Powered by Netlify" badge / pre-launch toolbar
+  // (<script src="/.netlify/scripts/hud?variant=...">) after the proxy has rewritten the
+  // page. The address is relative, so it would resolve against the proxied site
+  // (https://github.com/.netlify/... -> 404, reported as a failed script) and, even
+  // served from the host, would only put Netlify's badge inside every site. The parser
+  // runs this observer before it runs a parsed script, so removing it here keeps it from
+  // loading through the proxy or running. Chrome's preload scanner may still request it
+  // once, silently, straight from the site; only turning the badge off in Netlify
+  // (Project configuration > General > Powered by Netlify badge) stops that too.
+  var HOST_SCRIPT = new RegExp('^/[.]netlify/scripts/', 'i');
   function fixNode(el) {
+    if (el.tagName === 'SCRIPT' && HOST_SCRIPT.test((el.getAttribute('src') || '').trim())) {
+      if (el.parentNode) el.parentNode.removeChild(el);
+      return;
+    }
     ['src', 'srcset', 'poster', 'href', 'data'].forEach(function (a) {
       if (!el.hasAttribute || !el.hasAttribute(a)) return;
       var r = null;
       try { r = attrValue(el, a, el.getAttribute(a)); } catch (e) {}
-      if (r) nativeSetAttr.call(el, a, r);
+      if (r) { nativeSetAttr.call(el, a, r); dropReferrerPolicy(el); }
     });
   }
   new MutationObserver(function (records) {
@@ -1507,6 +1612,13 @@ function processHTML(content: string, pageUrl: string, proxyOrigin: string, expe
     markup = markup.replace(/<(script|link)\b[^>]*>/gi, (tag) =>
       tag.includes(PROXY_PATH) || tag.includes(MIRROR_PATH) ? tag.replace(/\sintegrity=(["'])[^"']*\1/i, "") : tag,
     )
+    // A site's own referrerpolicy="no-referrer" on a tag would take away the
+    // same-origin Referer the page gives requests to Devon (see the <meta
+    // name="referrer"> below). The real site never sees it either way: the proxy
+    // sets its own Referer upstream.
+    markup = markup.replace(/<(img|source|video|audio|track|iframe|embed|input|script|link)\b[^>]*>/gi, (tag) =>
+      tag.includes(PROXY_PATH) || tag.includes(MIRROR_PATH) ? tag.replace(/\sreferrerpolicy=(["'])[^"']*\1/i, "") : tag,
+    )
     return markup
   }
 
@@ -1521,14 +1633,28 @@ function processHTML(content: string, pageUrl: string, proxyOrigin: string, expe
 
   // <a> and <form> are left as-is: <base> resolves them and the injected
   // script intercepts clicks/submits and hands navigation to the parent app.
+  //
+  // Referrer policy: "same-origin". Everything the page loads goes to Devon
+  // itself, so those requests carry a Referer (Devon's own address); anything
+  // that escapes the proxy to a real site still sends none. It used to be
+  // "no-referrer", which made every image, stylesheet and script request from
+  // a proxied page arrive with no Referer at all. On one visitor's network that
+  // was the difference between failing and working: github.com on
+  // db-v2.netlify.app showed up as bare unstyled text in Safari, with every
+  // image, stylesheet and script "failed to load" (and the in-page retries
+  // too), yet the same files loaded fine when the page report fetched them from
+  // the app, with a Referer. The same page loaded completely in Chromium and
+  // WebKit elsewhere, so the server wasn't at fault; web filters that stop
+  // "proxy" URLs unless they come from a known page behave exactly like this.
+  //
   // YouTube's embedded player refuses to start without referrer information
   // ("Error 153 Video player configuration error"), so its embed pages keep the
-  // browser's default policy instead of no-referrer.
+  // browser's default policy.
   const isYouTubeEmbed =
     /(^|\.)(youtube\.com|youtube-nocookie\.com)$/i.test(page.hostname) && page.pathname.startsWith("/embed/")
-  const referrerPolicy = isYouTubeEmbed ? "strict-origin-when-cross-origin" : "no-referrer"
+  const referrerPolicy = isYouTubeEmbed ? "strict-origin-when-cross-origin" : "same-origin"
   const injection = `<base href="${page.href.replace(/"/g, "&quot;")}">
-<meta name="referrer" content="${referrerPolicy}">
+<meta name="referrer" content="${referrerPolicy}" data-devon="">
 ${buildInjectedScript(page.href, proxyOrigin, experimental)}`
 
   // Match <head> but not <header>
@@ -1736,6 +1862,8 @@ const DROPPED_REQUEST_HEADERS = new Set([
   "x-forwarded-proto",
   "x-real-ip",
   "forwarded",
+  // The real type of a relabelled binary body (see handleRaw)
+  "x-devon-content-type",
 ])
 
 function forwardableHeaders(request: NextRequest): Record<string, string> {
@@ -1839,13 +1967,21 @@ async function handleRaw(request: NextRequest, targetUrl: string): Promise<NextR
     }
   }
 
+  // The page script sends binary bodies labelled application/octet-stream, with
+  // their real type in X-Devon-Content-Type ("none" = the page sent none):
+  // hosts like Netlify hand Devon a body with a text-like type (JSON...) as
+  // decoded text, which mangles binary bytes such as YouTube's gzipped requests.
+  const declared = request.headers.get("x-devon-content-type")
+  const contentType =
+    declared !== null ? (declared === "none" ? undefined : declared) : request.headers.get("content-type") || undefined
+
   return handle(
     request,
     targetUrl,
     {
       method,
       body: body && body.byteLength > 0 ? body : undefined,
-      contentType: request.headers.get("content-type") || undefined,
+      contentType,
       headers,
     },
     true,
@@ -2065,7 +2201,13 @@ async function handleGet(request: NextRequest): Promise<Response> {
     }
     return response
   }
-  return handle(request, targetUrl, { method: "GET" })
+  // A page load can name the page it's shown on with ref= (Devon's YouTube
+  // player, CoreView). Send it as the Referer, as a browser loading that page in
+  // an iframe would: YouTube's embed page answers "Error 153 Video player
+  // configuration error" when the request has no Referer. Navigations carry no
+  // Origin, so only the Referer is set.
+  const referer = refererFromRef(request.nextUrl.searchParams.get("ref"))
+  return handle(request, targetUrl, { method: "GET", headers: referer ? { referer } : undefined })
 }
 
 function fileNameFromUrl(url: string): string {

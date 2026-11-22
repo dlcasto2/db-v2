@@ -1,3 +1,31 @@
+import { readFileSync } from "node:fs"
+
+/**
+ * Version and lockfile integrity hashes of the Claude CLI's Linux packages, so
+ * agents/_claude-cli.ts can fetch and verify the binary on hosts whose deploy
+ * leaves it out (Netlify: see there). Empty if either file can't be read; the
+ * server then falls back to the installed SDK version and npm's own hash.
+ */
+function claudeCliLock() {
+  try {
+    const sdk = JSON.parse(
+      readFileSync(new URL("./node_modules/@anthropic-ai/claude-agent-sdk/package.json", import.meta.url), "utf8"),
+    )
+    const version = sdk.optionalDependencies?.["@anthropic-ai/claude-agent-sdk-linux-x64"] || sdk.version
+    const lock = readFileSync(new URL("./pnpm-lock.yaml", import.meta.url), "utf8")
+    const integrity = {}
+    for (const variant of ["linux-x64", "linux-x64-musl", "linux-arm64", "linux-arm64-musl"]) {
+      const key = `'@anthropic-ai/claude-agent-sdk-${variant}@${version}':`
+      const at = lock.indexOf(key)
+      const match = at === -1 ? null : lock.slice(at, at + 400).match(/integrity: (sha512-[A-Za-z0-9+/=]+)/)
+      if (match) integrity[variant] = match[1]
+    }
+    return JSON.stringify({ version, integrity })
+  } catch {
+    return ""
+  }
+}
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // NOTE: do not add a bare `output: "export"` here. Devon is not a static site —
@@ -37,6 +65,7 @@ const nextConfig = {
       Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith("DEVON_"))),
     ),
     DEVON_BUILD_TIME: new Date().toISOString(),
+    CLAUDE_CLI_LOCK: claudeCliLock(),
   },
   typescript: {
     ignoreBuildErrors: false,

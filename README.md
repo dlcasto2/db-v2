@@ -274,6 +274,8 @@ Without Redis, Devon AI still answers each message — quota, chat history, sess
 
 `next.config.mjs`'s `outputFileTracingIncludes` bundles the Claude CLI's native binary (`@anthropic-ai/claude-agent-sdk-linux-x64*`) with the `ai-chat` function — Vercel's build-time file trace misses it otherwise, since the SDK resolves it at runtime rather than importing it.
 
+**Netlify (and any host whose deploy leaves the binary out).** The binary (~250 MB) can't ship there: Netlify runs the whole Next server as one AWS Lambda function, and the binary alone is about Lambda's 250 MB unzipped limit. So when the SDK reports `Native CLI binary for linux-x64 not found`, `agents/_claude-cli.ts` fetches that same package from the npm registry, checks it against the integrity hash in `pnpm-lock.yaml` (baked into the server by `next.config.mjs` as `CLAUDE_CLI_LOCK`), unpacks the binary into the function's temp folder and runs it from there. That adds a few seconds to the first Devon AI message on each new server instance (the chat shows a notice); later messages reuse it. The host needs outbound access to `registry.npmjs.org` and about 250 MB of temp space.
+
 ## Accounts
 
 Sign in to Devon to sync your **bookmarks, history and settings** across devices. Sign-in goes through **Auth0** (an OpenID Connect provider), which can front Google and other logins. Like Devon AI, this has two backends, picked by where Devon is deployed, not by anything in the request: **EdgeOne** (`cloud-functions/auth-*`, `cloud-functions/account-sync/`), against the Makers store, and **everywhere else, including Vercel** (`app/auth-*/route.ts`, `app/account-sync/route.ts`), against Redis — see "Vercel setup" below. The OIDC/session logic itself (`cloud-functions/_auth/`) is shared unchanged by both; only the per-user data store differs. Where neither is set up, the sign-in control simply doesn't appear and Devon keeps everything in the browser as before.
@@ -345,8 +347,25 @@ Server-wide settings (environment variables). Devon reads them from the running 
 | `DEVON_YT_PROXY` | An HTTP(S) proxy (`http://user:pass@host:port`) for all YouTube traffic. A residential proxy works best. |
 | `DEVON_INVIDIOUS` | Invidious instances to relay through, comma-separated, or `off`. |
 | `DEVON_YT_CLIENTS` | The order of YouTube clients to try. |
+| `DEVON_YT_CORS` | Which other sites may call the YouTube API from the browser (see below). Unset = any site, `off` = Devon only, or a comma-separated list of origins such as `https://myplayer.lovable.app, https://*.lovable.app`. |
 
 `/api/youtube/status` shows which of these are set (never the values): for the cookie, which variable it came from, whether it was seen by the running site (`"source":"runtime"`) or the build (`"build"`), how many characters arrived and whether the sign-in cookie is there. `envSeen` lists every `DEVON_*` variable name the host passed in, which shows whether a variable reached Devon at all.
+
+### Using Devon as another site's YouTube backend
+
+Other front-ends (for example a player site on a network that blocks youtube.com and its embeds) can use a Devon deployment as their YouTube backend straight from the viewer's browser. The JSON routes answer with CORS headers, so a page on another origin can read them:
+
+| Route | Returns |
+| --- | --- |
+| `GET /api/youtube/info?id=<video>` | Title, channel, duration and every format (`itag`, `container`, `hasVideo`, `hasAudio`, `height`…), plus the YouTube `client` that unlocked them. |
+| `GET /api/youtube/stream?id=<video>&itag=<itag>&c=<client>` | The bytes, ≤ 3 MB per response with `Range` support. Usable directly as `<video src>` from any site (media elements don't need CORS); the CORS headers also let `fetch()` read it. |
+| `GET /api/youtube/channel?c=<channel>` | `{ channel, items, next }`: a channel's latest uploads. `<channel>` is a `UC…` ID, an `@handle`, a youtube.com channel link or a plain name (the top match of a channel search). `?next=<token>&owner=<name>` returns the next page. Page data only, so it keeps working when YouTube bot-checks this server's downloads. |
+| `GET /api/youtube/search?q=…` | Search results, same item shape as `/channel`. |
+| `GET /api/youtube/status` | Which server settings are set (never their values), including `cors`. |
+
+For a video that can't be streamed from this server (bot check, live, DRM), a front-end can fall back to the `youtube-nocookie.com` player loaded through Devon's proxy, the same way Devon's own player does: `/api/proxy?url=<https://www.youtube-nocookie.com/embed/ID?…&origin=<devon origin>&widget_referrer=<devon origin>/>&ref=<devon origin>/` in an `<iframe>`.
+
+Credentials are never allowed cross-origin: the cookie a viewer saved in Devon's cookie box is `SameSite=Strict` and only used for Devon's own page, and `/api/youtube/cookie` keeps refusing other sites. Only the server-wide settings above (`DEVON_YT_COOKIE`, `DEVON_YT_PROXY`, `DEVON_INVIDIOUS`) apply to requests from other sites. Set `DEVON_YT_CORS` to limit which sites may use the API from the browser (this doesn't stop other servers from calling it, or other pages from using `/stream` as a `<video src>`).
 
 ### Network unreachable (not a bot check)
 

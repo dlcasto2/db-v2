@@ -456,7 +456,7 @@ function ResultsSkeleton() {
   )
 }
 
-function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void }) {
+function ErrorCard({ message, details, onRetry }: { message: string; details?: string[]; onRetry: () => void }) {
   return (
     <div className="mx-auto my-8 max-w-md rounded-2xl bg-toolbar p-5 text-sm ring-1 ring-border">
       <div className="flex items-start gap-3">
@@ -464,6 +464,7 @@ function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void 
         <div className="min-w-0">
           <p className="font-medium">Something went wrong</p>
           <p className="mt-1 break-words text-muted-foreground">{message}</p>
+          <FailureDetails details={details} />
           <Button size="sm" className="mt-3 rounded-full" onClick={onRetry}>
             <RotateCw /> Try again
           </Button>
@@ -473,7 +474,69 @@ function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void 
   )
 }
 
-function DownloadUnavailableCard({ message, onRetry }: { message: string; onRetry: () => void }) {
+/**
+ * The video's description: four lines, then "Show more" when there's more.
+ * The padding sits on the box, not on the clamped text, or the cut-off fifth
+ * line would show half-hidden in the padding.
+ */
+function VideoDescription({ text }: { text: string }) {
+  const [open, setOpen] = useState(false)
+  const [overflows, setOverflows] = useState(false)
+  const ref = useRef<HTMLParagraphElement | null>(null)
+  useEffect(() => setOpen(false), [text])
+  useEffect(() => {
+    const el = ref.current
+    if (!el || open) return
+    const measure = () => setOverflows(el.scrollHeight > el.clientHeight + 1)
+    measure()
+    if (typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [text, open])
+  return (
+    <div className="mt-3 rounded-xl bg-white/[0.03] p-3 text-sm text-muted-foreground ring-1 ring-border">
+      <p ref={ref} className={cn("whitespace-pre-line break-words", !open && "line-clamp-4")}>
+        {text}
+      </p>
+      {(overflows || open) && (
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          className="mt-1.5 text-xs font-medium text-foreground hover:underline"
+        >
+          {open ? "Show less" : "Show more"}
+        </button>
+      )}
+    </div>
+  )
+}
+
+/** What each YouTube client answered, folded away under an error */
+function FailureDetails({ details }: { details?: string[] }) {
+  if (!details?.length) return null
+  return (
+    <details className="mt-2 text-xs text-muted-foreground">
+      <summary className="cursor-pointer select-none hover:text-foreground">What each YouTube client said</summary>
+      <ul className="mt-1.5 space-y-1 break-words font-mono">
+        {details.map((line, i) => (
+          <li key={i}>{line}</li>
+        ))}
+      </ul>
+    </details>
+  )
+}
+
+function DownloadUnavailableCard({
+  message,
+  details,
+  onRetry,
+}: {
+  message: string
+  details?: string[]
+  onRetry: () => void
+}) {
   const [open, setOpen] = useState(false)
   return (
     <div className="mt-4 rounded-2xl bg-toolbar p-5 text-sm ring-1 ring-border">
@@ -482,13 +545,15 @@ function DownloadUnavailableCard({ message, onRetry }: { message: string; onRetr
         <div className="min-w-0">
           <p className="font-medium">Downloads are unavailable from this server</p>
           <p className="mt-1 break-words text-muted-foreground">{message}</p>
+          <FailureDetails details={details} />
           <p className="mt-2 text-muted-foreground">
-            You can still try watching above: “Through Devon” loads the youtube-nocookie.com player through Devon&apos;s
-            proxy, and “Direct” loads it from your own connection. Neither gives Devon a file to download.
+            Watching above may hit the same wall: “Through Devon” loads YouTube&apos;s player through this same server,
+            so YouTube can refuse it too (“Sign in to confirm you&apos;re not a bot”). “Direct” loads it from your own
+            connection instead, if your network allows YouTube.
           </p>
           <p className="mt-2 text-muted-foreground">
-            To download, add the cookie from a signed-in YouTube account (ideally a spare one). It&apos;s saved only in
-            this browser.
+            Adding the cookie from a signed-in YouTube account (ideally a spare one) can get this server past the check,
+            so Devon can play the video in its own player and download it. It&apos;s saved only in this browser.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <Button size="sm" className="rounded-full" onClick={() => setOpen(true)}>
@@ -583,6 +648,36 @@ function CookieButton({ className, onChange }: { className?: string; onChange?: 
   )
 }
 
+/**
+ * The keys for the cookie steps on the viewer's own computer. The dialog only
+ * renders after a click, so reading navigator here can't cause a hydration
+ * mismatch.
+ */
+function shortcutKeys(): { privateWindow: string; devtools: string; note?: string; mobile: boolean } {
+  const ua = typeof navigator === "undefined" ? "" : navigator.userAgent
+  const firefox = /Firefox\//.test(ua)
+  // iPads ask for desktop sites as a Mac; touch points give them away
+  const touchMac = /Macintosh/.test(ua) && typeof navigator !== "undefined" && navigator.maxTouchPoints > 1
+  if (/Android|iPhone|iPad|iPod/.test(ua) || touchMac) {
+    return { privateWindow: "Ctrl+Shift+N", devtools: "Ctrl+Shift+I", mobile: true }
+  }
+  if (/\bCrOS\b/.test(ua)) return { privateWindow: "Ctrl+Shift+N", devtools: "Ctrl+Shift+I", mobile: false }
+  if (/Macintosh|Mac OS X/.test(ua)) {
+    const safari = /Safari\//.test(ua) && !/Chrome\/|Chromium\/|Edg\/|Firefox\//.test(ua)
+    return {
+      privateWindow: firefox ? "Cmd+Shift+P" : "Cmd+Shift+N",
+      devtools: "Cmd+Option+I",
+      note: safari ? "first turn on Safari → Settings → Advanced → Show features for web developers" : undefined,
+      mobile: false,
+    }
+  }
+  return { privateWindow: firefox ? "Ctrl+Shift+P" : "Ctrl+Shift+N", devtools: "F12 or Ctrl+Shift+I", mobile: false }
+}
+
+function Keys({ children }: { children: React.ReactNode }) {
+  return <span className="font-mono text-foreground">{children}</span>
+}
+
 function CookieDialog({
   open,
   onOpenChange,
@@ -593,6 +688,7 @@ function CookieDialog({
   onChange?: () => void
 }) {
   const state = useCookieState()
+  const keys = shortcutKeys()
   const [value, setValue] = useState("")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
@@ -677,11 +773,21 @@ function CookieDialog({
           </p>
         )}
 
+        {keys.mobile && (
+          <p className="text-xs leading-relaxed text-amber-400">
+            Phones and tablets can&apos;t show this, so do steps 1–3 on a computer, then send yourself the text and paste
+            it here in this browser.
+          </p>
+        )}
         <ol className="list-decimal space-y-1 pl-5 text-xs leading-relaxed text-muted-foreground">
-          <li>Open a private/incognito window and sign in to YouTube, ideally with a spare account.</li>
           <li>
-            Go to <span className="font-mono text-foreground">youtube.com/robots.txt</span>, press F12, open{" "}
-            <b>Network</b>, and reload.
+            Open a private window (<Keys>{keys.privateWindow}</Keys>) and sign in to YouTube, ideally with a spare
+            account.
+          </li>
+          <li>
+            Go to <span className="font-mono text-foreground">youtube.com/robots.txt</span>, open developer tools (
+            <Keys>{keys.devtools}</Keys>
+            {keys.note ? `; ${keys.note}` : ""}), click <b>Network</b>, and reload.
           </li>
           <li>
             Click <b>robots.txt</b> → <b>Headers</b> → <b>Request Headers</b>, right-click the <b>cookie</b> value →{" "}
@@ -689,6 +795,12 @@ function CookieDialog({
           </li>
           <li>Paste it below, then close the private window without signing out.</li>
         </ol>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          Developer tools keys: Chromebook <Keys>Ctrl+Shift+I</Keys> (there&apos;s no F12 key), Mac{" "}
+          <Keys>Cmd+Option+I</Keys>, Windows <Keys>F12</Keys>. If they won&apos;t open (school or work devices often
+          block them), copy the cookie on another computer and paste it here: it only works in the browser you paste it
+          into.
+        </p>
 
         <textarea
           value={value}
@@ -858,7 +970,14 @@ const embedUrl = (id: string) => `https://www.youtube-nocookie.com/embed/${id}?a
  *    this server.
  * Direct mode loads youtube-nocookie.com straight from the viewer's connection.
  */
-function DevonPlayer({ id, video }: { id: string; video: YTVideo | null }) {
+/**
+ * `loading`: Devon is still asking its server for the video. In "Through Devon"
+ * mode the player waits on a thumbnail meanwhile instead of showing YouTube's
+ * embed: on a server YouTube bot-checks (Netlify), the embed flashed "Sign in to
+ * confirm you're not a bot" for a moment before Devon's own player replaced it.
+ * The embed is still the fallback when the server can't get the video.
+ */
+function DevonPlayer({ id, video, loading }: { id: string; video: YTVideo | null; loading: boolean }) {
   const [mode, setModeState] = useState<PlayerMode>("devon")
   const [nativeFailed, setNativeFailed] = useState(false)
   useEffect(() => setModeState(readPlayerMode()), [])
@@ -875,6 +994,7 @@ function DevonPlayer({ id, video }: { id: string; video: YTVideo | null }) {
 
   const preview = video ? previewFormat(video) : undefined
   const native = mode === "devon" && video && preview && !nativeFailed
+  const waiting = mode === "devon" && loading && !nativeFailed
   // YouTube's embed refuses to start without knowing which site embeds it
   // (Error 153 "Video player configuration error"). Through the proxy, the
   // upstream Referer only exists if we pass one as ref=, so name this Devon site.
@@ -901,6 +1021,14 @@ function DevonPlayer({ id, video }: { id: string; video: YTVideo | null }) {
           />
         ) : mode === "direct" ? (
           <OfficialYouTubePlayer key={id} id={id} onError={() => setModeState("devon")} />
+        ) : waiting ? (
+          <div className="relative size-full" aria-busy="true" aria-label="Loading video">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={thumbnailUrl(id, "hq")} alt="" className="size-full object-cover opacity-50" />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <Loader2 className="size-9 animate-spin text-white/85" />
+            </div>
+          </div>
         ) : (
           <iframe
             key={src}
@@ -939,7 +1067,9 @@ function DevonPlayer({ id, video }: { id: string; video: YTVideo | null }) {
             ? "youtube-nocookie.com from your own connection (if it shows a 403, your network blocks it: use Through Devon)"
             : native
               ? "Streaming from this Devon server"
-              : "youtube-nocookie.com loaded through Devon's proxy"}
+              : waiting
+                ? "Getting the video from this Devon server…"
+                : "youtube-nocookie.com loaded through Devon's proxy"}
         </span>
       </div>
     </div>
@@ -958,6 +1088,7 @@ function WatchView({
   const [video, setVideo] = useState<YTVideo | null>(null)
   const [error, setError] = useState("")
   const [errorCode, setErrorCode] = useState("")
+  const [errorDetails, setErrorDetails] = useState<string[]>([])
   const [attempt, setAttempt] = useState(0)
   const [tab, setTab] = useState<"video" | "audio">("video")
 
@@ -965,6 +1096,7 @@ function WatchView({
     const controller = new AbortController()
     setError("")
     setErrorCode("")
+    setErrorDetails([])
     setVideo(null)
     getVideo(id, controller.signal)
       .then((v) => {
@@ -975,6 +1107,7 @@ function WatchView({
         if (controller.signal.aborted) return
         setError(e.message)
         setErrorCode(e.code || "")
+        setErrorDetails(e.details || [])
       })
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -995,14 +1128,18 @@ function WatchView({
 
       <div className="mx-auto grid w-full max-w-6xl gap-6 p-4 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="min-w-0">
-          <DevonPlayer id={id} video={video} />
+          <DevonPlayer id={id} video={video} loading={!video && !error} />
 
           {error && errorCode === "network-unreachable" ? (
             <NetworkUnreachableCard message={error} onRetry={() => setAttempt((n) => n + 1)} />
           ) : error && (errorCode === "bot-check" || errorCode === "stream-unavailable") ? (
-            <DownloadUnavailableCard message={error} onRetry={() => setAttempt((n) => n + 1)} />
+            <DownloadUnavailableCard
+              message={error}
+              details={errorDetails}
+              onRetry={() => setAttempt((n) => n + 1)}
+            />
           ) : error ? (
-            <ErrorCard message={error} onRetry={() => setAttempt((n) => n + 1)} />
+            <ErrorCard message={error} details={errorDetails} onRetry={() => setAttempt((n) => n + 1)} />
           ) : video ? (
             <div className="mt-4">
               <h1 className="text-lg font-semibold leading-snug sm:text-xl">{video.title}</h1>
@@ -1015,11 +1152,7 @@ function WatchView({
                   .filter(Boolean)
                   .join(" · ")}
               </p>
-              {video.description && (
-                <p className="mt-3 line-clamp-4 whitespace-pre-line rounded-xl bg-white/[0.03] p-3 text-sm text-muted-foreground ring-1 ring-border">
-                  {video.description}
-                </p>
-              )}
+              {video.description && <VideoDescription text={video.description} />}
               <a
                 href={`https://www.youtube-nocookie.com/embed/${video.id}`}
                 target="_blank"

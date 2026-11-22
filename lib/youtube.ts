@@ -99,7 +99,12 @@ export interface YTVideo {
 async function getJSON<T>(url: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(url, { signal })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw Object.assign(new Error(data?.error || `Request failed (${res.status})`), { code: data?.code as string | undefined })
+  if (!res.ok) {
+    throw Object.assign(new Error(data?.error || `Request failed (${res.status})`), {
+      code: data?.code as string | undefined,
+      details: Array.isArray(data?.details) ? (data.details as string[]) : undefined,
+    })
+  }
   return data as T
 }
 
