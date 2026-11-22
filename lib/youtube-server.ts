@@ -909,7 +909,14 @@ async function decipher(r: Resolved, itag: number): Promise<string> {
   const client = await yt(r.cookie)
   const url = await f.decipher(client.session.player)
   if (!url) throw new YTError("Couldn't unlock this format.", 502)
-  const full = `${url}${url.includes("?") ? "&" : "?"}cpn=${cpn()}`
+
+  // googlevideo requires a content-bound PO token in addition to the
+  // session-bound token used for InnerTube player requests.
+  const po = await getPoToken().catch(() => null)
+  const pot = po ? await po.mint(r.info.id).catch(() => "") : ""
+  const params = new URLSearchParams({ cpn: cpn() })
+  if (pot) params.set("pot", pot)
+  const full = url + (url.includes("?") ? "&" : "?") + params.toString()
   r.urls.set(itag, full)
   return full
 }
