@@ -110,9 +110,9 @@ async function enrich(items: YTSearchItem[], ids: string[]): Promise<YTSearchIte
 export async function dataApiSearch(query: string, token = ""): Promise<YTSearchPage> {
   const q = query.trim().slice(0, MAX_QUERY)
   if (!token && !q) throw new YouTubeDataApiError("Type something to search for.", 400, "bad-query")
-  const page = token ? decodeToken<{ pageToken?: string }>(token, "search") : {}
+  const page = token ? decodeToken<{ pageToken?: string; query?: string }>(token, "search") : {}\n  const searchQuery = token ? (page.query || q).slice(0, MAX_QUERY) : q
   const result = await get<SearchResponse>("search", {
-    part: "snippet", type: "video", maxResults: String(PAGE_SIZE), ...(q ? { q } : {}),
+    part: "snippet", type: "video", maxResults: String(PAGE_SIZE), ...(searchQuery ? { q: searchQuery } : {}),
     ...(page.pageToken ? { pageToken: page.pageToken } : {}),
   })
   const raw = result.items || []
@@ -122,7 +122,7 @@ export async function dataApiSearch(query: string, token = ""): Promise<YTSearch
     return [{ id, title: item.snippet?.title || "", channel: item.snippet?.channelTitle || "", duration: "", views: "", published: item.snippet?.publishedAt || "", live: false }]
   })
   const enriched = await enrich(items, items.map(i => i.id))
-  return { items: enriched, next: result.nextPageToken ? encodeToken({ kind: "search", pageToken: result.nextPageToken }) : null }
+  return { items: enriched, next: result.nextPageToken ? encodeToken({ kind: "search", pageToken: result.nextPageToken, query: searchQuery }) : null }
 }
 
 async function resolveChannel(input: string): Promise<NonNullable<ChannelResponse["items"]>[number]> {
@@ -166,7 +166,7 @@ export async function dataApiChannel(input: string, token = ""): Promise<YTChann
     part: "contentDetails", playlistId: uploads, maxResults: String(PAGE_SIZE), ...(page.pageToken ? { pageToken: page.pageToken } : {}),
   })
   const ids = (playlist.items || []).map(i => i.contentDetails?.videoId || "").filter(id => ID_RE.test(id))
-  const details = await get<SearchResponse>("videos", { part: "snippet", id: ids.join(","), maxResults: String(PAGE_SIZE) })
+  const details = ids.length ? await get<SearchResponse>("videos", { part: "snippet", id: ids.join(","), maxResults: String(PAGE_SIZE) }) : { items: [] }
   const items: YTSearchItem[] = (details.items || []).flatMap(v => {
     const id = v.id?.videoId || (v as unknown as { id?: string }).id
     if (!id || !ID_RE.test(id)) return []
