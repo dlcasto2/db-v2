@@ -438,6 +438,16 @@ function getPoToken() {
   return poTokenPromise
 }
 
+function getPoTokenOrNull() {
+  return getPoToken().catch((error) => {
+    console.error(
+      "[youtube/po-token] generation failed:",
+      error instanceof Error ? error.message : String(error),
+    )
+    return null
+  })
+}
+
 type Fetch = typeof fetch
 let proxiedFetch: Promise<Fetch> | null = null
 
@@ -501,7 +511,7 @@ function yt(cookie = ""): Promise<Innertube> {
   const key = keyOf(cookie)
   const hit = sessions.get(key)
   if (hit && Date.now() - hit.born < SESSION_TTL) return hit.promise
-  const promise = Promise.all([ytFetch(), getPoToken().catch(() => null)])
+  const promise = Promise.all([ytFetch(), getPoTokenOrNull()])
     .then(([f, po]) =>
       Innertube.create({
         retrieve_player: true,
@@ -912,8 +922,16 @@ async function decipher(r: Resolved, itag: number): Promise<string> {
 
   // googlevideo requires a content-bound PO token in addition to the
   // session-bound token used for InnerTube player requests.
-  const po = await getPoToken().catch(() => null)
-  const pot = po ? await po.mint(r.info.id).catch(() => "") : ""
+  const po = await getPoTokenOrNull()
+  const pot = po
+    ? await po.mint(r.info.id).catch((error) => {
+        console.error(
+          "[youtube/po-token] content token mint failed:",
+          error instanceof Error ? error.message : String(error),
+        )
+        return ""
+      })
+    : ""
   const params = new URLSearchParams({ cpn: cpn() })
   if (pot) params.set("pot", pot)
   const full = url + (url.includes("?") ? "&" : "?") + params.toString()
