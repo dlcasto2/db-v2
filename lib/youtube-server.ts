@@ -366,7 +366,7 @@ function getPoToken() {
       const dom = new JSDOM("<!DOCTYPE html><html lang=\"en\"><head><title></title></head><body></body></html>", {
         url: "https://www.youtube.com",
         referrer: "https://www.youtube.com/",
-        userAgent: USER_AGENT,
+        resources: { userAgent: USER_AGENT },
       })
       Object.assign(globalThis as Record<string, unknown>, {
         window: dom.window,
