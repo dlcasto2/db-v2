@@ -110,7 +110,8 @@ async function enrich(items: YTSearchItem[], ids: string[]): Promise<YTSearchIte
 export async function dataApiSearch(query: string, token = ""): Promise<YTSearchPage> {
   const q = query.trim().slice(0, MAX_QUERY)
   if (!token && !q) throw new YouTubeDataApiError("Type something to search for.", 400, "bad-query")
-  const page = token ? decodeToken<{ pageToken?: string; query?: string }>(token, "search") : {}\n  const searchQuery = token ? (page.query || q).slice(0, MAX_QUERY) : q
+  const page = token ? decodeToken<{ pageToken?: string; query?: string }>(token, "search") : {}
+  const searchQuery = token ? (page.query || q).slice(0, MAX_QUERY) : q
   const result = await get<SearchResponse>("search", {
     part: "snippet", type: "video", maxResults: String(PAGE_SIZE), ...(searchQuery ? { q: searchQuery } : {}),
     ...(page.pageToken ? { pageToken: page.pageToken } : {}),
